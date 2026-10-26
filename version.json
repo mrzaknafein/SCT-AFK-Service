@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_autotill_fix_v32",
-  "version": "2.2.1",
-  "releaseNotes": "Oto-Çapalama ve Oto-Ekim tüm adayı (96+ blok) tarayacak şekilde genişletildi, erken durma ve tarla yükseklik algılama hataları giderildi.",
+  "buildId": "20261026_builder_chest_v33",
+  "version": "2.2.2",
+  "releaseNotes": "Oto-İnşa katmandan düşme koruması, çift yönlü güvenli sandık yolu kontrolü ve açılıp kapatılabilir sürekli malzeme çekme butonu eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
