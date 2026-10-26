@@ -608,8 +608,8 @@ function loadConfig() {
     parsed.updates = {
       enabled: true,
       autoApply: false,
-      repoOwner: 'cagat',
-      repoName: 'sct-afk-service',
+      repoOwner: 'mrzaknafein',
+      repoName: 'SCT-AFK-Service',
       branch: 'main',
       manifestUrl: ''
     };
@@ -652,8 +652,8 @@ function getUpdateManifestUrl() {
   if (config.updates && config.updates.manifestUrl && config.updates.manifestUrl.trim()) {
     return config.updates.manifestUrl.trim();
   }
-  const owner = (config.updates && config.updates.repoOwner) || 'cagat';
-  const repo = (config.updates && config.updates.repoName) || 'sct-afk-service';
+  const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+  const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
   const branch = (config.updates && config.updates.branch) || 'main';
   return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}/version.json`;
 }
@@ -723,8 +723,8 @@ async function applyHotUpdate() {
     const manifestUrl = getUpdateManifestUrl();
     const rawBuf = await httpFetchUrl(manifestUrl);
     const manifest = JSON.parse(rawBuf.toString('utf8'));
-    const owner = (config.updates && config.updates.repoOwner) || 'cagat';
-    const repo = (config.updates && config.updates.repoName) || 'sct-afk-service';
+    const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+    const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
     const branch = (config.updates && config.updates.branch) || 'main';
 
     let indexJsUrl = (manifest.files && manifest.files['index.js']) || `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/index.js`;
