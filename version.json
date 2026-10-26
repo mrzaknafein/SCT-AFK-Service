@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_smooth_chain_fast_normal_walk_v40",
-  "version": "2.2.9",
-  "releaseNotes": "Sürekli eğilerek (sneak/shift) yavaş yürüme sorunu tamamen düzeltildi: Botlar artık güvenli zemin ve rotalarda tam hızda yürüyüp koşuyor, yalnızca gerçek uçurum kenarında eğiliyor. Oto-inşa hızı ~1.7 kat artırıldı.",
+  "buildId": "20261026_smooth_chain_vulcan_safe_v41",
+  "version": "2.2.10",
+  "releaseNotes": "Vulcan anti-cheat güvenli hız yapılandırması: FastPlace ve Scaffold kick riski tamamen ortadan kaldırıldı (260-315ms güvenli taban aralık ve kontrollü yürüyüş). Tarla modlarında normal yürüme korundu.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
