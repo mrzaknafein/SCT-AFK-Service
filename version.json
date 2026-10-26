@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_keyauth_chain_fix_v36",
-  "version": "2.2.5",
-  "releaseNotes": "KeyAuth PRO lisans kalıcılığı ve autologin güçlendirildi. İnşa ➔ Çapalama ➔ Ekim otomatik zincir geçişi tamamlandı ve buton açma/kapama dinamik hale getirildi.",
+  "buildId": "20261026_ciftci_cmd_sell_v37",
+  "version": "2.2.6",
+  "releaseNotes": "Çiftçi otomatik satış sistemi güncellendi: Artık NPC'ye sağ tıklamak yerine doğrudan '/çiftçi' komutu girilerek depo açılıyor ve hasatlar otomatik satılıyor.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
