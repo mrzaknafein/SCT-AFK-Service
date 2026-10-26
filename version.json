@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_smooth_chain_faster_builder_v39",
-  "version": "2.2.8",
-  "releaseNotes": "Oto-İnşa hızı ~1.7 kat artırıldı: Blok yerleştirme aralığı anti-cheat (Vulcan) sınırları ve onay mekanizması korunarak optimize edildi.",
+  "buildId": "20261026_smooth_chain_fast_normal_walk_v40",
+  "version": "2.2.9",
+  "releaseNotes": "Sürekli eğilerek (sneak/shift) yavaş yürüme sorunu tamamen düzeltildi: Botlar artık güvenli zemin ve rotalarda tam hızda yürüyüp koşuyor, yalnızca gerçek uçurum kenarında eğiliyor. Oto-inşa hızı ~1.7 kat artırıldı.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
