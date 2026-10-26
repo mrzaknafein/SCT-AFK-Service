@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_builder_chest_v33';
+const ENGINE_BUILD_ID = '20261026_farm_nav_chest_v34';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -4447,26 +4447,35 @@ function isKeptToolOrFood(itemName) {
   return false;
 }
 
-function findNearestContainerBlock(bot) {
-  if (!bot || !bot.entity) return null;
-  const pos = bot.entity.position;
-  let bestBlock = null;
-  let bestDist = 4.6;
+function isFarmContainerBlockName(name) {
+  if (!name || typeof name !== 'string') return false;
+  const bName = name.toLowerCase();
+  return (
+    bName === 'chest' ||
+    bName === 'trapped_chest' ||
+    bName === 'barrel' ||
+    bName === 'shulker_box' ||
+    bName.endsWith('_shulker_box')
+  );
+}
 
-  for (let dx = -4; dx <= 4; dx++) {
+function findNearestContainerBlock(bot, maxDist = 5.2) {
+  if (!bot || !bot.entity || !bot.entity.position) return null;
+  const pos = bot.entity.position;
+  const eyePos = pos.offset(0, 1.62, 0);
+  const r = Math.ceil(maxDist);
+  let bestBlock = null;
+  let bestDist = maxDist;
+
+  for (let dx = -r; dx <= r; dx++) {
     for (let dy = -3; dy <= 3; dy++) {
-      for (let dz = -4; dz <= 4; dz++) {
+      for (let dz = -r; dz <= r; dz++) {
         const checkPos = pos.offset(dx, dy, dz).floored();
         const b = bot.blockAt(checkPos);
         if (!b || !b.name) continue;
-        const bName = b.name.toLowerCase();
-        if (
-          bName === 'chest' ||
-          bName === 'trapped_chest' ||
-          bName === 'barrel' ||
-          bName.endsWith('shulker_box')
-        ) {
-          const d = pos.distanceTo(checkPos);
+        if (isFarmContainerBlockName(b.name)) {
+          const center = checkPos.offset(0.5, 0.5, 0.5);
+          const d = Math.min(pos.distanceTo(center), eyePos.distanceTo(center));
           if (d < bestDist) {
             bestDist = d;
             bestBlock = b;
@@ -4713,29 +4722,35 @@ const CROP_HARVEST_CONFIG = {
   beetroot: { maxAge: 3, seeds: ['beetroot_seeds', 'beetroot_seed'], soil: ['farmland'] }
 };
 
-function smoothHumanLook(bot, targetYaw, targetPitch = 0.3) {
-  if (!bot || !bot.entity) return;
+function wrapAngleRad(angle) {
+  let a = angle;
+  while (a < -Math.PI) a += Math.PI * 2;
+  while (a > Math.PI) a -= Math.PI * 2;
+  return a;
+}
+
+function smoothHumanLook(bot, targetYaw, targetPitch = 0.3, maxTurn = 1.15) {
+  if (!bot || !bot.entity) return 0;
   const curYaw = bot.entity.yaw;
   const curPitch = bot.entity.pitch;
 
-  let dyaw = targetYaw - curYaw;
-  while (dyaw < -Math.PI) dyaw += Math.PI * 2;
-  while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+  const dyaw = wrapAngleRad(targetYaw - curYaw);
 
-  // Ani 180 derece sarsılmaları önleyen insancıl yumuşak dönüş
-  const maxTurn = 0.45;
+  // Hızlı fakat sarsıntısız dönüş (dairesel yörüngeye / kendi etrafında dönmeye engel olur)
   const clampedDyaw = Math.max(-maxTurn, Math.min(maxTurn, dyaw));
   const newYaw = curYaw + clampedDyaw;
 
   // Tarlaya bakış açısı: İnsan benzeri hafif aşağı bakış (~15 - 30 derece)
   const naturalPitch = Math.max(0.20, Math.min(0.50, targetPitch));
   const dpitch = naturalPitch - curPitch;
-  const clampedDpitch = Math.max(-0.25, Math.min(0.25, dpitch));
+  const clampedDpitch = Math.max(-0.35, Math.min(0.35, dpitch));
   const newPitch = curPitch + clampedDpitch;
 
   try {
     bot.look(newYaw, newPitch, true);
   } catch (e) {}
+
+  return Math.abs(wrapAngleRad(targetYaw - newYaw));
 }
 
 function normalizeTurkishText(text) {
@@ -5374,17 +5389,29 @@ function checkAndDescendFromFarmObstacle(bot, session) {
 }
 
 // --- AKILLI A* YOL BULUCU (ENGELLERİN VE ÇİTLERİN ETRAFINDAN DOLAŞIR) ---
-function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 400) {
+function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 2500, goalRadius = 1.85) {
+  if (!bot || !startPos || !goalPos) return null;
+
+  // Eğer hedef blok bir zemin bloğuysa (farmland, dirt, grass_block vb.) ve üstü açıksa,
+  // yürünebilir ayak seviyesi goalPos.y + 1'dir.
+  const goalBlock = bot.blockAt(goalPos);
+  const goalAbove = bot.blockAt(goalPos.offset(0, 1, 0));
+  const goalFootY =
+    goalBlock && !isBlockPassable(goalBlock) && isBlockPassable(goalAbove)
+      ? goalPos.y + 1
+      : goalPos.y;
+  const goalFootVec = new Vec3(goalPos.x, goalFootY, goalPos.z);
+
   const isGoal = (pos) => {
     const dx = pos.x + 0.5 - (goalPos.x + 0.5);
-    const dy = pos.y - goalPos.y;
+    const dy = pos.y - goalFootY;
     const dz = pos.z + 0.5 - (goalPos.z + 0.5);
-    return (dx * dx + dz * dz) <= 2.8 * 2.8 && Math.abs(dy) <= 1.5;
+    return (dx * dx + dz * dz) <= goalRadius * goalRadius && Math.abs(dy) <= 1.5;
   };
 
   if (isGoal(startPos)) return [];
 
-  const openSet = [{ pos: startPos, g: 0, f: startPos.distanceTo(goalPos) }];
+  const openSet = [{ pos: startPos, g: 0, f: startPos.distanceTo(goalFootVec) }];
   const cameFrom = new Map();
   const gScore = new Map();
   gScore.set(startPos.toString(), 0);
@@ -5399,7 +5426,7 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 400) {
 
   let nodesCount = 0;
   let closestNode = startPos;
-  let minH = startPos.distanceTo(goalPos);
+  let minH = startPos.distanceTo(goalFootVec);
 
   while (openSet.length > 0 && nodesCount < maxNodes) {
     nodesCount++;
@@ -5420,7 +5447,7 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 400) {
 
     closedSet.add(curKey);
 
-    const h = cur.pos.distanceTo(goalPos);
+    const h = cur.pos.distanceTo(goalFootVec);
     if (h < minH) {
       minH = h;
       closestNode = cur.pos;
@@ -5469,7 +5496,7 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 400) {
         if (!gScore.has(candKey) || tentativeG < gScore.get(candKey)) {
           cameFrom.set(candKey, cur.pos);
           gScore.set(candKey, tentativeG);
-          const f = tentativeG + cand.pos.distanceTo(goalPos);
+          const f = tentativeG + cand.pos.distanceTo(goalFootVec) * 1.15;
           const existing = openSet.find((item) => item.pos.toString() === candKey);
           if (!existing) {
             openSet.push({ pos: cand.pos, g: tentativeG, f });
@@ -5483,7 +5510,7 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 400) {
   }
 
   // Tam hedefe ulaşılamadıysa ama daha yakın bir konuma yol bulunduysa oraya git
-  if (minH < startPos.distanceTo(goalPos) - 1.5) {
+  if (minH < startPos.distanceTo(goalFootVec) - 1.2) {
     const path = [closestNode];
     let k = closestNode.toString();
     while (cameFrom.has(k)) {
@@ -5495,6 +5522,173 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 400) {
   }
 
   return null;
+}
+
+/**
+ * Kendi etrafında dönmeyi (yörüngeye girmeyi) %100 engelleyen yönelim + yürüyüş yardımcısı.
+ * Bot hedef açıya (<= 17 derece / 0.30 rad) dönmeden ileri ('forward') tuşuna basmaz;
+ * böylece yavaş dönüş sırasında ileri koşup waypoint etrafında daire çizmez!
+ */
+function alignAndStepForward(bot, targetYaw, session = null, dyStep = 0) {
+  if (!bot || !bot.entity) return false;
+  const remYaw = smoothHumanLook(bot, targetYaw, 0.26, 1.35);
+
+  // Bot henüz hedefe dönmediyse (> ~17 derece fark varsa), olduğu yerde dönmesini bekle (daire çizmesini engeller!)
+  if (remYaw > 0.30) {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    return true;
+  }
+
+  if (!isSafeToStep(bot, targetYaw, session)) {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    return false;
+  }
+
+  bot.setControlState('forward', true);
+  if (dyStep >= 0.35 || shouldJumpOverStep(bot, session)) {
+    bot.setControlState('jump', true);
+    setTimeout(() => {
+      if (bot) bot.setControlState('jump', false);
+    }, 220);
+  }
+  return true;
+}
+
+/**
+ * Tarla modları (Oto-Çapa, Oto-Ekim, Oto-Hasat ve Tarla Sandığı) için birleşik,
+ * kendi etrafında dönmeyen ve uzak hedeflerde takılmayan A* yürüyüş yöneticisi.
+ * Dönüş değerleri: 'reached' | 'walking' | 'unreachable'
+ */
+function stepFarmWalkTowardsTarget(
+  bot,
+  session,
+  targetBlockPos,
+  statePrefix,
+  reachEyeDist = 3.65,
+  reachHorizDist = 3.45,
+  targetTopYOffset = 0.95
+) {
+  if (!bot || !bot.entity || !bot.entity.position || !session || !targetBlockPos) {
+    return 'unreachable';
+  }
+
+  const myPos = bot.entity.position;
+  const eyePos = myPos.offset(0, bot.entity.height || 1.62, 0);
+  const targetCenter = targetBlockPos.offset(0.5, targetTopYOffset, 0.5);
+  const eyeDist = eyePos.distanceTo(targetCenter);
+  const horizDist = Math.hypot(targetBlockPos.x + 0.5 - myPos.x, targetBlockPos.z + 0.5 - myPos.z);
+
+  if (eyeDist <= reachEyeDist && horizDist <= reachHorizDist) {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    return 'reached';
+  }
+
+  const pathKey = `${statePrefix}CurrentPath`;
+  const idxKey = `${statePrefix}PathIndex`;
+  const targetStrKey = `${statePrefix}NavTargetStr`;
+  const bestDistKey = `${statePrefix}NavBestDist`;
+  const lastProgKey = `${statePrefix}NavLastProgressTime`;
+  const replanCountKey = `${statePrefix}NavReplanCount`;
+
+  const curTargetStr = targetBlockPos.toString();
+  const now = Date.now();
+
+  if (session[targetStrKey] !== curTargetStr) {
+    session[targetStrKey] = curTargetStr;
+    session[bestDistKey] = horizDist;
+    session[lastProgKey] = now;
+    session[replanCountKey] = 0;
+    session[pathKey] = null;
+    session[idxKey] = 0;
+  } else {
+    if (typeof session[bestDistKey] !== 'number' || horizDist < session[bestDistKey] - 0.28) {
+      session[bestDistKey] = horizDist;
+      session[lastProgKey] = now;
+    } else if (now - (session[lastProgKey] || now) > 1500) {
+      // 1.5 saniyedir hedefe net olarak yaklaşamadıysa rotayı yeniden hesapla
+      session[pathKey] = null;
+      session[idxKey] = 0;
+      session[lastProgKey] = now;
+      session[replanCountKey] = (session[replanCountKey] || 0) + 1;
+      if (session[replanCountKey] >= 3) {
+        bot.setControlState('forward', false);
+        bot.setControlState('jump', false);
+        return 'unreachable';
+      }
+    }
+  }
+
+  const botFootPos = new Vec3(
+    Math.floor(myPos.x),
+    Math.floor(myPos.y + 0.25),
+    Math.floor(myPos.z)
+  );
+  const goalRadius = Math.min(2.0, Math.max(1.35, reachHorizDist - 1.15));
+
+  // Rota yoksa veya kısmi rota bittiyse hemen yeni A* rotası hesapla
+  if (!Array.isArray(session[pathKey]) || session[pathKey].length === 0 || (session[idxKey] || 0) >= session[pathKey].length) {
+    session[pathKey] = findFarmPath(bot, botFootPos, targetBlockPos, session, 2500, goalRadius);
+    session[idxKey] = 0;
+  }
+
+  const path = session[pathKey];
+  if (Array.isArray(path) && path.length > 0) {
+    let idx = session[idxKey] || 0;
+
+    // Zaten ulaşılmış veya geride kalmış ara düğümleri hızlıca geç
+    while (idx < path.length) {
+      const wp = path[idx];
+      const dWp = Math.hypot(wp.x + 0.5 - myPos.x, wp.z + 0.5 - myPos.z);
+      if (dWp < 0.52) {
+        idx++;
+        continue;
+      }
+      if (idx + 1 < path.length) {
+        const nextWp = path[idx + 1];
+        const dNext = Math.hypot(nextWp.x + 0.5 - myPos.x, nextWp.z + 0.5 - myPos.z);
+        if (dNext < dWp && dNext < 1.15) {
+          idx++;
+          continue;
+        }
+      }
+      break;
+    }
+
+    session[idxKey] = idx;
+
+    if (idx < path.length) {
+      const wp = path[idx];
+      const dx = wp.x + 0.5 - myPos.x;
+      const dz = wp.z + 0.5 - myPos.z;
+      const targetYaw = Math.atan2(-dx, -dz);
+      const dyStep = wp.y - myPos.y;
+
+      const stepped = alignAndStepForward(bot, targetYaw, session, dyStep);
+      if (!stepped) {
+        session[pathKey] = null;
+      }
+      return 'walking';
+    } else {
+      session[pathKey] = null;
+    }
+  }
+
+  // Eğer hedef çok yakındaysa (<= 3.8m) doğrudan hedefe dönerek güvenli adım at
+  if (horizDist <= 3.8) {
+    const dx = targetBlockPos.x + 0.5 - myPos.x;
+    const dz = targetBlockPos.z + 0.5 - myPos.z;
+    const targetYaw = Math.atan2(-dx, -dz);
+    alignAndStepForward(bot, targetYaw, session, 0);
+    return 'walking';
+  }
+
+  // Uzak hedefe A* yolu hiç bulunamadıysa
+  bot.setControlState('forward', false);
+  bot.setControlState('jump', false);
+  return 'unreachable';
 }
 
 function findHarvestableCropsAroundBot(bot, radius = 4.2, session = null) {
@@ -5539,29 +5733,27 @@ function findHarvestableCropsAroundBot(bot, radius = 4.2, session = null) {
   return results.map((item) => item.block);
 }
 
-function findNearestRipeCrop(bot, maxRadius = 20) {
+function findNearestRipeCrop(bot, maxRadius = 64) {
   if (!bot || !bot.entity || !bot.entity.position) return null;
   const botPos = bot.entity.position;
   const eyePos = botPos.offset(0, 1.6, 0);
   const baseX = Math.floor(botPos.x);
-  const baseY = Math.floor(botPos.y);
+  const baseY = Math.floor(botPos.y + 0.25);
   const baseZ = Math.floor(botPos.z);
 
-  const checkRadii = [6, 12, Math.min(Math.ceil(maxRadius), 20)];
-  for (const r of checkRadii) {
-    let nearest = null;
-    let minDistance = Infinity;
+  const limitR = Math.min(Math.max(Math.ceil(maxRadius), 16), 80);
+  const dyList = [0, -1, 1, -2, 2, -3, 3];
+  let nearest = null;
+  let minDistance = Infinity;
 
+  for (let r = 0; r <= limitR; r++) {
     for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dz = -r; dz <= r; dz++) {
-          const distSq = dx * dx + dz * dz;
-          if (distSq > r * r) continue;
-
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        for (const dy of dyList) {
           const targetPos = new Vec3(baseX + dx, baseY + dy, baseZ + dz);
           const block = bot.blockAt(targetPos);
           if (!block || !block.name || block.name === 'air') continue;
-
           if (isCropHarvestable(bot, block)) {
             const center = targetPos.offset(0.5, 0.5, 0.5);
             const d = eyePos.distanceTo(center);
@@ -5573,9 +5765,11 @@ function findNearestRipeCrop(bot, maxRadius = 20) {
         }
       }
     }
-    if (nearest) return nearest;
+    if (nearest && r >= 2) {
+      return nearest;
+    }
   }
-  return null;
+  return nearest;
 }
 
 async function fastHarvestCrop(bot, session, targetBlock, accountId, acc) {
@@ -5832,15 +6026,10 @@ function startAutoFarmLoop(accountId) {
 
       // Yeni hedef buğday/havuç/patates/pancar bul
       if (!targetCrop) {
-        targetCrop = findNearestRipeCrop(bot, 20);
+        targetCrop = findNearestRipeCrop(bot, 64);
         if (targetCrop) {
           session.farmTargetCropPos = targetCrop.position.clone();
-          const botFootPos = new Vec3(
-            Math.floor(bot.entity.position.x),
-            Math.floor(bot.entity.position.y + 0.2),
-            Math.floor(bot.entity.position.z)
-          );
-          session.farmCurrentPath = findFarmPath(bot, botFootPos, targetCrop.position);
+          session.farmCurrentPath = null;
           session.farmPathIndex = 0;
         } else {
           session.farmTargetCropPos = null;
@@ -5849,86 +6038,28 @@ function startAutoFarmLoop(accountId) {
       }
 
       if (targetCrop) {
-        const myPos = bot.entity.position;
-        const distToCrop = myPos.distanceTo(targetCrop.position.offset(0.5, 0, 0.5));
-
-        // Eğer ekin hemen yanımızda / menzilimizdeyse direkt yönel
-        if (distToCrop <= farmRadius) {
-          if (distToCrop <= 3.85) {
-            // Zaten menzilde, ekinin veya ada kenarının üstüne doğru yürüme
-            bot.setControlState('forward', false);
-            bot.setControlState('jump', false);
-            nextDelay = 40;
-          } else {
-            const dx = targetCrop.position.x + 0.5 - myPos.x;
-            const dz = targetCrop.position.z + 0.5 - myPos.z;
-            const targetYaw = Math.atan2(-dx, -dz);
-            if (isSafeToStep(bot, targetYaw, session)) {
-              smoothHumanLook(bot, targetYaw, 0.25);
-              bot.setControlState('forward', true);
-              tryJumpOverStep(bot, session);
-            } else {
-              bot.setControlState('forward', false);
-            }
-            nextDelay = 50;
-          }
-        } else if (session.farmCurrentPath && session.farmCurrentPath.length > 0) {
-          // Yol boyunca engellerin ve çitlerin etrafından dolanarak ilerle
-          const waypoint = session.farmCurrentPath[session.farmPathIndex || 0];
-          if (waypoint) {
-            const wpCenter = waypoint.offset(0.5, 0, 0.5);
-            const distToWp = Math.hypot(wpCenter.x - myPos.x, wpCenter.z - myPos.z);
-
-            if (distToWp < 0.45) {
-              session.farmPathIndex = (session.farmPathIndex || 0) + 1;
-              if (session.farmPathIndex >= session.farmCurrentPath.length) {
-                session.farmCurrentPath = null;
-              }
-            } else {
-              const dx = wpCenter.x - myPos.x;
-              const dz = wpCenter.z - myPos.z;
-              const targetYaw = Math.atan2(-dx, -dz);
-
-              if (isSafeToStep(bot, targetYaw, session)) {
-                smoothHumanLook(bot, targetYaw, 0.25);
-                bot.setControlState('forward', true);
-
-                // Yalnızca basamak çıkışı gerekiyorsa veya 1 blok basamak varsa zıpla
-                const dy = waypoint.y - myPos.y;
-                if (dy >= 0.35 || shouldJumpOverStep(bot, session)) {
-                  bot.setControlState('jump', true);
-                  setTimeout(() => { if (bot) bot.setControlState('jump', false); }, 250);
-                }
-              } else {
-                bot.setControlState('forward', false);
-                session.farmCurrentPath = null;
-              }
-            }
-            nextDelay = 60;
-          } else {
-            session.farmCurrentPath = null;
-          }
-        } else {
-          const botFootPos = new Vec3(
-            Math.floor(bot.entity.position.x),
-            Math.floor(bot.entity.position.y + 0.2),
-            Math.floor(bot.entity.position.z)
+        const navRes = stepFarmWalkTowardsTarget(
+          bot,
+          session,
+          targetCrop.position,
+          'farm',
+          Math.min(farmRadius, 3.85),
+          Math.min(farmRadius, 3.65),
+          0.5
+        );
+        if (navRes === 'reached') {
+          nextDelay = 40;
+        } else if (navRes === 'unreachable') {
+          if (!session.cropDigAttempts) session.cropDigAttempts = new Map();
+          session.cropDigAttempts.set(
+            `${targetCrop.position.x},${targetCrop.position.y},${targetCrop.position.z}`,
+            Date.now()
           );
-          session.farmCurrentPath = findFarmPath(bot, botFootPos, targetCrop.position);
-          session.farmPathIndex = 0;
-          nextDelay = 80;
-        }
-
-        // Anti-stuck: Bot aynı yerde 1.2 saniyeden uzun süre çakılı kaldıysa yolu sıfırla
-        const now = Date.now();
-        if (!session.lastFarmPos || myPos.distanceTo(session.lastFarmPos) > 0.3) {
-          session.lastFarmPos = myPos.clone();
-          session.lastFarmMoveTime = now;
-        } else if (now - (session.lastFarmMoveTime || now) > 1200) {
-          session.farmCurrentPath = null;
           session.farmTargetCropPos = null;
-          bot.setControlState('forward', false);
-          session.lastFarmMoveTime = now;
+          session.farmCurrentPath = null;
+          nextDelay = 60;
+        } else {
+          nextDelay = 55;
         }
       } else {
         // Tarlada hiç olgun buğday, havuç veya patates kalmadı
@@ -6064,76 +6195,86 @@ function canBlockBeTilled(bot, block) {
   return CLEARABLE_WEED_ABOVE_DIRT.has(aboveName);
 }
 
-function findTillableDirtAround(bot, maxRadius = 96, session = null) {
-  if (!bot || !bot.entity || !bot.entity.position) return [];
+/**
+ * Geniş ada/tarla katmanlarını (96-112 blok yarıçapa kadar) yeraltı topraklarına veya
+ * ekilmiş tarlalara takılmadan (bot.findBlocks 3500 limitine çarpmadan) doğrudan halka halka tarar.
+ */
+function scanFarmLayerBlocksAround(bot, maxRadius = 112, session = null, refFloorY = null, blacklist = null, startPos = null, matchFn) {
+  if (!bot || !bot.entity || !bot.entity.position || typeof matchFn !== 'function') return [];
   const botPos = bot.entity.position;
   const baseX = Math.floor(botPos.x);
   const footY = Math.floor(botPos.y + 0.25);
   const botFloorY = footY - 1;
   const baseZ = Math.floor(botPos.z);
-  const blacklist = (session && session.tillBlacklist) ? session.tillBlacklist : null;
+
+  const yLevelSet = new Set([
+    botFloorY,
+    botFloorY - 1,
+    botFloorY + 1,
+    botFloorY - 2,
+    botFloorY + 2,
+    botFloorY - 3,
+    botFloorY + 3,
+    botFloorY - 4,
+    botFloorY + 4
+  ]);
+  if (typeof refFloorY === 'number' && !Number.isNaN(refFloorY)) {
+    for (const dy of [0, -1, 1, -2, 2, -3, 3]) {
+      yLevelSet.add(refFloorY + dy);
+    }
+  }
+  const allYLevels = Array.from(yLevelSet);
+  const fastYLevels = allYLevels.slice(0, 6);
 
   const results = [];
   const seenKeys = new Set();
+  const limitR = Math.min(Math.max(Math.ceil(maxRadius), 64), 112);
+  let firstHitRing = -1;
 
-  // 1. Hızlı Yakın Çevre Taraması (16 blok yarıçap, dy: -4..+3)
-  const localR = Math.min(Math.ceil(maxRadius), 16);
-  for (let dx = -localR; dx <= localR; dx++) {
-    for (let dy = -4; dy <= 3; dy++) {
-      for (let dz = -localR; dz <= localR; dz++) {
-        const targetPos = new Vec3(baseX + dx, botFloorY + dy, baseZ + dz);
-        const key = targetPos.toString();
-        if (blacklist && blacklist.has(key)) continue;
-        const block = bot.blockAt(targetPos);
-        if (canBlockBeTilled(bot, block)) {
-          seenKeys.add(key);
-          results.push(block);
-        }
-      }
-    }
-  }
-
-  // 2. Yakında toprak kalmadıysa tüm adayı / geniş tarlayı (96 blok yarıçap) chunk-tabanlı hızlı tara
-  if (results.length === 0 && maxRadius > 16) {
-    const scanDist = Math.min(Math.max(Math.ceil(maxRadius), 64), 112);
-    if (typeof bot.findBlocks === 'function') {
-      const foundPositions = bot.findBlocks({
-        matching: (blk) => blk && blk.name && TILLABLE_DIRT_NAMES.has(blk.name.toLowerCase()),
-        maxDistance: scanDist,
-        count: 3500
-      });
-      for (const pos of foundPositions) {
-        if (Math.abs(pos.y - botFloorY) > 8) continue;
-        const key = pos.toString();
-        if (seenKeys.has(key)) continue;
-        if (blacklist && blacklist.has(key)) continue;
-        const block = bot.blockAt(pos);
-        if (canBlockBeTilled(bot, block)) {
-          seenKeys.add(key);
-          results.push(block);
-        }
-      }
-    } else {
-      const wideR = Math.min(scanDist, 64);
-      for (let dx = -wideR; dx <= wideR; dx++) {
-        for (let dy = -4; dy <= 3; dy++) {
-          for (let dz = -wideR; dz <= wideR; dz++) {
-            const targetPos = new Vec3(baseX + dx, botFloorY + dy, baseZ + dz);
-            const key = targetPos.toString();
+  const scanCenterRings = (centerX, centerZ, maxRing) => {
+    for (let r = 0; r <= maxRing; r++) {
+      const yList = r <= 24 ? allYLevels : fastYLevels;
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          const x = centerX + dx;
+          const z = centerZ + dz;
+          for (let yi = 0; yi < yList.length; yi++) {
+            const y = yList[yi];
+            const key = `${x},${y},${z}`;
             if (seenKeys.has(key)) continue;
-            if (blacklist && blacklist.has(key)) continue;
+            if (blacklist && (blacklist.has(key) || blacklist.has(`(${x}, ${y}, ${z})`))) continue;
+            const targetPos = new Vec3(x, y, z);
             const block = bot.blockAt(targetPos);
-            if (canBlockBeTilled(bot, block)) {
+            if (block && matchFn(bot, block)) {
               seenKeys.add(key);
               results.push(block);
+              if (firstHitRing === -1) firstHitRing = r;
             }
           }
         }
       }
+      // Yeterince yakın hedef bulunduğunda tüm adayı gereksiz taramamak için erken çık;
+      // ancak yakında hiç hedef yoksa 112 blok uzağa kadar kesintisiz taramaya devam et!
+      if (results.length >= 80 && firstHitRing !== -1 && r >= firstHitRing + 4 && r >= 12) {
+        break;
+      }
+    }
+  };
+
+  scanCenterRings(baseX, baseZ, limitR);
+
+  // Eğer bot başlangıç noktasından çok uzaklaştıysa ve kendi çevresinde blok kalmadıysa,
+  // başlangıç konumu etrafındaki uzak köşeleri de tara
+  if (results.length === 0 && startPos) {
+    const sx = Math.floor(startPos.x);
+    const sz = Math.floor(startPos.z);
+    if (Math.hypot(sx - baseX, sz - baseZ) > 16) {
+      scanCenterRings(sx, sz, limitR);
     }
   }
 
-  // Aynı katmandaki (Y seviyesi yakın) ve bota en yakın toprakları öncele
+  // Aynı katmandaki (Y seviyesi yakın) ve bota en yakın blokları öncele
   results.sort((a, b) => {
     const aSameLayer = Math.abs(a.position.y - botFloorY) <= 1 ? 0 : 1;
     const bSameLayer = Math.abs(b.position.y - botFloorY) <= 1 ? 0 : 1;
@@ -6147,12 +6288,291 @@ function findTillableDirtAround(bot, maxRadius = 96, session = null) {
   return results;
 }
 
+/**
+ * Adadaki tüm sandık, tuzaklı sandık, varil ve shulker kutularını hem doğrudan katman taramasıyla
+ * hem de chunk aramasıyla bulup hafızaya (session.farmKnownChests) kaydeder.
+ */
+function discoverFarmChests(bot, session, maxRadius = 88) {
+  if (!bot || !bot.entity || !bot.entity.position || !session) return [];
+  if (!session.farmKnownChests) session.farmKnownChests = new Map();
+  if (!session.emptyFarmChests) session.emptyFarmChests = new Map();
+
+  const botPos = bot.entity.position;
+  const baseX = Math.floor(botPos.x);
+  const botFloorY = Math.floor(botPos.y + 0.25) - 1;
+  const baseZ = Math.floor(botPos.z);
+
+  const addChestPos = (p) => {
+    if (!p) return;
+    const pos = new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z));
+    const key = `${pos.x},${pos.y},${pos.z}`;
+    session.farmKnownChests.set(key, pos);
+  };
+
+  // 1. Doğrudan katman taraması (r = 0..48, dy = -4..+5): bot.findBlocks kaçırsa bile %100 yakalar
+  const directR = Math.min(Math.ceil(maxRadius), 48);
+  for (let dx = -directR; dx <= directR; dx++) {
+    for (let dz = -directR; dz <= directR; dz++) {
+      for (let dy = -4; dy <= 5; dy++) {
+        const checkPos = new Vec3(baseX + dx, botFloorY + dy, baseZ + dz);
+        const blk = bot.blockAt(checkPos);
+        if (blk && blk.name && isFarmContainerBlockName(blk.name)) {
+          addChestPos(checkPos);
+        }
+      }
+    }
+  }
+
+  // Başlangıç noktasının (plantStartPos / tillStartPos) etrafını da doğrudan tara
+  const refStart = session.plantStartPos || session.tillStartPos;
+  if (refStart && Math.hypot(refStart.x - botPos.x, refStart.z - botPos.z) > 12) {
+    const sx = Math.floor(refStart.x);
+    const sy = Math.floor(refStart.y);
+    const sz = Math.floor(refStart.z);
+    for (let dx = -24; dx <= 24; dx++) {
+      for (let dz = -24; dz <= 24; dz++) {
+        for (let dy = -4; dy <= 5; dy++) {
+          const checkPos = new Vec3(sx + dx, sy + dy, sz + dz);
+          const blk = bot.blockAt(checkPos);
+          if (blk && blk.name && isFarmContainerBlockName(blk.name)) {
+            addChestPos(checkPos);
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Geniş ada taraması (bot.findBlocks ile 88 blok yarıçap)
+  if (typeof bot.findBlocks === 'function') {
+    try {
+      const found = bot.findBlocks({
+        matching: (blk) => blk && blk.name && isFarmContainerBlockName(blk.name),
+        maxDistance: Math.min(Math.ceil(maxRadius), 96),
+        count: 128
+      });
+      for (const p of found) {
+        addChestPos(p);
+      }
+    } catch (e) {}
+  }
+
+  // Hafızadaki sandıklardan hala dünyada var olanları filtrele ve bota yakınlığına göre sırala
+  const validChests = [];
+  for (const [key, pos] of session.farmKnownChests.entries()) {
+    const blk = bot.blockAt(pos);
+    if (blk && blk.name && isFarmContainerBlockName(blk.name)) {
+      validChests.push(pos);
+    } else if (blk && (blk.name === 'air' || blk.name === 'cave_air' || blk.name === 'void_air')) {
+      session.farmKnownChests.delete(key);
+    }
+  }
+
+  validChests.sort((a, b) => {
+    const aSameLayer = Math.abs(a.y - botFloorY) <= 3 ? 0 : 1;
+    const bSameLayer = Math.abs(b.y - botFloorY) <= 3 ? 0 : 1;
+    if (aSameLayer !== bSameLayer) return aSameLayer - bSameLayer;
+    return botPos.distanceTo(a.offset(0.5, 0.5, 0.5)) - botPos.distanceTo(b.offset(0.5, 0.5, 0.5));
+  });
+
+  return validChests;
+}
+
+/**
+ * Oto-Ekim (tohum) ve Oto-Çapalama (çapa) için adadaki tüm sandıkları tek tek dolaşarak
+ * malzeme çeken akıllı sandık tazeleme yöneticisi.
+ * Dönüş değerleri: 'restocked' | 'walking' | 'next_chest' | 'no_chests' | 'all_empty'
+ */
+async function stepFarmChestRestock(
+  bot,
+  session,
+  accountId,
+  wantedItemNames,
+  logTag,
+  itemLabel,
+  maxWithdrawCount = 256
+) {
+  if (!bot || !bot.entity || !bot.entity.position || !session) return 'no_chests';
+
+  const allChests = discoverFarmChests(bot, session, 88);
+  if (allChests.length === 0) {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    const now = Date.now();
+    if (!session.lastNoFarmChestLog || now - session.lastNoFarmChestLog > 4000) {
+      session.lastNoFarmChestLog = now;
+      addLog(
+        accountId,
+        logTag,
+        `⚠️ ${itemLabel} bitti! Adada (88 blok yarıçapta) hiçbir sandık/varil algılanamadı. Lütfen tarla katmanına ${itemLabel} dolu bir sandık koyun.`,
+        chalk.redBright
+      );
+    }
+    return 'no_chests';
+  }
+
+  const now = Date.now();
+  if (!session.emptyFarmChests) session.emptyFarmChests = new Map();
+
+  // Son 16 saniye içinde boş olduğu görülen sandıkları geçici olarak atla ki diğer sandıklara baksın
+  let availableChests = allChests.filter((pos) => {
+    const key = `${pos.x},${pos.y},${pos.z}`;
+    const lastEmpty = session.emptyFarmChests.get(key) || 0;
+    return now - lastEmpty > 16000;
+  });
+
+  // Eğer tüm sandıklar kontrol edilip boş çıktıysa, 10 saniye sonra listeyi sıfırla ve tekrar kontrol et
+  if (availableChests.length === 0) {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    if (!session.lastAllFarmChestsEmptyLog || now - session.lastAllFarmChestsEmptyLog > 4500) {
+      session.lastAllFarmChestsEmptyLog = now;
+      addLog(
+        accountId,
+        logTag,
+        `⚠️ Adadaki ${allChests.length} sandık kontrol edildi ancak içinde ${itemLabel} bulunamadı! Sandıklara ${itemLabel} eklenmesi bekleniyor...`,
+        chalk.yellowBright
+      );
+    }
+    return 'all_empty';
+  }
+
+  const targetChestPos = availableChests[0];
+  const chestKey = `${targetChestPos.x},${targetChestPos.y},${targetChestPos.z}`;
+  const myPos = bot.entity.position;
+  const eyePos = myPos.offset(0, bot.entity.height || 1.62, 0);
+  const chestCenter = targetChestPos.offset(0.5, 0.5, 0.5);
+  const eyeDist = eyePos.distanceTo(chestCenter);
+  const horizDist = Math.hypot(targetChestPos.x + 0.5 - myPos.x, targetChestPos.z + 0.5 - myPos.z);
+
+  // 1. Sandık henüz uzanma mesafesinde değilse (> 3.75m), doğrudan sandığın yanına yürü
+  if (eyeDist > 3.75 || horizDist > 3.45) {
+    const navRes = stepFarmWalkTowardsTarget(
+      bot,
+      session,
+      targetChestPos,
+      'farmChest',
+      3.65,
+      3.35,
+      0.5
+    );
+    if (navRes === 'unreachable') {
+      session.emptyFarmChests.set(chestKey, now);
+      session.farmChestCurrentPath = null;
+      return 'next_chest';
+    }
+    return 'walking';
+  }
+
+  // 2. Sandığın yanına ulaşıldı! Hareketi durdur ve sandığı aç
+  bot.setControlState('forward', false);
+  bot.setControlState('jump', false);
+  bot.setControlState('sprint', false);
+  session.farmChestCurrentPath = null;
+
+  const chestBlock = bot.blockAt(targetChestPos);
+  if (!chestBlock || !isFarmContainerBlockName(chestBlock.name)) {
+    session.emptyFarmChests.set(chestKey, now);
+    return 'next_chest';
+  }
+
+  const wantedSet = new Set(wantedItemNames.map((n) => n.toLowerCase()));
+  let totalWithdrawn = 0;
+  let opened = null;
+
+  try {
+    opened = await safelyOpenContainer(bot, chestBlock, session);
+    const container = opened.container;
+
+    for (let slot = 0; slot < container.inventoryStart; slot++) {
+      if (isBotInventoryFull(bot)) break;
+      const slotItem = container.slots[slot];
+      if (!slotItem || !slotItem.name) continue;
+      if (!wantedSet.has(slotItem.name.toLowerCase())) continue;
+
+      const countBefore = slotItem.count;
+      try {
+        await bot.clickWindow(slot, 0, 1);
+        await new Promise((r) => setTimeout(r, 95));
+        const afterSlot = container.slots[slot];
+        const moved = !afterSlot ? countBefore : Math.max(0, countBefore - afterSlot.count);
+        if (moved > 0) {
+          totalWithdrawn += moved;
+        } else if (typeof container.withdraw === 'function') {
+          await container.withdraw(slotItem.type, null, countBefore);
+          totalWithdrawn += countBefore;
+          await new Promise((r) => setTimeout(r, 80));
+        }
+        if (totalWithdrawn >= maxWithdrawCount) break;
+      } catch (clickErr) {
+        try {
+          if (typeof container.withdraw === 'function') {
+            await container.withdraw(slotItem.type, null, countBefore);
+            totalWithdrawn += countBefore;
+          }
+        } catch (e2) {}
+        if (totalWithdrawn >= maxWithdrawCount) break;
+      }
+    }
+
+    try {
+      container.close();
+    } catch (e) {}
+  } catch (openErr) {
+    // Sandık açılamadıysa (üzerinde tam blok varsa veya kilitliyse) bu sandığı geçici olarak atla
+    session.emptyFarmChests.set(chestKey, now);
+    return 'next_chest';
+  } finally {
+    if (opened && opened.hadSneakLock && session.bot && session.status === 'online') {
+      try {
+        session.bot.setControlState('sneak', true);
+      } catch (e) {}
+    }
+  }
+
+  if (totalWithdrawn > 0) {
+    session.emptyFarmChests.delete(chestKey);
+    addLog(
+      accountId,
+      logTag,
+      `📦 Sandıktan [${targetChestPos.x}, ${targetChestPos.y}, ${targetChestPos.z}] ${totalWithdrawn} adet ${itemLabel} alındı! İşleme devam ediliyor...`,
+      chalk.greenBright
+    );
+    return 'restocked';
+  }
+
+  // Bu sandıkta aranan eşya yok; boş olarak işaretle ve hemen sıradaki sandığa geç!
+  session.emptyFarmChests.set(chestKey, now);
+  if (availableChests.length > 1) {
+    addLog(
+      accountId,
+      logTag,
+      `📦 Sandıkta [${targetChestPos.x}, ${targetChestPos.y}, ${targetChestPos.z}] ${itemLabel} bulunamadı, sıradaki sandığa geçiliyor (${availableChests.length - 1} sandık kaldı)...`,
+      chalk.cyan
+    );
+  }
+  return 'next_chest';
+}
+
+function findTillableDirtAround(bot, maxRadius = 112, session = null) {
+  const blacklist = session && session.tillBlacklist ? session.tillBlacklist : null;
+  const refFloorY = session && typeof session.tillFarmY === 'number' ? session.tillFarmY : null;
+  const startPos = session && session.tillStartPos ? session.tillStartPos : null;
+  return scanFarmLayerBlocksAround(
+    bot,
+    maxRadius,
+    session,
+    refFloorY,
+    blacklist,
+    startPos,
+    canBlockBeTilled
+  );
+}
+
 async function tillDirtBlock(bot, session, targetBlock, accountId) {
   if (!bot || !targetBlock || !session.autoTill || session.status !== 'online') return false;
 
   const hoe = getHoeItem(bot);
   if (!hoe && (!bot.heldItem || !HOE_NAMES.includes(bot.heldItem.name.toLowerCase()))) {
-    addLog(accountId, 'OTO-ÇAPALAMA', '⚠️ Çapalama durduruldu: Envanterde çapa yok!', chalk.yellow);
     return false;
   }
 
@@ -6162,7 +6582,7 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  const posKey = targetBlock.position.toString();
+  const posKey = `${targetBlock.position.x},${targetBlock.position.y},${targetBlock.position.z}`;
   if (!session.tillAttemptCounts) session.tillAttemptCounts = new Map();
 
   // Üstteki ot/çiçek varsa önce kır
@@ -6232,6 +6652,7 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
   if (becameFarmland || convertedCoarse) {
     session.tillAttemptCounts.delete(posKey);
     session.tillEmptyScanCount = 0;
+    session.tillFarmY = targetBlock.position.y;
     if (becameFarmland) {
       session.stats.blocksTilled = (session.stats.blocksTilled || 0) + 1;
       if (session.stats.blocksTilled % 15 === 0 || session.stats.blocksTilled === 1) {
@@ -6253,9 +6674,12 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
     if (!session.tillBlacklist) session.tillBlacklist = new Set();
     session.tillBlacklist.add(posKey);
     session.tillAttemptCounts.delete(posKey);
-    if (session.tillTargetDirtPos && session.tillTargetDirtPos.toString() === posKey) {
-      session.tillTargetDirtPos = null;
-      session.tillCurrentPath = null;
+    if (session.tillTargetDirtPos) {
+      const tStr = `${session.tillTargetDirtPos.x},${session.tillTargetDirtPos.y},${session.tillTargetDirtPos.z}`;
+      if (tStr === posKey) {
+        session.tillTargetDirtPos = null;
+        session.tillCurrentPath = null;
+      }
     }
   }
   return false;
@@ -6279,11 +6703,13 @@ function startAutoTillLoop(accountId) {
   session.tillAttemptCounts = new Map();
   session.tillEmptyScanCount = 0;
   session.tillRetriedBlacklist = false;
-  session.lastTillWalkPos = null;
-  session.lastTillWalkMoveTime = Date.now();
+  session.farmKnownChests = new Map();
+  session.emptyFarmChests = new Map();
 
   if (session.bot && session.bot.entity && session.bot.entity.position) {
-    session.tillFarmY = Math.floor(session.bot.entity.position.y + 0.25);
+    session.tillStartPos = session.bot.entity.position.clone();
+    session.tillFarmY = Math.floor(session.bot.entity.position.y + 0.25) - 1;
+    discoverFarmChests(session.bot, session, 88);
   }
 
   const step = async () => {
@@ -6348,20 +6774,23 @@ function startAutoTillLoop(accountId) {
       }
     }
 
-    // Çapa kontrolü
+    // Çapa kontrolü (Envanterde çapa yoksa adadaki sandıklardan otomatik çapa çek!)
     const hoe = getHoeItem(bot);
     if (!hoe && (!bot.heldItem || !HOE_NAMES.includes(bot.heldItem.name.toLowerCase()))) {
-      addLog(
+      const chestRes = await stepFarmChestRestock(
+        bot,
+        session,
         accountId,
+        HOE_NAMES,
         'OTO-ÇAPALAMA',
-        '⚠️ Envanterde çapa bulunamadı! Çapa bekleniyor...',
-        chalk.yellowBright
+        'çapa',
+        2
       );
-      try {
-        bot.setControlState('forward', false);
-        bot.setControlState('jump', false);
-      } catch (e) {}
-      session.tillTimer = setTimeout(step, 2500);
+      const waitMs =
+        chestRes === 'walking' ? 55 :
+        chestRes === 'next_chest' ? 150 :
+        chestRes === 'restocked' ? 150 : 2500;
+      session.tillTimer = setTimeout(step, waitMs);
       return;
     }
 
@@ -6371,15 +6800,15 @@ function startAutoTillLoop(accountId) {
       } catch (e) {}
     }
 
-    // Etraftaki tüm çapalanabilir toprakları bul (geniş 96 blok ada taraması)
-    let tillableBlocks = findTillableDirtAround(bot, 96, session);
+    // Etraftaki tüm çapalanabilir toprakları bul (geniş 112 blok katman taraması)
+    let tillableBlocks = findTillableDirtAround(bot, 112, session);
 
     // Eğer blacklist yüzünden blok kalmadıysa blacklist'i temizleyip tekrar kontrol et
     if (tillableBlocks.length === 0 && session.tillBlacklist && session.tillBlacklist.size > 0 && !session.tillRetriedBlacklist) {
       session.tillRetriedBlacklist = true;
       session.tillBlacklist.clear();
       if (session.tillAttemptCounts) session.tillAttemptCounts.clear();
-      tillableBlocks = findTillableDirtAround(bot, 96, session);
+      tillableBlocks = findTillableDirtAround(bot, 112, session);
     }
 
     // Etrafta hiç toprak görünmüyorsa hemen kapanma; 3 ardışık tam ada taraması boyunca doğrula
@@ -6449,7 +6878,7 @@ function startAutoTillLoop(accountId) {
     // 2. EN YAKIN ÇAPALANMAMIŞ TOPRAĞA DOĞRU YÜRÜ
     let targetDirt = null;
     if (session.tillTargetDirtPos) {
-      const tKey = session.tillTargetDirtPos.toString();
+      const tKey = `${session.tillTargetDirtPos.x},${session.tillTargetDirtPos.y},${session.tillTargetDirtPos.z}`;
       const isBlacklisted = session.tillBlacklist && session.tillBlacklist.has(tKey);
       const curB = !isBlacklisted ? bot.blockAt(session.tillTargetDirtPos) : null;
       if (curB && canBlockBeTilled(bot, curB)) {
@@ -6461,16 +6890,10 @@ function startAutoTillLoop(accountId) {
     }
 
     if (!targetDirt) {
-      const remaining = findTillableDirtAround(bot, 96, session);
-      if (remaining.length > 0) {
-        targetDirt = remaining[0];
+      if (tillableBlocks.length > 0) {
+        targetDirt = tillableBlocks[0];
         session.tillTargetDirtPos = targetDirt.position.clone();
-        const botFootPos = new Vec3(
-          Math.floor(bot.entity.position.x),
-          Math.floor(bot.entity.position.y + 0.25),
-          Math.floor(bot.entity.position.z)
-        );
-        session.tillCurrentPath = findFarmPath(bot, botFootPos, targetDirt.position, session, 1500);
+        session.tillCurrentPath = null;
         session.tillPathIndex = 0;
       } else {
         session.tillTargetDirtPos = null;
@@ -6481,99 +6904,25 @@ function startAutoTillLoop(accountId) {
     let nextDelay = 50;
 
     if (targetDirt) {
-      const curTargetStr = targetDirt.position.toString();
-      const now = Date.now();
-
-      // Hareket ilerleme kontrolü (takılma önleyici)
-      if (!session.lastTillWalkPos || myPos.distanceTo(session.lastTillWalkPos) > 0.28) {
-        session.lastTillWalkPos = myPos.clone();
-        session.lastTillWalkMoveTime = now;
-      } else if (now - (session.lastTillWalkMoveTime || now) > 1500) {
-        // 1.5 saniyedir ilerleyemediyse yeni A* rotası hesapla
-        const botFootPos = new Vec3(
-          Math.floor(myPos.x),
-          Math.floor(myPos.y + 0.25),
-          Math.floor(myPos.z)
-        );
-        session.tillCurrentPath = findFarmPath(bot, botFootPos, targetDirt.position, session, 1500);
-        session.tillPathIndex = 0;
-        session.lastTillWalkMoveTime = now;
-      }
-
-      if (session.tillLastTargetPosStr === curTargetStr) {
-        session.tillTargetStuckCount = (session.tillTargetStuckCount || 0) + 1;
-        if (session.tillTargetStuckCount > 75) {
-          if (!session.tillBlacklist) session.tillBlacklist = new Set();
-          session.tillBlacklist.add(curTargetStr);
-          session.tillTargetDirtPos = null;
-          session.tillCurrentPath = null;
-          session.tillTargetStuckCount = 0;
-        }
+      const navRes = stepFarmWalkTowardsTarget(
+        bot,
+        session,
+        targetDirt.position,
+        'till',
+        3.60,
+        3.45,
+        1.0
+      );
+      if (navRes === 'reached') {
+        nextDelay = 35;
+      } else if (navRes === 'unreachable') {
+        const bKey = `${targetDirt.position.x},${targetDirt.position.y},${targetDirt.position.z}`;
+        if (!session.tillBlacklist) session.tillBlacklist = new Set();
+        session.tillBlacklist.add(bKey);
+        session.tillTargetDirtPos = null;
+        session.tillCurrentPath = null;
+        nextDelay = 50;
       } else {
-        session.tillLastTargetPosStr = curTargetStr;
-        session.tillTargetStuckCount = 0;
-      }
-
-      const topCenter = targetDirt.position.offset(0.5, 1.0, 0.5);
-      const eyeDistToDirt = eyePos.distanceTo(topCenter);
-      const horizDistToDirt = Math.hypot(targetDirt.position.x + 0.5 - myPos.x, targetDirt.position.z + 0.5 - myPos.z);
-
-      // Eğer hedef toprak göz menzilimize girdiyse (<= 3.55m), dur ve bir sonraki adımda çapala!
-      if (eyeDistToDirt <= 3.55 && horizDistToDirt <= 3.45) {
-        bot.setControlState('forward', false);
-        bot.setControlState('jump', false);
-        session.tillTimer = setTimeout(step, 35);
-        return;
-      }
-
-      if (session.tillCurrentPath && session.tillCurrentPath.length > 0) {
-        // A* Yolu takibi: Engellerin etrafından güvenle dolanarak ilerle
-        const waypoint = session.tillCurrentPath[session.tillPathIndex || 0];
-        if (waypoint) {
-          const wpCenter = waypoint.offset(0.5, 0, 0.5);
-          const distToWp = Math.hypot(wpCenter.x - myPos.x, wpCenter.z - myPos.z);
-
-          if (distToWp < 0.48) {
-            session.tillPathIndex = (session.tillPathIndex || 0) + 1;
-            if (session.tillPathIndex >= session.tillCurrentPath.length) {
-              session.tillCurrentPath = null;
-            }
-          } else {
-            const dx = wpCenter.x - myPos.x;
-            const dz = wpCenter.z - myPos.z;
-            const targetYaw = Math.atan2(-dx, -dz);
-
-            if (isSafeToStep(bot, targetYaw, session)) {
-              smoothHumanLook(bot, targetYaw, 0.25);
-              bot.setControlState('forward', true);
-
-              const dy = waypoint.y - myPos.y;
-              if (dy >= 0.35 || shouldJumpOverStep(bot, session)) {
-                bot.setControlState('jump', true);
-                setTimeout(() => { if (bot) bot.setControlState('jump', false); }, 250);
-              }
-            } else {
-              // Boşluk / ada kenarı tespit edildi, ileri gitme!
-              bot.setControlState('forward', false);
-              session.tillCurrentPath = null;
-            }
-          }
-          nextDelay = 50;
-        } else {
-          session.tillCurrentPath = null;
-        }
-      } else {
-        // Doğrudan hedefe doğru güvenli adım
-        const dx = targetDirt.position.x + 0.5 - myPos.x;
-        const dz = targetDirt.position.z + 0.5 - myPos.z;
-        const targetYaw = Math.atan2(-dx, -dz);
-        if (isSafeToStep(bot, targetYaw, session)) {
-          smoothHumanLook(bot, targetYaw, 0.25);
-          bot.setControlState('forward', true);
-          tryJumpOverStep(bot, session);
-        } else {
-          bot.setControlState('forward', false);
-        }
         nextDelay = 50;
       }
     } else {
@@ -6606,6 +6955,7 @@ function stopAutoTillLoop(accountId) {
   session.tillCurrentPath = null;
   session.tillStandPos = null;
   session.tillTargetDirtPos = null;
+  session.tillStartPos = null;
   session.tillBlacklist = null;
   session.tillAttemptCounts = null;
   session.tillEmptyScanCount = 0;
@@ -6641,7 +6991,11 @@ const PLANTABLE_SEED_NAMES = [
   'potato',
   'potatoes',
   'beetroot_seeds',
-  'beetroot_seed'
+  'beetroot_seed',
+  'melon_seeds',
+  'pumpkin_seeds',
+  'torchflower_seeds',
+  'pitcher_pod'
 ];
 
 function getSeedItem(bot) {
@@ -6663,69 +7017,19 @@ function isPlantableFarmland(bot, block) {
   return aboveName === 'air' || aboveName === 'cave_air' || aboveName === 'void_air';
 }
 
-function findPlantableFarmlandAround(bot, maxRadius = 96, session = null) {
-  if (!bot || !bot.entity || !bot.entity.position) return [];
-  const botPos = bot.entity.position;
-  const baseX = Math.floor(botPos.x);
-  const footY = Math.floor(botPos.y + 0.25);
-  const baseY = (session && typeof session.plantFarmY === 'number') ? session.plantFarmY : footY;
-  const baseZ = Math.floor(botPos.z);
-  const results = [];
-  const seen = new Set();
-
-  // 1. Önce botun yakın çevresini (16 blok yarıçap) hızlıca tara
-  const localR = Math.min(Math.ceil(maxRadius), 16);
-  for (let dx = -localR; dx <= localR; dx++) {
-    for (let dy = -3; dy <= 2; dy++) {
-      for (let dz = -localR; dz <= localR; dz++) {
-        const targetPos = new Vec3(baseX + dx, footY + dy, baseZ + dz);
-        const key = targetPos.toString();
-        seen.add(key);
-        if (session && session.plantBlacklist && session.plantBlacklist.has(key)) {
-          continue;
-        }
-        const block = bot.blockAt(targetPos);
-        if (isPlantableFarmland(bot, block)) {
-          results.push(block);
-        }
-      }
-    }
-  }
-
-  // 2. Yakın çevrede boş tarla kalmadıysa tüm adayı (96-112 blok yarıçap) chunk bazlı tara
-  if (results.length === 0 && maxRadius > 16 && typeof bot.findBlocks === 'function') {
-    const wideR = Math.min(Math.ceil(maxRadius), 112);
-    try {
-      const candidatePositions = bot.findBlocks({
-        matching: (blk) => blk && blk.name && blk.name.toLowerCase() === 'farmland',
-        maxDistance: wideR,
-        count: 3500
-      });
-      for (const pos of candidatePositions) {
-        if (Math.abs(pos.y - baseY) > 8 && Math.abs(pos.y - footY) > 8) continue;
-        const key = pos.toString();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        if (session && session.plantBlacklist && session.plantBlacklist.has(key)) {
-          continue;
-        }
-        const block = bot.blockAt(pos);
-        if (isPlantableFarmland(bot, block)) {
-          results.push(block);
-        }
-      }
-    } catch (e) {}
-  }
-
-  // Bota en yakın olandan uzağa doğru sırala
-  results.sort((a, b) => {
-    return (
-      botPos.distanceTo(a.position.offset(0.5, 0.5, 0.5)) -
-      botPos.distanceTo(b.position.offset(0.5, 0.5, 0.5))
-    );
-  });
-
-  return results;
+function findPlantableFarmlandAround(bot, maxRadius = 112, session = null) {
+  const blacklist = session && session.plantBlacklist ? session.plantBlacklist : null;
+  const refFloorY = session && typeof session.plantFarmY === 'number' ? session.plantFarmY : null;
+  const startPos = session && session.plantStartPos ? session.plantStartPos : null;
+  return scanFarmLayerBlocksAround(
+    bot,
+    maxRadius,
+    session,
+    refFloorY,
+    blacklist,
+    startPos,
+    isPlantableFarmland
+  );
 }
 
 async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
@@ -6776,13 +7080,14 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
 
   await new Promise((r) => setTimeout(r, 75));
 
-  const posKey = targetBlock.position.toString();
+  const posKey = `${targetBlock.position.x},${targetBlock.position.y},${targetBlock.position.z}`;
   const aboveNow = bot.blockAt(targetBlock.position.offset(0, 1, 0));
   const aboveName = aboveNow && aboveNow.name ? aboveNow.name.toLowerCase() : 'air';
   const plantedSuccess = aboveName !== 'air' && aboveName !== 'cave_air' && aboveName !== 'void_air';
 
   if (plantedSuccess) {
     if (session.plantFailCounts) session.plantFailCounts.delete(posKey);
+    session.plantFarmY = targetBlock.position.y;
     session.stats.cropsPlanted = (session.stats.cropsPlanted || 0) + 1;
     if (session.stats.cropsPlanted % 15 === 0 || session.stats.cropsPlanted === 1) {
       addLog(
@@ -6823,20 +7128,32 @@ function startAutoPlantLoop(accountId) {
   session.plantLastTargetPosStr = null;
   session.plantReturnPath = null;
   session.plantReturnPathIndex = 0;
+  session.plantBlacklist = new Set();
   session.plantFailCounts = new Map();
   session.plantEmptyScanCount = 0;
+  session.plantRetriedBlacklist = false;
+  session.farmKnownChests = new Map();
+  session.emptyFarmChests = new Map();
 
   if (session.bot && session.bot.entity && session.bot.entity.position) {
-    if (!session.plantStartPos) {
-      session.plantStartPos = session.bot.entity.position.clone();
+    session.plantStartPos = session.bot.entity.position.clone();
+    session.plantFarmY = Math.floor(session.bot.entity.position.y + 0.25) - 1;
+    const detectedChests = discoverFarmChests(session.bot, session, 88);
+    if (detectedChests.length > 0) {
       addLog(
         accountId,
         'OTO-EKİM',
-        `📍 Başlangıç konumu kaydedildi: X:${Math.floor(session.plantStartPos.x)} Y:${Math.floor(session.plantStartPos.y)} Z:${Math.floor(session.plantStartPos.z)} (Tohum bittiğinde buradaki sandıktan tazelenecek)`,
+        `📦 Adada ${detectedChests.length} adet sandık/varil algılandı (En yakın: X:${detectedChests[0].x} Y:${detectedChests[0].y} Z:${detectedChests[0].z}). Tohum bittiğinde otomatik olarak bu sandıklardan çekilecek.`,
+        chalk.cyan
+      );
+    } else {
+      addLog(
+        accountId,
+        'OTO-EKİM',
+        `📍 Oto-Ekim başlatıldı (X:${Math.floor(session.plantStartPos.x)} Y:${Math.floor(session.plantStartPos.y)} Z:${Math.floor(session.plantStartPos.z)}). Tohum bittiğinde çevredeki sandıklar taranacak.`,
         chalk.cyan
       );
     }
-    session.plantFarmY = Math.floor(session.bot.entity.position.y + 0.25);
   }
 
   const step = async () => {
@@ -6894,152 +7211,29 @@ function startAutoPlantLoop(accountId) {
 
     const myPos = bot.entity.position;
 
-    // TOHUM KONTROLÜ & BAŞLANGIÇ NOKTASINDAKİ SANDIKTAN OTOMATİK TAZELEME
+    // TOHUM KONTROLÜ & ADADAKİ TÜM SANDIKLARDAN AKILLI OTOMATİK TAZELEME
     const seed = getSeedItem(bot);
     if (!seed) {
-      const startPos = session.plantStartPos || myPos.clone();
-      session.plantStartPos = startPos;
-      const distToStart = myPos.distanceTo(startPos);
-
-      // 1. Eğer başlangıç noktasından uzaktaysak başlangıç noktasına doğru yürü
-      if (distToStart > 2.2) {
-        const botFootPos = new Vec3(
-          Math.floor(myPos.x),
-          Math.floor(myPos.y + 0.25),
-          Math.floor(myPos.z)
-        );
-
-        if (!session.plantReturnPath || session.plantReturnPath.length === 0) {
-          session.plantReturnPath = findFarmPath(bot, botFootPos, startPos, session, 1500);
-          session.plantReturnPathIndex = 0;
-        }
-
-        if (session.plantReturnPath && session.plantReturnPath.length > 0) {
-          const wp = session.plantReturnPath[session.plantReturnPathIndex || 0];
-          if (wp) {
-            const wpCenter = wp.offset(0.5, 0, 0.5);
-            const distToWp = Math.hypot(wpCenter.x - myPos.x, wpCenter.z - myPos.z);
-            if (distToWp < 0.45) {
-              session.plantReturnPathIndex = (session.plantReturnPathIndex || 0) + 1;
-              if (session.plantReturnPathIndex >= session.plantReturnPath.length) {
-                session.plantReturnPath = null;
-              }
-            } else {
-              const dx = wpCenter.x - myPos.x;
-              const dz = wpCenter.z - myPos.z;
-              const targetYaw = Math.atan2(-dx, -dz);
-              if (isSafeToStep(bot, targetYaw, session)) {
-                smoothHumanLook(bot, targetYaw, 0.25);
-                bot.setControlState('forward', true);
-                const dy = wp.y - myPos.y;
-                if (dy >= 0.35 || shouldJumpOverStep(bot, session)) {
-                  bot.setControlState('jump', true);
-                  setTimeout(() => { if (bot) bot.setControlState('jump', false); }, 250);
-                }
-              } else {
-                bot.setControlState('forward', false);
-                session.plantReturnPath = null;
-              }
-            }
-          } else {
-            session.plantReturnPath = null;
-          }
-        } else {
-          // Doğrudan yönel
-          const dx = startPos.x - myPos.x;
-          const dz = startPos.z - myPos.z;
-          const targetYaw = Math.atan2(-dx, -dz);
-          if (isSafeToStep(bot, targetYaw, session)) {
-            smoothHumanLook(bot, targetYaw, 0.25);
-            bot.setControlState('forward', true);
-            tryJumpOverStep(bot, session);
-          } else {
-            bot.setControlState('forward', false);
-          }
-        }
-
-        session.plantTimer = setTimeout(step, 60);
-        return;
-      }
-
-      // 2. Başlangıç noktasına varıldı (distToStart <= 2.2)! Sandığı bul ve tohumları çek
-      bot.setControlState('forward', false);
-      bot.setControlState('jump', false);
-      session.plantReturnPath = null;
-
-      const containerNames = new Set(['chest', 'trapped_chest', 'barrel', 'shulker_box']);
-      const chestPositions = bot.findBlocks({
-        matching: (blk) => blk && containerNames.has(blk.name),
-        maxDistance: 5.5,
-        count: 8
-      });
-
-      if (!chestPositions || chestPositions.length === 0) {
-        addLog(
-          accountId,
-          'OTO-EKİM',
-          `⚠️ Tohum bitti! Başlangıç noktasında (${Math.floor(startPos.x)}, ${Math.floor(startPos.y)}, ${Math.floor(startPos.z)}) sandık bulunamadı! Lütfen yakına tohum dolu bir sandık koyun.`,
-          chalk.redBright
-        );
-        session.plantTimer = setTimeout(step, 3500);
-        return;
-      }
-
-      let totalWithdrawn = 0;
-      for (const cPos of chestPositions) {
-        const chestBlock = bot.blockAt(cPos);
-        if (!chestBlock) continue;
-        let opened = null;
-        try {
-          opened = await safelyOpenContainer(bot, chestBlock, session);
-          const container = opened.container;
-          for (let slot = 0; slot < container.inventoryStart; slot++) {
-            const slotItem = container.slots[slot];
-            if (!slotItem) continue;
-            if (PLANTABLE_SEED_NAMES.includes(slotItem.name.toLowerCase())) {
-              try {
-                await bot.clickWindow(slot, 0, 1);
-                await new Promise((r) => setTimeout(r, 90));
-                totalWithdrawn += slotItem.count;
-                if (totalWithdrawn >= 192) break; // 3 stack tohum yeterli
-              } catch (e) {
-                break;
-              }
-            }
-          }
-          try {
-            container.close();
-          } catch (e) {}
-        } catch (err) {
-        } finally {
-          if (opened && opened.hadSneakLock && session.bot && session.status === 'online') {
-            try { session.bot.setControlState('sneak', true); } catch (e) {}
-          }
-        }
-        if (totalWithdrawn > 0) break;
-      }
-
-      if (totalWithdrawn > 0) {
-        addLog(
-          accountId,
-          'OTO-EKİM',
-          `🌱 Başlangıç sandığından ${totalWithdrawn} adet tohum alındı! Ekime devam ediliyor...`,
-          chalk.greenBright
-        );
+      const chestRes = await stepFarmChestRestock(
+        bot,
+        session,
+        accountId,
+        PLANTABLE_SEED_NAMES,
+        'OTO-EKİM',
+        'tohum',
+        256
+      );
+      if (chestRes === 'restocked') {
         session.plantTargetDirtPos = null;
         session.plantCurrentPath = null;
-        session.plantTimer = setTimeout(step, 200);
-        return;
-      } else {
-        addLog(
-          accountId,
-          'OTO-EKİM',
-          '⚠️ Başlangıç noktasındaki sandıkta ekilecek tohum kalmadı! Sandığa tohum eklenmesi bekleniyor...',
-          chalk.yellowBright
-        );
-        session.plantTimer = setTimeout(step, 3000);
+        session.plantTimer = setTimeout(step, 150);
         return;
       }
+      const waitMs =
+        chestRes === 'walking' ? 55 :
+        chestRes === 'next_chest' ? 140 : 2800;
+      session.plantTimer = setTimeout(step, waitMs);
+      return;
     }
 
     if (!bot.heldItem || !PLANTABLE_SEED_NAMES.includes(bot.heldItem.name.toLowerCase())) {
@@ -7048,14 +7242,15 @@ function startAutoPlantLoop(accountId) {
       } catch (e) {}
     }
 
-    // Etraftaki tüm ekilebilir boş tarlaları bul (96 blok yarıçap - tüm ada)
-    let plantableBlocks = findPlantableFarmlandAround(bot, 96, session);
+    // Etraftaki tüm ekilebilir boş tarlaları bul (112 blok yarıçap - tüm ada katmanı)
+    let plantableBlocks = findPlantableFarmlandAround(bot, 112, session);
 
     // Eğer blacklist doluysa ve blok kalmadıysa blacklist'i temizleyip bir kez daha bak
-    if (plantableBlocks.length === 0 && session.plantBlacklist && session.plantBlacklist.size > 0) {
+    if (plantableBlocks.length === 0 && session.plantBlacklist && session.plantBlacklist.size > 0 && !session.plantRetriedBlacklist) {
+      session.plantRetriedBlacklist = true;
       session.plantBlacklist.clear();
       if (session.plantFailCounts) session.plantFailCounts.clear();
-      plantableBlocks = findPlantableFarmlandAround(bot, 96, session);
+      plantableBlocks = findPlantableFarmlandAround(bot, 112, session);
     }
 
     // Etrafta hiç boş tarla kalmadıysa arka arkaya 3 tarama boyunca doğrula
@@ -7079,12 +7274,17 @@ function startAutoPlantLoop(accountId) {
     }
 
     session.plantEmptyScanCount = 0;
+    if (plantableBlocks.length > 5) {
+      session.plantRetriedBlacklist = false;
+    }
 
     // 1. MENZİLDEKİ BOŞ TARLALARI (GÖZ MESAFESİ <= 3.85 BLOK) EK (BİTENE KADAR ASLA YERİNDEN AYRILMA!)
     const eyePos = myPos.offset(0, bot.entity.height || 1.62, 0);
     const immediateBlocks = plantableBlocks.filter((b) => {
       const topCenter = b.position.offset(0.5, 0.9375, 0.5);
-      return eyePos.distanceTo(topCenter) <= 3.85 && Math.abs(b.position.y - Math.floor(myPos.y + 0.25)) <= 2;
+      const eyeDist = eyePos.distanceTo(topCenter);
+      const horizDist = Math.hypot(b.position.x + 0.5 - myPos.x, b.position.z + 0.5 - myPos.z);
+      return eyeDist <= 3.85 && horizDist <= 3.65 && Math.abs(b.position.y - (Math.floor(myPos.y + 0.25) - 1)) <= 2;
     });
 
     if (immediateBlocks.length > 0) {
@@ -7100,7 +7300,7 @@ function startAutoPlantLoop(accountId) {
         }
       }
 
-      session.plantTimer = setTimeout(step, 60);
+      session.plantTimer = setTimeout(step, 55);
       return;
     }
 
@@ -7116,7 +7316,7 @@ function startAutoPlantLoop(accountId) {
     // 2. EN YAKIN EKİLMEMİŞ BOŞ TARLAYA DOĞRU YÜRÜ
     let targetFarmland = null;
     if (session.plantTargetDirtPos) {
-      const curTargetStr = session.plantTargetDirtPos.toString();
+      const curTargetStr = `${session.plantTargetDirtPos.x},${session.plantTargetDirtPos.y},${session.plantTargetDirtPos.z}`;
       const isBlacklisted = session.plantBlacklist && session.plantBlacklist.has(curTargetStr);
       const curB = bot.blockAt(session.plantTargetDirtPos);
       if (!isBlacklisted && curB && isPlantableFarmland(bot, curB)) {
@@ -7128,16 +7328,10 @@ function startAutoPlantLoop(accountId) {
     }
 
     if (!targetFarmland) {
-      const remaining = plantableBlocks;
-      if (remaining.length > 0) {
-        targetFarmland = remaining[0];
+      if (plantableBlocks.length > 0) {
+        targetFarmland = plantableBlocks[0];
         session.plantTargetDirtPos = targetFarmland.position.clone();
-        const botFootPos = new Vec3(
-          Math.floor(bot.entity.position.x),
-          Math.floor(bot.entity.position.y + 0.25),
-          Math.floor(bot.entity.position.z)
-        );
-        session.plantCurrentPath = findFarmPath(bot, botFootPos, targetFarmland.position, session, 1500);
+        session.plantCurrentPath = null;
         session.plantPathIndex = 0;
       } else {
         session.plantTargetDirtPos = null;
@@ -7148,80 +7342,25 @@ function startAutoPlantLoop(accountId) {
     let nextDelay = 50;
 
     if (targetFarmland) {
-      const curTargetStr = targetFarmland.position.toString();
-      if (session.plantLastTargetPosStr === curTargetStr) {
-        session.plantTargetStuckCount = (session.plantTargetStuckCount || 0) + 1;
-        if (session.plantTargetStuckCount > 65) {
-          if (!session.plantBlacklist) session.plantBlacklist = new Set();
-          session.plantBlacklist.add(curTargetStr);
-          session.plantTargetDirtPos = null;
-          session.plantCurrentPath = null;
-          session.plantTargetStuckCount = 0;
-        }
+      const navRes = stepFarmWalkTowardsTarget(
+        bot,
+        session,
+        targetFarmland.position,
+        'plant',
+        3.65,
+        3.45,
+        0.9375
+      );
+      if (navRes === 'reached') {
+        nextDelay = 40;
+      } else if (navRes === 'unreachable') {
+        const bKey = `${targetFarmland.position.x},${targetFarmland.position.y},${targetFarmland.position.z}`;
+        if (!session.plantBlacklist) session.plantBlacklist = new Set();
+        session.plantBlacklist.add(bKey);
+        session.plantTargetDirtPos = null;
+        session.plantCurrentPath = null;
+        nextDelay = 50;
       } else {
-        session.plantLastTargetPosStr = curTargetStr;
-        session.plantTargetStuckCount = 0;
-      }
-
-      const topCenter = targetFarmland.position.offset(0.5, 0.9375, 0.5);
-      const distToFarmland = eyePos.distanceTo(topCenter);
-
-      // Eğer hedef göz menzilimize girdiyse (<= 3.80m), DUR! Sakın ada kenarına doğru ileri yürüyüp düşme!
-      if (distToFarmland <= 3.80) {
-        bot.setControlState('forward', false);
-        bot.setControlState('jump', false);
-        session.plantTimer = setTimeout(step, 40);
-        return;
-      }
-
-      if (session.plantCurrentPath && session.plantCurrentPath.length > 0) {
-        // A* Yolu takibi: Engellerin etrafından güvenle dolanarak ilerle
-        const waypoint = session.plantCurrentPath[session.plantPathIndex || 0];
-        if (waypoint) {
-          const wpCenter = waypoint.offset(0.5, 0, 0.5);
-          const distToWp = Math.hypot(wpCenter.x - myPos.x, wpCenter.z - myPos.z);
-
-          if (distToWp < 0.45) {
-            session.plantPathIndex = (session.plantPathIndex || 0) + 1;
-            if (session.plantPathIndex >= session.plantCurrentPath.length) {
-              session.plantCurrentPath = null;
-            }
-          } else {
-            const dx = wpCenter.x - myPos.x;
-            const dz = wpCenter.z - myPos.z;
-            const targetYaw = Math.atan2(-dx, -dz);
-
-            if (isSafeToStep(bot, targetYaw, session)) {
-              smoothHumanLook(bot, targetYaw, 0.25);
-              bot.setControlState('forward', true);
-
-              const dy = waypoint.y - myPos.y;
-              if (dy >= 0.35 || shouldJumpOverStep(bot, session)) {
-                bot.setControlState('jump', true);
-                setTimeout(() => { if (bot) bot.setControlState('jump', false); }, 250);
-              }
-            } else {
-              // Boşluk / ada kenarı tespit edildi, ileri gitme!
-              bot.setControlState('forward', false);
-              session.plantCurrentPath = null;
-            }
-          }
-          nextDelay = 50;
-        } else {
-          session.plantCurrentPath = null;
-        }
-      } else {
-        // Doğrudan hedefe doğru güvenli adım
-        const dx = targetFarmland.position.x + 0.5 - myPos.x;
-        const dz = targetFarmland.position.z + 0.5 - myPos.z;
-        const targetYaw = Math.atan2(-dx, -dz);
-        if (isSafeToStep(bot, targetYaw, session)) {
-          smoothHumanLook(bot, targetYaw, 0.25);
-          bot.setControlState('forward', true);
-          tryJumpOverStep(bot, session);
-        } else {
-          bot.setControlState('forward', false);
-        }
         nextDelay = 50;
       }
     } else {
@@ -7252,9 +7391,11 @@ function stopAutoPlantLoop(accountId) {
   session.plantLoopId = (session.plantLoopId || 0) + 1;
   session.plantCurrentPath = null;
   session.plantTargetDirtPos = null;
+  session.plantStartPos = null;
   session.plantBlacklist = null;
   session.plantFailCounts = null;
   session.plantEmptyScanCount = 0;
+  session.plantRetriedBlacklist = false;
   session.plantTargetStuckCount = 0;
   session.plantLastTargetPosStr = null;
   session.plantReturnPath = null;
