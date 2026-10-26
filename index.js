@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_farm_nav_chest_v34';
+const ENGINE_BUILD_ID = '20261026_keyauth_chain_fix_v36';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -101,7 +101,8 @@ const keyAuthSession = {
 function resolveKeyAuthPlan(subscriptions) {
   const subs = Array.isArray(subscriptions) ? subscriptions : [];
   if (subs.length === 0) {
-    return { plan: 'starter', planLabel: 'STARTER', primarySub: {} };
+    // KeyAuth girişi başarılıysa kullanıcı PRO'dur (Starter KeyAuth gerektirmez)
+    return { plan: 'pro', planLabel: 'PRO', primarySub: { subscription: 'PRO (175.00 TL)' } };
   }
   // KeyAuth'tan herhangi bir aktif abonelik / key döndüyse PRO olarak tanımla (Starter ücretsizdir, KeyAuth'ta yalnızca 175.00 TL'lik Pro satılır)
   const proSub = subs.find((s) => {
@@ -248,6 +249,8 @@ function saveLocalKeyAuthCredentials(username, password) {
     const payload = {
       u: Buffer.from(String(username), 'utf8').toString('base64'),
       p: Buffer.from(String(password), 'utf8').toString('base64'),
+      sub: keyAuthSession.subscription || 'PRO (175.00 TL)',
+      exp: keyAuthSession.expiryTimestamp || null,
       t: Date.now()
     };
     fs.writeFileSync(KEYAUTH_SAVED_PATH, JSON.stringify(payload, null, 2), 'utf8');
@@ -269,12 +272,30 @@ function loadLocalKeyAuthCredentials() {
     if (!raw || !raw.u || !raw.p) return null;
     return {
       username: Buffer.from(raw.u, 'base64').toString('utf8'),
-      password: Buffer.from(raw.p, 'base64').toString('utf8')
+      password: Buffer.from(raw.p, 'base64').toString('utf8'),
+      subscription: raw.sub || 'PRO (175.00 TL)',
+      expiryTimestamp: raw.exp || null
     };
   } catch (e) {
     return null;
   }
 }
+
+function applySavedKeyAuthAsPro(saved) {
+  if (!saved || !saved.username) return false;
+  if (saved.expiryTimestamp && Date.now() >= saved.expiryTimestamp) return false;
+  keyAuthSession.authenticated = true;
+  keyAuthSession.isPro = true;
+  keyAuthSession.plan = 'pro';
+  keyAuthSession.planLabel = 'PRO';
+  keyAuthSession.username = saved.username;
+  keyAuthSession.subscription = saved.subscription || 'PRO (175.00 TL)';
+  keyAuthSession.expiryTimestamp = saved.expiryTimestamp || null;
+  return true;
+}
+
+// Motor yeniden başladığında (güncelleme vb.) kayıtlı PRO oturumu anında geri yükle
+applySavedKeyAuthAsPro(loadLocalKeyAuthCredentials());
 
 async function performKeyAuthLogin(username, password, remember = true) {
   const sid = await initKeyAuthSession();
@@ -347,6 +368,9 @@ async function performKeyAuthUpgrade(username, licenseKey) {
 
 function getPublicKeyAuthStatus() {
   const saved = loadLocalKeyAuthCredentials();
+  if (keyAuthSession.plan !== 'pro' && saved) {
+    applySavedKeyAuthAsPro(saved);
+  }
   const isPro = keyAuthSession.plan === 'pro';
   return {
     engineBuildId: ENGINE_BUILD_ID,
@@ -732,6 +756,10 @@ async function applyHotUpdate() {
 
     indexJsUrl = indexJsUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
     indexHtmlUrl = indexHtmlUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
+    // GitHub raw CDN önbelleğini atla
+    const cacheBust = `${indexJsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    indexJsUrl += cacheBust;
+    indexHtmlUrl += `${indexHtmlUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
     addLog(null, 'GÜNCELLEME', `Yeni sürüm (${manifest.buildId || manifest.version}) indiriliyor...`, chalk.cyan);
 
@@ -745,6 +773,13 @@ async function applyHotUpdate() {
 
     if (!newJsStr.includes('ENGINE_BUILD_ID') || newJsStr.length < 15000) {
       throw new Error('İndirilen index.js dosyası geçersiz veya bozuk!');
+    }
+    // Sonsuz güncelleme döngüsü koruması: indirilen motor, manifestteki sürümle birebir aynı olmalı
+    const dlBuildMatch = newJsStr.match(/const ENGINE_BUILD_ID = '([^']+)'/);
+    const dlBuildId = dlBuildMatch ? dlBuildMatch[1] : '';
+    const expectedBuildId = manifest.buildId || '';
+    if (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId) || dlBuildId === ENGINE_BUILD_ID) {
+      throw new Error(`İndirilen motor sürümü (${dlBuildId || '?'}) beklenen sürümle (${expectedBuildId}) eşleşmiyor. Güncelleme iptal edildi, birkaç dakika sonra tekrar denenecek.`);
     }
     if (!newHtmlStr.includes('<!DOCTYPE html>') || newHtmlStr.length < 5000) {
       throw new Error('İndirilen index.html dosyası geçersiz veya bozuk!');
@@ -1970,6 +2005,7 @@ function getPublicState() {
         autoFarm: false,
         autoTill: false,
         autoPlant: false,
+        autoChainTillPlant: acc.autoChainTillPlant !== false,
         sneakLock: false,
         ping: 0,
         stats: {
@@ -1994,7 +2030,8 @@ function getPublicState() {
         players: [],
         clientBrand: resolveAccountBrand(acc),
         serverBrand: null,
-        hwid: acc.hwid || ''
+        hwid: acc.hwid || '',
+        builder: getPublicBuilderSummary(null, acc.id)
       };
     } else {
       const bot = s.bot;
@@ -2059,6 +2096,7 @@ function getPublicState() {
         autoFarm: Boolean(s.autoFarm),
         autoTill: Boolean(s.autoTill),
         autoPlant: Boolean(s.autoPlant),
+        autoChainTillPlant: s.builder ? s.builder.autoChainTillPlant !== false : acc.autoChainTillPlant !== false,
         sneakLock: Boolean(s.sneakLock),
         ping,
         stats: s.stats || {
@@ -2090,7 +2128,7 @@ function getPublicState() {
         clientBrand: resolveAccountBrand(acc),
         serverBrand: bot && bot.game && bot.game.serverBrand ? bot.game.serverBrand : null,
         hwid: acc.hwid || '',
-        builder: getPublicBuilderSummary(s)
+        builder: getPublicBuilderSummary(s, acc.id)
       };
     }
   }
@@ -2421,7 +2459,7 @@ function getOrCreateSession(accountId) {
       farmerSellTimer: null,
       isFarmerSelling: false,
       lastFarmerSellTime: 0,
-      builder: createDefaultBuilderState(),
+      builder: createDefaultBuilderState(accountId),
       scoreboard: {
         objectives: {},
         displayPositions: {},
@@ -6829,6 +6867,39 @@ function startAutoTillLoop(accountId) {
         chalk.greenBright
       );
       stopAutoTillLoop(accountId);
+
+      const chainAcc = config.accounts.find((a) => a.id === accountId);
+      const chainEnabled = session.builder
+        ? session.builder.autoChainTillPlant !== false
+        : !(chainAcc && chainAcc.autoChainTillPlant === false);
+      if (chainEnabled) {
+        if (session.autoMine) {
+          stopAutoMineLoop(accountId);
+          session.autoMine = false;
+        }
+        if (session.autoFarm) {
+          stopAutoFarmLoop(accountId);
+          session.autoFarm = false;
+        }
+        session.autoPlant = true;
+        if (session.builder && session.builder.status === 'completed') {
+          session.builder.statusMessage = `[OTO-EKİM AKTİF] İnşa ve Çapalama tamamlandı. Otomatik Ekim yapılıyor...`;
+        }
+        addLog(
+          accountId,
+          'OTO-ZİNCİR',
+          '🔄 Çapalama tamamlandı! Otomatik olarak Oto-Ekim aşamasına geçiliyor...',
+          chalk.cyanBright
+        );
+        setTimeout(() => {
+          const cur = sessions.get(accountId);
+          if (cur && cur.status === 'online' && cur.autoPlant) {
+            startAutoPlantLoop(accountId);
+            broadcastState();
+          }
+        }, 450);
+      }
+
       broadcastState();
       return;
     }
@@ -7581,7 +7652,7 @@ function parsePaletteEntryString(entryStr) {
   return { name, props };
 }
 
-function createDefaultBuilderState() {
+function createDefaultBuilderState(accountId = null) {
   const corners = {
     pos1: { x: 0, y: 64, z: 0 },
     pos2: { x: 0, y: 64, z: 0 }
@@ -7589,6 +7660,7 @@ function createDefaultBuilderState() {
   let origin = { x: 0, y: 64, z: 0, initialized: false };
   let rotation = 0;
   let delayMs = 220;
+  let autoChainTillPlant = true;
 
   if (typeof config !== 'undefined' && config && config.builderSharedCoords) {
     if (config.builderSharedCoords.pos1) corners.pos1 = { ...config.builderSharedCoords.pos1 };
@@ -7596,6 +7668,12 @@ function createDefaultBuilderState() {
     if (config.builderSharedCoords.origin) origin = { ...config.builderSharedCoords.origin, initialized: true };
     if (typeof config.builderSharedCoords.rotation === 'number') rotation = config.builderSharedCoords.rotation;
     if (typeof config.builderSharedCoords.delayMs === 'number') delayMs = config.builderSharedCoords.delayMs;
+  }
+  if (accountId && typeof config !== 'undefined' && config && Array.isArray(config.accounts)) {
+    const chainAcc = config.accounts.find((a) => a.id === accountId);
+    if (chainAcc && typeof chainAcc.autoChainTillPlant === 'boolean') {
+      autoChainTillPlant = chainAcc.autoChainTillPlant;
+    }
   }
 
   return {
@@ -7621,6 +7699,7 @@ function createDefaultBuilderState() {
     statusMessage: 'Şema yüklenmedi. Bir .schem / .litematic dosyası yükleyin veya hazır şablon seçin.',
     delayMs: 260,
     autoRestockChest: true,
+    autoChainTillPlant,
     autoMove: true,
     clearObstacles: false,
     skipMissingBlocks: false,
@@ -7630,8 +7709,9 @@ function createDefaultBuilderState() {
   };
 }
 
-function getPublicBuilderSummary(session) {
-  const b = (session && session.builder) || createDefaultBuilderState();
+function getPublicBuilderSummary(session, accountId) {
+  const accId = accountId || (session && session.accountId) || null;
+  const b = (session && session.builder) || createDefaultBuilderState(accId);
   const invCounts = {};
   if (session && session.bot && session.bot.inventory) {
     for (const item of session.bot.inventory.items()) {
@@ -7682,6 +7762,7 @@ function getPublicBuilderSummary(session) {
     statusMessage: b.statusMessage,
     delayMs: b.delayMs,
     autoRestockChest: b.autoRestockChest,
+    autoChainTillPlant: b.autoChainTillPlant !== false,
     autoMove: b.autoMove,
     clearObstacles: b.clearObstacles,
     skipMissingBlocks: b.skipMissingBlocks,
@@ -9811,6 +9892,35 @@ async function runAutoBuilderStep(accountId) {
         `"${builder.schematicName}" inşası tamamlandı! (${builder.placedCount} blok)`,
         chalk.green
       );
+
+      const chainAcc = config.accounts.find((a) => a.id === accountId);
+      const chainEnabled = builder.autoChainTillPlant !== false && !(chainAcc && chainAcc.autoChainTillPlant === false);
+      if (chainEnabled) {
+        if (session.autoMine) {
+          stopAutoMineLoop(accountId);
+          session.autoMine = false;
+        }
+        if (session.autoFarm) {
+          stopAutoFarmLoop(accountId);
+          session.autoFarm = false;
+        }
+        session.autoTill = true;
+        builder.statusMessage = `[OTO-ÇAPALAMA AKTİF] İnşa tamamlandı (${builder.placedCount} blok). Zincirleme Çapalama yapılıyor...`;
+        addLog(
+          accountId,
+          'OTO-ZİNCİR',
+          `🔄 "${builder.schematicName}" inşası tamamlandı! Zincirleme Otomatik Çapalama başlatılıyor...`,
+          chalk.cyanBright
+        );
+        setTimeout(() => {
+          const cur = sessions.get(accountId);
+          if (cur && cur.status === 'online' && cur.autoTill) {
+            startAutoTillLoop(accountId);
+            broadcastState();
+          }
+        }, 500);
+      }
+
       broadcastState();
       return;
     }
@@ -11899,7 +12009,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && pathname === '/api/keyauth/autologin') {
-    if (keyAuthSession.authenticated) {
+    if (keyAuthSession.plan === 'pro') {
       return sendJson(res, 200, { ok: true, keyauth: getPublicKeyAuthStatus() });
     }
     const saved = loadLocalKeyAuthCredentials();
@@ -11912,8 +12022,15 @@ const server = http.createServer(async (req, res) => {
       broadcastState();
       return sendJson(res, 200, { ok: true, keyauth: kaStatus });
     } catch (err) {
-      clearLocalKeyAuthCredentials();
-      return sendJson(res, 200, { ok: false, error: err.message, keyauth: getPublicKeyAuthStatus() });
+      // Ağ / KeyAuth sunucu hatasında kayıtlı oturumu SİLME; yalnızca açık şifre/lisans hatasında sil
+      const msg = String(err && err.message || '').toLowerCase();
+      const isCredentialError = msg.includes('şifre') || msg.includes('bulunamadı') || msg.includes('süreniz') || msg.includes('engellenmiş') || msg.includes('hwid');
+      if (isCredentialError) {
+        clearLocalKeyAuthCredentials();
+      } else {
+        applySavedKeyAuthAsPro(saved);
+      }
+      return sendJson(res, 200, { ok: !isCredentialError, error: err.message, keyauth: getPublicKeyAuthStatus() });
     }
   }
 
@@ -12946,6 +13063,26 @@ const server = http.createServer(async (req, res) => {
           }
           broadcastState();
           break;
+        case 'builderToggleChain':
+        case 'toggleAutoChainTillPlant':
+          if (!s.builder) s.builder = createDefaultBuilderState(accId);
+          if (typeof body.enabled === 'boolean') {
+            s.builder.autoChainTillPlant = body.enabled;
+          } else {
+            s.builder.autoChainTillPlant = !s.builder.autoChainTillPlant;
+          }
+          acc.autoChainTillPlant = s.builder.autoChainTillPlant;
+          if (!config.builderSharedCoords) config.builderSharedCoords = {};
+          config.builderSharedCoords.autoChainTillPlant = s.builder.autoChainTillPlant;
+          saveConfig();
+          addLog(
+            accId,
+            'AUTO-BUILDER',
+            `🔄 İnşa ➔ Çapa ➔ Ekim Otomatik Zinciri: ${s.builder.autoChainTillPlant ? 'AÇIK (İnşa bitince çapalama ve ekim yapacak)' : 'KAPALI'}`,
+            s.builder.autoChainTillPlant ? chalk.cyanBright : chalk.yellow
+          );
+          broadcastState(true);
+          break;
         case 'builderToggleRestock':
         case 'builderRestockNow':
           if (!s.builder) s.builder = createDefaultBuilderState();
@@ -13600,16 +13737,22 @@ server.on('error', (err) => {
   }
 });
 
-// Lisans Süresi Kontrolcüsü (Süre dolduğunda aktif botları durdurur ve oturumu kilitler)
+// Lisans Süresi Kontrolcüsü (Süre dolduğunda aktif botları durdurur ve Starter'a çeker)
 setInterval(() => {
   if (
-    keyAuthSession.authenticated &&
+    keyAuthSession.plan === 'pro' &&
     keyAuthSession.expiryTimestamp &&
+    keyAuthSession.expiryTimestamp > 0 &&
     Date.now() >= keyAuthSession.expiryTimestamp
   ) {
     config.accounts.forEach((acc) => stopBot(acc.id));
-    keyAuthSession.authenticated = false;
-    addLog(null, 'KEYAUTH', 'Lisans süreniz sona erdi! Tüm aktif botlar durduruldu.', chalk.red);
+    keyAuthSession.plan = 'starter';
+    keyAuthSession.planLabel = 'STARTER';
+    keyAuthSession.isPro = false;
+    keyAuthSession.subscription = 'Starter (Ücretsiz)';
+    keyAuthSession.expiryTimestamp = null;
+    clearLocalKeyAuthCredentials();
+    addLog(null, 'KEYAUTH', 'Lisans süreniz sona erdi! Starter (ücretsiz) sürüme geçildi.', chalk.red);
     broadcastState();
   }
 }, 30000);
