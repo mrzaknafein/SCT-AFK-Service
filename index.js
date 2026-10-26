@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_smooth_chain_faster_builder_v39';
+const ENGINE_BUILD_ID = '20261026_smooth_chain_fast_normal_walk_v40';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5263,34 +5263,7 @@ function tryJumpOverStep(bot, session = null) {
 
 function isNearIslandEdge(bot) {
   if (!bot || !bot.entity || !bot.entity.position) return false;
-  const pos = bot.entity.position;
-  const bx = Math.floor(pos.x);
-  const floorY = Math.floor(pos.y - 0.1);
-  const bz = Math.floor(pos.z);
-
-  function isDangerBlock(b) {
-    if (!b || !b.name) return true;
-    const name = b.name.toLowerCase();
-    return name === 'air' || name === 'cave_air' || name === 'void_air' || name === 'lava' || name === 'fire';
-  }
-
-  // Botun bastığı bloğun etrafındaki 8 komşu zemin bloğunu kontrol et
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dz = -1; dz <= 1; dz++) {
-      if (dx === 0 && dz === 0) continue;
-      const b0 = bot.blockAt(new Vec3(bx + dx, floorY, bz));
-      if (isDangerBlock(b0)) {
-        // Eğer 1 blok aşağıda sağlam zemin varsa (örneğin aydınlatma veya basamaktan tarlaya iniş),
-        // bu gerçek ada kenarı DEĞİLDİR! Botun eğilip (sneak) kilitlenmesini engelle.
-        const bDown = bot.blockAt(new Vec3(bx + dx, floorY - 1, bz));
-        if (isDangerBlock(bDown)) {
-          // Hem bu seviye hem 1 altı boşluk/uçurumsa gerçek ada kenarıdır!
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+  return isBotOverhangingOrNearEdge(bot);
 }
 
 function isSafeToStep(bot, yaw, session = null, options = {}) {
@@ -5576,6 +5549,11 @@ function alignAndStepForward(bot, targetYaw, session = null, dyStep = 0) {
     return false;
   }
 
+  // Tarla/hasat/çapa/ekim adımlarında normal yürüme/koşma hızını sağla (sneak'i kapat)
+  if (!session || !session.sneakLock) {
+    bot.setControlState('sneak', false);
+  }
+
   bot.setControlState('forward', true);
   if (remYaw < 0.40) {
     bot.setControlState('sprint', true);
@@ -5618,6 +5596,10 @@ function stepFarmWalkTowardsTarget(
   if (eyeDist <= reachEyeDist && horizDist <= reachHorizDist) {
     bot.setControlState('forward', false);
     bot.setControlState('jump', false);
+    bot.setControlState('sprint', false);
+    if (!session || !session.sneakLock) {
+      bot.setControlState('sneak', false);
+    }
     return 'reached';
   }
 
@@ -8664,16 +8646,26 @@ function isBotOverhangingOrNearEdge(bot, session = null) {
     return true;
   }
 
-  // 2. Botun 8 komşu bloğundan herhangi birinde aynı katman seviyesinde zemin yoksa (katman kenarı!)
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dz = -1; dz <= 1; dz++) {
-      if (dx === 0 && dz === 0) continue;
-      const adjFloor = bot.blockAt(new Vec3(bx + dx, floorY, bz + dz));
-      if (!adjFloor || !isBlockWalkableFloor(adjFloor, session)) {
-        return true;
-      }
-    }
+  // 2. Yalnızca bot bloğun kenarına (< 0.22m) fiziksel olarak yaklaşmışsa VE o yöndeki zemin boşluksa sneak aç
+  const fracX = p.x - bx;
+  const fracZ = p.z - bz;
+
+  if (fracX < 0.22) {
+    const west = bot.blockAt(new Vec3(bx - 1, floorY, bz));
+    if (!west || !isBlockWalkableFloor(west, session)) return true;
+  } else if (fracX > 0.78) {
+    const east = bot.blockAt(new Vec3(bx + 1, floorY, bz));
+    if (!east || !isBlockWalkableFloor(east, session)) return true;
   }
+
+  if (fracZ < 0.22) {
+    const north = bot.blockAt(new Vec3(bx, floorY, bz - 1));
+    if (!north || !isBlockWalkableFloor(north, session)) return true;
+  } else if (fracZ > 0.78) {
+    const south = bot.blockAt(new Vec3(bx, floorY, bz + 1));
+    if (!south || !isBlockWalkableFloor(south, session)) return true;
+  }
+
   return false;
 }
 
@@ -8712,6 +8704,9 @@ async function stabilizeBotOnBlockCenter(bot, session = null) {
     await new Promise((r) => setTimeout(r, 40));
   }
   bot.setControlState('forward', false);
+  if (!session || !session.sneakLock) {
+    bot.setControlState('sneak', false);
+  }
 }
 
 /**
@@ -9060,14 +9055,14 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
 
         await bot.look(yaw, 0, true);
         bot.setControlState('forward', true);
-        bot.setControlState('sprint', false);
 
-        // Katman üzerinde yürürken sneak daima açık tutulur (fiziksel olarak kenardan düşmeyi imkansız kılar).
-        // Yalnızca doğrulanmış 1 blokluk merdivenden aşağı inerken (isSteppingDown) basamağa inebilmek için bırakılır.
-        if (isSteppingDown) {
-          bot.setControlState('sneak', false);
+        // Katman üzerinde güvenli A* rotasında normal hızda yürü; yalnızca bot bir kenardan sarkıyorsa veya sneakLock varsa eğil
+        const mustSneak = Boolean(session && session.sneakLock) || (!isSteppingDown && isBotOverhangingOrNearEdge(bot, session));
+        bot.setControlState('sneak', mustSneak);
+        if (!mustSneak && !isSteppingDown) {
+          bot.setControlState('sprint', true);
         } else {
-          bot.setControlState('sneak', true);
+          bot.setControlState('sprint', false);
         }
 
         const dy = nodeCenter.y - cur.y;
@@ -9304,14 +9299,14 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
 
       await bot.look(targetYaw, 0, true);
       bot.setControlState('forward', true);
-      bot.setControlState('sprint', false);
 
-      // Düz yolda ve yukarı çıkarken sneak açık (köşelerden düşmeyi engeller);
-      // yalnızca doğrulanmış 1 blok merdiven inişinde basamağa inmek için bırakılır
-      if (isStepDown) {
-        bot.setControlState('sneak', false);
+      // Katman üzerinde güvenli A* rotasında normal hızda yürü; yalnızca bot bir kenardan sarkıyorsa veya sneakLock varsa eğil
+      const mustSneak = Boolean(session && session.sneakLock) || (!isStepDown && isBotOverhangingOrNearEdge(bot, session));
+      bot.setControlState('sneak', mustSneak);
+      if (!mustSneak && !isStepDown) {
+        bot.setControlState('sprint', true);
       } else {
-        bot.setControlState('sneak', true);
+        bot.setControlState('sprint', false);
       }
 
       const dy = targetNode.y - curPos.y;
