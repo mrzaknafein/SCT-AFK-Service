@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_auto_pipeline_v35",
-  "version": "2.2.4",
-  "releaseNotes": "Oto-İnşa (Auto-Builder) tamamlandığında otomatik olarak Oto-Çapalamaya, çapalama tamamlandığında ise otomatik olarak Oto-Ekime geçen tam otomatik zincirleme sistemi ve açma/kapama kontrol butonları eklendi.",
+  "buildId": "20261026_keyauth_chain_fix_v36",
+  "version": "2.2.5",
+  "releaseNotes": "KeyAuth PRO lisans kalıcılığı ve autologin güçlendirildi. İnşa ➔ Çapalama ➔ Ekim otomatik zincir geçişi tamamlandı ve buton açma/kapama dinamik hale getirildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
