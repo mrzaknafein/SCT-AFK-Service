@@ -1,0 +1,9 @@
+{
+  "buildId": "20261026_clean_ui_v31",
+  "version": "2.2.0",
+  "releaseNotes": "Arayüz sadeleştirildi, 4 ana sekmeye düşürüldü, Oto-İnşa ve Farm iyileştirildi, Anlık Hot-Update sistemi eklendi.",
+  "files": {
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
+  }
+}
