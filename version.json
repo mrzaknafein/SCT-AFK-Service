@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_ciftci_cmd_sell_v37",
-  "version": "2.2.6",
-  "releaseNotes": "Çiftçi otomatik satış sistemi güncellendi: Artık NPC'ye sağ tıklamak yerine doğrudan '/çiftçi' komutu girilerek depo açılıyor ve hasatlar otomatik satılıyor.",
+  "buildId": "20261026_smooth_chain_till_plant_v38",
+  "version": "2.2.7",
+  "releaseNotes": "Oto-Çapa sonrası akıcı zincirleme Oto-Ekim geçişi sağlandı: Tarla sınırları dışındaki uzak ada bloklarına takılma ve sonsuz çapa deneme döngüsü düzeltildi, takılmalı yürüyüş akıcı hale getirildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
