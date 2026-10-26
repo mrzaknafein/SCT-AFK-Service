@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_smooth_chain_till_plant_v38';
+const ENGINE_BUILD_ID = '20261026_smooth_chain_faster_builder_v39';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -7733,7 +7733,7 @@ function createDefaultBuilderState(accountId = null) {
   };
   let origin = { x: 0, y: 64, z: 0, initialized: false };
   let rotation = 0;
-  let delayMs = 220;
+  let delayMs = 160;
   let autoChainTillPlant = true;
 
   if (typeof config !== 'undefined' && config && config.builderSharedCoords) {
@@ -7771,7 +7771,7 @@ function createDefaultBuilderState(accountId = null) {
     totalBlocks: 0,
     currentBlock: null,
     statusMessage: 'Şema yüklenmedi. Bir .schem / .litematic dosyası yükleyin veya hazır şablon seçin.',
-    delayMs: 260,
+    delayMs: typeof delayMs === 'number' ? delayMs : 160,
     autoRestockChest: true,
     autoChainTillPlant,
     autoMove: true,
@@ -9903,7 +9903,7 @@ function scheduleNextBuilderStep(accountId, customDelayMs) {
   const session = sessions.get(accountId);
   if (!session || !session.builder || session.builder.status !== 'building') return;
   if (session.builderTimer) clearTimeout(session.builderTimer);
-  const safeDelay = Math.max(250, Number(session.builder.delayMs) || 270);
+  const safeDelay = Math.max(130, Number(session.builder.delayMs) || 160);
   const delay = typeof customDelayMs === 'number' ? customDelayMs : safeDelay;
   session.builderTimer = setTimeout(() => {
     runAutoBuilderStep(accountId);
@@ -10358,9 +10358,9 @@ async function runAutoBuilderStep(accountId) {
         builder.statusMessage = `[İNŞA] Blok yerleştirildi: ${blk.name} (${targetPos.x}, ${targetPos.y}, ${targetPos.z}) • Toplam: ${builder.placedCount}/${builder.totalBlocks}`;
         broadcastState();
 
-        // Vulcan FastPlace koruması: Doğal insan tıklama aralığı (270ms - 335ms) + organik insan jitter
-        const baseDelay = Math.max(260, Number(builder.delayMs) || 280);
-        const jitter = Math.floor(Math.random() * 55);
+        // Vulcan FastPlace koruması: Hızlandırılmış akıcı doğal tıklama aralığı (140ms - 175ms) + organik insan jitter
+        const baseDelay = Math.max(135, Number(builder.delayMs) || 160);
+        const jitter = Math.floor(Math.random() * 25);
         scheduleNextBuilderStep(accountId, baseDelay + jitter);
         return;
       } else {
@@ -13091,7 +13091,7 @@ const server = http.createServer(async (req, res) => {
             };
           }
           if (typeof body.delayMs !== 'undefined') {
-            s.builder.delayMs = Math.max(160, Math.min(3000, Number(body.delayMs) || 190));
+            s.builder.delayMs = Math.max(120, Math.min(3000, Number(body.delayMs) || 160));
           }
           if (typeof body.autoRestockChest !== 'undefined') {
             s.builder.autoRestockChest = Boolean(body.autoRestockChest);
