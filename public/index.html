@@ -3450,12 +3450,12 @@
                     <div class="form-row">
                       <div class="form-group" style="flex: 1.2;">
                         <label>GitHub Kullanıcı Adı (Owner)</label>
-                        <input type="text" id="setUpdateRepoOwner" class="form-control" placeholder="cagat" />
+                        <input type="text" id="setUpdateRepoOwner" class="form-control" placeholder="mrzaknafein" />
                         <div class="form-hint">GitHub kullanıcı adınız (varsayılan: cagat)</div>
                       </div>
                       <div class="form-group" style="flex: 1.2;">
                         <label>GitHub Repo Adı (Repository)</label>
-                        <input type="text" id="setUpdateRepoName" class="form-control" placeholder="sct-afk-service" />
+                        <input type="text" id="setUpdateRepoName" class="form-control" placeholder="SCT-AFK-Service" />
                         <div class="form-hint">Depo adı (varsayılan: sct-afk-service)</div>
                       </div>
                       <div class="form-group" style="flex: 0.8;">
@@ -6905,8 +6905,8 @@
     }
 
     async function saveUpdateSettingsOnly() {
-      const owner = document.getElementById('setUpdateRepoOwner')?.value.trim() || 'cagat';
-      const repo = document.getElementById('setUpdateRepoName')?.value.trim() || 'sct-afk-service';
+      const owner = document.getElementById('setUpdateRepoOwner')?.value.trim() || 'mrzaknafein';
+      const repo = document.getElementById('setUpdateRepoName')?.value.trim() || 'SCT-AFK-Service';
       const branch = document.getElementById('setUpdateBranch')?.value.trim() || 'main';
       const autoApply = Boolean(document.getElementById('setUpdateAutoApply')?.checked);
 
