@@ -2311,8 +2311,8 @@
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
-                  <div class="auto-mode-title">Oto Çiftçi NPC Satıcı</div>
-                  <div class="auto-mode-desc">Çiftçi NPC deposunu periyodik olarak satar.</div>
+                  <div class="auto-mode-title">Oto Çiftçi Satıcı (/çiftçi)</div>
+                  <div class="auto-mode-desc">"/çiftçi" menüsündeki depoyu periyodik olarak satar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                   <button class="btn btn-outline btn-sm" onclick="sendBotAction('farmerSellNow')" title="Hemen Şimdi Sat">Şimdi Sat</button>
@@ -2404,7 +2404,7 @@
                   <input type="number" id="ctrlFarmRadius" min="2" max="4.5" step="0.5" value="4.2" class="form-control" onchange="toggleAccountFlag('farmRadius', Number(this.value))" />
                 </div>
                 <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Çiftçi NPC Satış Aralığı (Sn) <span id="farmerSellIntervalHelp" style="color: var(--text-muted);">(2 dk)</span></label>
+                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Çiftçi Satış Aralığı (Sn) <span id="farmerSellIntervalHelp" style="color: var(--text-muted);">(2 dk)</span></label>
                   <input type="number" id="ctrlFarmerSellInterval" min="10" max="86400" step="10" value="120" class="form-control" onchange="updateFarmerSellInterval(this.value)" />
                 </div>
               </div>
