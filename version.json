@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_smooth_chain_till_plant_v38",
-  "version": "2.2.7",
-  "releaseNotes": "Oto-Çapa sonrası akıcı zincirleme Oto-Ekim geçişi sağlandı: Tarla sınırları dışındaki uzak ada bloklarına takılma ve sonsuz çapa deneme döngüsü düzeltildi, takılmalı yürüyüş akıcı hale getirildi.",
+  "buildId": "20261026_smooth_chain_faster_builder_v39",
+  "version": "2.2.8",
+  "releaseNotes": "Oto-İnşa hızı ~1.7 kat artırıldı: Blok yerleştirme aralığı anti-cheat (Vulcan) sınırları ve onay mekanizması korunarak optimize edildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
