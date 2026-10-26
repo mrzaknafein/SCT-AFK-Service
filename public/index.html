@@ -5827,7 +5827,10 @@
     // --- SCHEMATICA / LITEMATICA OTOMATİK İNŞA (AUTO-BUILDER) ARAYÜZ FONKSİYONLARI ---
     function renderBuilderPanel() {
       const botState = (selectedAccountId && appState.bots && appState.bots[selectedAccountId]) || null;
-      const bld = (botState && botState.builder) || null;
+      const acc = (selectedAccountId && appState.config && Array.isArray(appState.config.accounts))
+        ? appState.config.accounts.find(a => a.id === selectedAccountId)
+        : null;
+      const bld = (botState && botState.builder) || (acc ? { autoChainTillPlant: acc.autoChainTillPlant !== false } : null);
       if (!bld) return;
 
       const statusBadge = document.getElementById('builderStatusBadge');
@@ -5947,9 +5950,9 @@
           btnChainToggle.textContent = '🔄 Oto-İnşa Bitince Çapala ➔ Ek: AÇIK';
         } else {
           btnChainToggle.className = 'btn btn-outline btn-sm';
-          btnChainToggle.style.background = '';
-          btnChainToggle.style.borderColor = '';
-          btnChainToggle.style.color = '';
+          btnChainToggle.style.background = 'rgba(239, 68, 68, 0.12)';
+          btnChainToggle.style.borderColor = '#ef4444';
+          btnChainToggle.style.color = '#f87171';
           btnChainToggle.textContent = '🔄 Oto-İnşa Bitince Çapala ➔ Ek: KAPALI';
         }
       }
@@ -6463,6 +6466,37 @@
         ? curBot.builder.autoChainTillPlant !== false
         : (curBot ? curBot.autoChainTillPlant !== false : true);
       const nextEnabled = !curEnabled;
+
+      // Optimistik UI & Durum Güncellemesi
+      if (curBot) {
+        if (!curBot.builder) curBot.builder = {};
+        curBot.builder.autoChainTillPlant = nextEnabled;
+        curBot.autoChainTillPlant = nextEnabled;
+      }
+      if (appState.config && Array.isArray(appState.config.accounts)) {
+        const acc = appState.config.accounts.find(a => a.id === selectedAccountId);
+        if (acc) acc.autoChainTillPlant = nextEnabled;
+      }
+
+      // Butonları anında görsel olarak güncelle
+      const btnChainToggle = document.getElementById('btnBuilderChainToggle');
+      if (btnChainToggle) {
+        if (nextEnabled) {
+          btnChainToggle.className = 'btn btn-primary btn-sm';
+          btnChainToggle.style.background = 'rgba(59, 130, 246, 0.20)';
+          btnChainToggle.style.borderColor = '#3b82f6';
+          btnChainToggle.style.color = '#60a5fa';
+          btnChainToggle.textContent = '🔄 Oto-İnşa Bitince Çapala ➔ Ek: AÇIK';
+        } else {
+          btnChainToggle.className = 'btn btn-outline btn-sm';
+          btnChainToggle.style.background = 'rgba(239, 68, 68, 0.12)';
+          btnChainToggle.style.borderColor = '#ef4444';
+          btnChainToggle.style.color = '#f87171';
+          btnChainToggle.textContent = '🔄 Oto-İnşa Bitince Çapala ➔ Ek: KAPALI';
+        }
+      }
+      updateToggleButton('btnAutoChainTillPlant', nextEnabled, '🔄 İnşa➔Çapa➔Ek: Açık', '🔄 İnşa➔Çapa➔Ek: Kapalı');
+
       await sendBotAction('builderToggleChain', { enabled: nextEnabled });
       showAppToast(
         nextEnabled
