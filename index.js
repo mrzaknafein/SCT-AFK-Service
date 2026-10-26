@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_autotill_fix_v32';
+const ENGINE_BUILD_ID = '20261026_builder_chest_v33';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5087,11 +5087,40 @@ function isBlockPassable(block) {
 function isBlockWalkableFloor(block, session = null) {
   if (!block || !block.name) return false;
   const name = block.name.toLowerCase();
-  if (name === 'air' || name === 'cave_air' || name === 'void_air' || name === 'lava' || name === 'fire') return false;
+  if (
+    name === 'air' ||
+    name === 'cave_air' ||
+    name === 'void_air' ||
+    name === 'lava' ||
+    name === 'flowing_lava' ||
+    name === 'water' ||
+    name === 'flowing_water' ||
+    name === 'fire' ||
+    name === 'soul_fire' ||
+    name === 'cactus' ||
+    name === 'sweet_berry_bush' ||
+    name === 'cobweb' ||
+    name === 'powder_snow' ||
+    name === 'magma_block' ||
+    name === 'campfire' ||
+    name === 'soul_campfire'
+  ) {
+    return false;
+  }
+  // Boş hitbox'lı (meşale, kızıltaş, şalter, düğme, tabela, ip, ekin vb.) bloklar asla zemin olamaz!
+  if (block.boundingBox === 'empty' || isBlockPassable(block)) return false;
   // Çitler (fences) ve duvarlar (walls) 1.5 blok yüksekliğindedir, asla üzerine çıkılamaz veya zıplanamaz!
   if (name.includes('fence') || name.includes('wall') || name.includes('gate') || name.includes('iron_bars')) return false;
-  // Tarladaki aydınlatma blokları (deniz feneri, ışıktaşı, fener, lamba vb.) yürünebilir zemin sayılamaz!
-  if (isLightingOrObstacleBlock(block)) return false;
+  // Tarla modlarında aydınlatma blokları (deniz feneri, ışıktaşı vb.) yürünebilir zemin sayılmaz;
+  // ancak Oto-İnşa (builder) sırasında tam katı ışık blokları (sea_lantern, glowstone, shroomlight, redstone_lamp) üzerinde yürünebilir.
+  const isBuilderActive = Boolean(session && session.builder && session.builder.status === 'building');
+  if (!isBuilderActive && isLightingOrObstacleBlock(block)) return false;
+  if (
+    isBuilderActive &&
+    (name.includes('lantern') && name !== 'sea_lantern' && name !== 'jack_o_lantern')
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -5221,17 +5250,21 @@ function isNearIslandEdge(bot) {
   return false;
 }
 
-function isSafeToStep(bot, yaw, session = null) {
+function isSafeToStep(bot, yaw, session = null, options = {}) {
   if (!bot || !bot.entity || !bot.entity.position) return true;
   const pos = bot.entity.position;
   const sin = -Math.sin(yaw);
   const cos = -Math.cos(yaw);
 
-  const curFootY = Math.floor(pos.y + 0.1);
-  const curFloorY = Math.floor(pos.y - 0.1);
+  const curFootY = Math.floor(pos.y + 0.2);
+  const curFloorY = curFootY - 1;
+  const isBuilderBuilding = Boolean(session && session.builder && session.builder.status === 'building');
+  const allowStepDown = options && typeof options.allowStepDown === 'boolean'
+    ? options.allowStepDown
+    : !isBuilderBuilding;
 
-  // Öne doğru mesafeleri kontrol et (0.45m ve 0.85m)
-  for (const d of [0.45, 0.85]) {
+  // Öne doğru mesafeleri kontrol et (0.38m, 0.65m ve 0.90m)
+  for (const d of [0.38, 0.65, 0.90]) {
     const aheadX = Math.floor(pos.x + sin * d);
     const aheadZ = Math.floor(pos.z + cos * d);
 
@@ -5243,8 +5276,8 @@ function isSafeToStep(bot, yaw, session = null) {
     // Önündeki blok 1 blok yukarı basamaksa (merdiven, yarım blok, basamak toprak)
     const isStepUp = footBlock && !isBlockPassable(footBlock) && !footBlock.name.includes('fence') && !footBlock.name.includes('wall');
     if (isStepUp) {
-      // Eğer basamak bir aydınlatma bloğu ise (sea_lantern vb.), üzerine ASLA çıkma!
-      if (isLightingOrObstacleBlock(footBlock)) {
+      // Tarla modunda basamak bir aydınlatma bloğu ise (sea_lantern vb.), üzerine ASLA çıkma!
+      if (!isBuilderBuilding && isLightingOrObstacleBlock(footBlock)) {
         return false;
       }
       const stepHead = bot.blockAt(new Vec3(aheadX, curFootY + 1, aheadZ));
@@ -5252,25 +5285,26 @@ function isSafeToStep(bot, yaw, session = null) {
       if (isBlockPassable(stepHead) && isBlockPassable(stepCeil)) {
         continue; // 1 blok yukarı çıkış güvenli
       }
+      return false;
     }
 
     // Aksi halde floorBlock yürünebilir bir zemin olmalıdır.
-    // Eğer zemin hava ise (örneğin bot 1 blok yüksekliğindeki aydınlatma üzerindeyken tarlaya iniyorsa):
-    // 1 blok aşağısına bak (1 blok basamak inişi)
     if (!floorBlock || !isBlockWalkableFloor(floorBlock, session)) {
-      const stepDownFloor = bot.blockAt(new Vec3(aheadX, curFloorY - 1, aheadZ));
-      const stepDownFoot = bot.blockAt(new Vec3(aheadX, curFloorY, aheadZ));
-      const stepDownHead = bot.blockAt(new Vec3(aheadX, curFloorY + 1, aheadZ));
-      if (
-        stepDownFloor &&
-        isBlockWalkableFloor(stepDownFloor, session) &&
-        !isLightingOrObstacleBlock(stepDownFloor) &&
-        isBlockPassable(stepDownFoot) &&
-        isBlockPassable(stepDownHead)
-      ) {
-        continue; // 1 blok aşağı tarlaya iniş tamamen güvenli ve serbest!
+      if (allowStepDown) {
+        const stepDownFloor = bot.blockAt(new Vec3(aheadX, curFloorY - 1, aheadZ));
+        const stepDownFoot = bot.blockAt(new Vec3(aheadX, curFloorY, aheadZ));
+        const stepDownHead = bot.blockAt(new Vec3(aheadX, curFloorY + 1, aheadZ));
+        if (
+          stepDownFloor &&
+          isBlockWalkableFloor(stepDownFloor, session) &&
+          (isBuilderBuilding || !isLightingOrObstacleBlock(stepDownFloor)) &&
+          isBlockPassable(stepDownFoot) &&
+          isBlockPassable(stepDownHead)
+        ) {
+          continue; // Doğrulanmış 1 blok basamak inişi güvenli
+        }
       }
-      return false; // Gerçek boşluk veya ada kenarı, dur!
+      return false; // Katman kenarı, boşluk veya ada kenarı -> DUR!
     }
   }
 
@@ -8317,13 +8351,90 @@ function getRemainingNeededMaterials(builder) {
 }
 
 /**
- * Auto-Builder için hassas, düşme korumalı A* yol bulucu.
- * Sadece dünyada gerçekten var olan sağlam zeminler üzerinde adım adım rota çizer.
- * Hedef noktaya (standSpot) tam koordinat eşleşmesiyle gider.
+ * Botun bulunduğu konumda herhangi bir katman kenarına / boşluğa yakın olup olmadığını
+ * veya botun merkezinin (sneak ile tutunarak) boşluğun üzerine sarkıp sarkmadığını kontrol eder.
  */
-function findBuilderPath(bot, startPos, goalPos, session = null, maxNodes = 600) {
-  if (!bot || !startPos || !goalPos) return [];
-  if (startPos.x === goalPos.x && startPos.z === goalPos.z && Math.abs(startPos.y - goalPos.y) <= 1) {
+function isBotOverhangingOrNearEdge(bot, session = null) {
+  if (!bot || !bot.entity || !bot.entity.position) return false;
+  const p = bot.entity.position;
+  const footY = Math.round(p.y);
+  const floorY = footY - 1;
+  const bx = Math.floor(p.x);
+  const bz = Math.floor(p.z);
+
+  // 1. Doğrudan botun merkez koordinatının altındaki blok sağlam zemin değilse (bot sneak ile kenardan sarkıyor!)
+  const centerFloor = bot.blockAt(new Vec3(bx, floorY, bz));
+  if (!centerFloor || !isBlockWalkableFloor(centerFloor, session)) {
+    return true;
+  }
+
+  // 2. Botun 8 komşu bloğundan herhangi birinde aynı katman seviyesinde zemin yoksa (katman kenarı!)
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      if (dx === 0 && dz === 0) continue;
+      const adjFloor = bot.blockAt(new Vec3(bx + dx, floorY, bz + dz));
+      if (!adjFloor || !isBlockWalkableFloor(adjFloor, session)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Bot sneak ile bloğun kenarından sarkıyorsa (merkez koordinatının altı boşluksa),
+ * sneak'i ASLA bırakmadan önce botu bastığı sağlam bloğun tam merkezine çeker.
+ */
+async function stabilizeBotOnBlockCenter(bot, session = null) {
+  if (!bot || !bot.entity || !bot.entity.position) return;
+  const p = bot.entity.position;
+  const footY = Math.round(p.y);
+  const centerFloor = bot.blockAt(new Vec3(Math.floor(p.x), footY - 1, Math.floor(p.z)));
+  if (centerFloor && isBlockWalkableFloor(centerFloor, session)) {
+    return; // Merkez zaten sağlam bloğun üzerinde
+  }
+
+  const safeStand = getEffectiveBotStandBlock(bot, session);
+  if (!safeStand) return;
+
+  bot.setControlState('sneak', true);
+  bot.setControlState('sprint', false);
+  const targetCenter = new Vec3(safeStand.x + 0.5, safeStand.y, safeStand.z + 0.5);
+  const startWait = Date.now();
+  while (Date.now() - startWait < 420) {
+    if (!bot.entity || !bot.entity.position) break;
+    const cur = bot.entity.position;
+    const hDist = Math.hypot(targetCenter.x - cur.x, targetCenter.z - cur.z);
+    if (hDist <= 0.22) break;
+    const dx = targetCenter.x - cur.x;
+    const dz = targetCenter.z - cur.z;
+    const yaw = Math.atan2(-dx, -dz);
+    try {
+      await bot.look(yaw, 0, true);
+    } catch (e) {}
+    bot.setControlState('forward', true);
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  bot.setControlState('forward', false);
+}
+
+/**
+ * Auto-Builder için hassas, katman kilidi ve düşme korumalı A* yol bulucu.
+ * - options.allowStepDown === false (varsayılan inşa modu): Bot bulunduğu katmandan (minY) ASLA aşağı inmez!
+ * - options.allowStepDown === true (sandık merdiven rotası): Yalnızca geri çıkılabilir 1 blokluk basamaklara izin verir.
+ */
+function findBuilderPath(bot, startPos, goalPos, session = null, maxNodes = 700, options = {}) {
+  if (!bot || !startPos || !goalPos) return null;
+  const allowStepDown = Boolean(options && options.allowStepDown);
+  const minY = options && typeof options.minY === 'number'
+    ? options.minY
+    : (allowStepDown ? -Infinity : startPos.y);
+
+  if (
+    startPos.x === goalPos.x &&
+    startPos.z === goalPos.z &&
+    Math.abs(startPos.y - goalPos.y) <= (allowStepDown ? 1 : 0)
+  ) {
     return [];
   }
 
@@ -8349,7 +8460,11 @@ function findBuilderPath(bot, startPos, goalPos, session = null, maxNodes = 600)
     const curKey = cur.pos.toString();
 
     // Tam koordinat eşleşmesi (hedef blok üzerinde duruş)
-    if (cur.pos.x === goalPos.x && cur.pos.z === goalPos.z && Math.abs(cur.pos.y - goalPos.y) <= 1) {
+    if (
+      cur.pos.x === goalPos.x &&
+      cur.pos.z === goalPos.z &&
+      (allowStepDown ? Math.abs(cur.pos.y - goalPos.y) <= 1 : cur.pos.y === goalPos.y)
+    ) {
       const path = [cur.pos];
       let k = curKey;
       while (cameFrom.has(k)) {
@@ -8371,21 +8486,25 @@ function findBuilderPath(bot, startPos, goalPos, session = null, maxNodes = 600)
 
       // 1. Düz hareket (dy = 0)
       const candFlat = new Vec3(nx, y, nz);
-      if (isWalkablePosition(bot, candFlat, session)) {
+      if (y >= minY && isWalkablePosition(bot, candFlat, session)) {
         candidates.push({ pos: candFlat, cost: 1.0 });
       }
 
       // 2. Bir blok yukarı çıkış (dy = +1)
       const candUp = new Vec3(nx, y + 1, nz);
       const headCeilClear = isBlockPassable(bot.blockAt(cur.pos.offset(0, 2, 0)));
-      if (headCeilClear && isWalkablePosition(bot, candUp, session)) {
+      if (headCeilClear && candUp.y >= minY && isWalkablePosition(bot, candUp, session)) {
         candidates.push({ pos: candUp, cost: 1.4 });
       }
 
-      // 3. Bir blok aşağı iniş (dy = -1)
-      const candDown = new Vec3(nx, y - 1, nz);
-      if (isWalkablePosition(bot, candDown, session)) {
-        candidates.push({ pos: candDown, cost: 1.2 });
+      // 3. Bir blok aşağı iniş (dy = -1): YALNIZCA allowStepDown === true ise (sandık merdiveni)
+      // ve geri çıkarken tavan açık (geri zıplanabilir basamak) ise izin verilir!
+      if (allowStepDown && (y - 1) >= minY) {
+        const candDown = new Vec3(nx, y - 1, nz);
+        const spaceAboveDownClear = isBlockPassable(bot.blockAt(new Vec3(nx, y + 1, nz)));
+        if (spaceAboveDownClear && isWalkablePosition(bot, candDown, session)) {
+          candidates.push({ pos: candDown, cost: 1.35 });
+        }
       }
 
       for (const cand of candidates) {
@@ -8475,14 +8594,20 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
   const blockCenter = targetPos.offset(0.5, 0.5, 0.5);
   const excludeCurrentSpot = Boolean(options && options.excludeCurrentSpot);
 
+  // KATMAN DÜŞME KORUMASI: Bot inşa sırasında bulunduğu Y katmanından (startStand.y) ASLA aşağı inmemeli!
+  const minAllowedY = startStand.y;
+
   const candidates = [];
 
-  // Hedef bloğun etrafındaki (dx: -4..4, dz: -4..4, dy: -1..2) olası duruş noktalarını tara
+  // Hedef bloğun etrafındaki (dx: -4..4, dz: -4..4, dy: 0..2) olası duruş noktalarını tara
   for (let dx = -4; dx <= 4; dx++) {
     for (let dz = -4; dz <= 4; dz++) {
       if (dx === 0 && dz === 0) continue;
       for (let dy = -1; dy <= 2; dy++) {
         const cand = new Vec3(targetPos.x + dx, targetPos.y + dy, targetPos.z + dz);
+        // Bulunduğu katmandan daha aşağıda bir duruş noktasını KESİNLİKLE reddet!
+        if (cand.y < minAllowedY) continue;
+
         const standPos = cand.offset(0.5, 0, 0.5);
 
         // Hedef bloğun AABB hitbox içine girmeyi kesin olarak yasakla
@@ -8508,8 +8633,13 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
 
   if (candidates.length === 0) return null;
 
-  // Botun şu anki konumuna en yakın olan adayları sırala
-  candidates.sort((a, b) => a.distToBot - b.distToBot);
+  // Botun şu anki konumuna en yakın olan (ve aynı katmandaki) adayları sırala
+  candidates.sort((a, b) => {
+    const aSameY = a.pos.y === startStand.y ? 0 : 1;
+    const bSameY = b.pos.y === startStand.y ? 0 : 1;
+    if (aSameY !== bSameY) return aSameY - bSameY;
+    return a.distToBot - b.distToBot;
+  });
 
   // Botun gerçekten şu anki göz konumundan hedefe <= 3.30m mesafede olup olmadığını kontrol et
   const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(blockCenter);
@@ -8520,24 +8650,27 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
     curEyeDist <= 3.30
   ) {
     const alreadyAtCand = candidates.find(
-      (c) => c.pos.x === startStand.x && c.pos.z === startStand.z && Math.abs(c.pos.y - startStand.y) <= 1
+      (c) => c.pos.x === startStand.x && c.pos.z === startStand.z && c.pos.y === startStand.y
     );
     if (alreadyAtCand) {
       return { spot: startStand, path: [] };
     }
   }
 
-  // Adaylar arasından botun mevcut konumundan A* ile gidilebilen ilk adayı seç
+  // Adaylar arasından botun mevcut konumundan (aşağı inmeden!) A* ile gidilebilen ilk adayı seç
   for (const cand of candidates) {
     if (
       cand.pos.x === startStand.x &&
       cand.pos.z === startStand.z &&
-      Math.abs(cand.pos.y - startStand.y) <= 1
+      cand.pos.y === startStand.y
     ) {
       // Bot aynı blokta ama bloğun uzak kenarında duruyorsa doğrudan blok merkezine yürüsün
       return { spot: cand.pos, path: [cand.pos] };
     }
-    const path = findBuilderPath(bot, startStand, cand.pos, session, 550);
+    const path = findBuilderPath(bot, startStand, cand.pos, session, 650, {
+      allowStepDown: false,
+      minY: minAllowedY
+    });
     if (path !== null) {
       return { spot: cand.pos, path };
     }
@@ -8547,24 +8680,32 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
 }
 
 /**
- * Verilen A* düğüm dizisi (path) boyunca botu yürütür.
- * - stopNearTargetBlock verilirse: Bot o bloğa <= 3.15m yaklaştığında ve hitbox'ı kesişmediğinde erken durabilir.
- * - stopNearTargetBlock === null ise (örn. escapeTarget veya altSpot'a çekilirken):
- *   Erken durmaz, hedef düğümün merkezine (hDist <= 0.30m) kadar tam yürür!
+ * Verilen A* düğüm dizisi (path) boyunca botu düşme korumalı (katman kilitli) olarak yürütür.
+ * - İnşa katmanı üzerinde yürürken sneak (eğilme) sürekli aktif tutulur ve her düğümün tam merkezinden (<= 0.24m)
+ *   geçilerek köşelerden boşluğa düşme %100 engellenir.
  */
-async function walkBotAlongPath(bot, session, path, maxDurationMs = 2200, stopNearTargetBlock = null) {
+async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNearTargetBlock = null, options = {}) {
   if (!bot || !bot.entity || !bot.entity.position || !Array.isArray(path) || path.length === 0) {
     return false;
   }
 
+  const allowStepDown = Boolean(options && options.allowStepDown);
   const startTime = Date.now();
-  const startY = bot.entity.position.y;
+  const startY = Math.round(bot.entity.position.y);
+  const minAllowedY = allowStepDown ? startY - 1.25 : startY - 0.20;
   const targetCenter = stopNearTargetBlock ? stopNearTargetBlock.offset(0.5, 0.5, 0.5) : null;
 
   try {
     for (const node of path) {
       if (session && session.builder && session.builder.status !== 'building') break;
       if (Date.now() - startTime > maxDurationMs) break;
+
+      // Eğer hedef düğüm izin verilen Y katmanının altındaysa derhal dur!
+      if (!allowStepDown && node.y < startY) {
+        bot.setControlState('forward', false);
+        bot.setControlState('sneak', true);
+        break;
+      }
 
       const nodeCenter = new Vec3(node.x + 0.5, node.y, node.z + 0.5);
 
@@ -8579,20 +8720,20 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2200, stopNe
         }
       }
 
-      // 1 BLOKTAN FAZLA AŞAĞI DÜŞME KORUMASI:
-      if (bot.entity.position.y < startY - 1.25) {
+      // KATMAN DÜŞME KORUMASI:
+      if (bot.entity.position.y < minAllowedY) {
         bot.setControlState('forward', false);
         bot.setControlState('sneak', true);
         break;
       }
 
       const nodeStartTime = Date.now();
-      while (Date.now() - nodeStartTime < 1200) {
+      while (Date.now() - nodeStartTime < 1300) {
         if (session && session.builder && session.builder.status !== 'building') break;
         if (Date.now() - startTime > maxDurationMs) break;
 
         const cur = bot.entity.position;
-        if (cur.y < startY - 1.25) {
+        if (cur.y < minAllowedY) {
           bot.setControlState('forward', false);
           bot.setControlState('sneak', true);
           break;
@@ -8608,23 +8749,27 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2200, stopNe
         }
 
         const hDist = Math.hypot(nodeCenter.x - cur.x, nodeCenter.z - cur.z);
-        if (hDist <= 0.30 && Math.abs(nodeCenter.y - cur.y) <= 0.6) break;
+        if (hDist <= 0.24 && Math.abs(nodeCenter.y - cur.y) <= 0.6) break;
 
         const dx = nodeCenter.x - cur.x;
         const dz = nodeCenter.z - cur.z;
         const yaw = Math.atan2(-dx, -dz);
 
+        const isSteppingDown = allowStepDown && node.y < Math.round(cur.y);
+        if (!isSafeToStep(bot, yaw, session, { allowStepDown: isSteppingDown })) {
+          bot.setControlState('forward', false);
+          bot.setControlState('sneak', true);
+          break;
+        }
+
         await bot.look(yaw, 0, true);
         bot.setControlState('forward', true);
         bot.setControlState('sprint', false);
 
-        if (targetCenter) {
-          const distToTarg = curEyeNow.distanceTo(targetCenter);
-          if (distToTarg <= 3.8) {
-            bot.setControlState('sneak', true);
-          } else if (!session || !session.sneakLock) {
-            bot.setControlState('sneak', false);
-          }
+        // Katman üzerinde yürürken sneak daima açık tutulur (fiziksel olarak kenardan düşmeyi imkansız kılar).
+        // Yalnızca doğrulanmış 1 blokluk merdivenden aşağı inerken (isSteppingDown) basamağa inebilmek için bırakılır.
+        if (isSteppingDown) {
+          bot.setControlState('sneak', false);
         } else {
           bot.setControlState('sneak', true);
         }
@@ -8645,9 +8790,12 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2200, stopNe
       bot.setControlState('forward', false);
       bot.setControlState('sprint', false);
       bot.setControlState('jump', false);
-      if (!session || !session.sneakLock) {
-        bot.setControlState('sneak', false);
-      }
+      // EĞER BOT BLOK KENARINDAN SARKIYORSA ÖNCE MERKEZE ÇEK, KENARDAYSA SNEAK'İ ASLA BIRAKMA!
+      await stabilizeBotOnBlockCenter(bot, session);
+      const keepSneak =
+        Boolean(session && session.sneakLock) ||
+        isBotOverhangingOrNearEdge(bot, session);
+      bot.setControlState('sneak', keepSneak);
     }
   }
 }
@@ -8674,12 +8822,17 @@ async function builderMoveTowardsBlock(bot, session, targetWorldPos, maxDuration
     if (standResult.spot && Array.isArray(standResult.path)) {
       path = standResult.path.length > 0 ? standResult.path : [standResult.spot];
     } else if (standResult.x !== undefined) {
-      path = findBuilderPath(bot, startStand, standResult, session, 550);
+      path = findBuilderPath(bot, startStand, standResult, session, 650, {
+        allowStepDown: false,
+        minY: startStand.y
+      });
     }
   }
 
   if (!path || path.length === 0) return false;
-  return await walkBotAlongPath(bot, session, path, maxDurationMs, targetWorldPos);
+  return await walkBotAlongPath(bot, session, path, maxDurationMs, targetWorldPos, {
+    allowStepDown: false
+  });
 }
 
 async function stepMoveBotTowards(bot, targetVec, durationMs = 380) {
@@ -8688,115 +8841,155 @@ async function stepMoveBotTowards(bot, targetVec, durationMs = 380) {
 }
 
 /**
- * Sandığa veya malzeme alanına KESİNTİSİZ ve GÜVENLİ A* rotasıyla gider.
- * Eğer havada asılı inşaat ile sandık arasında uçurum/boşluk varsa (merdiven yoksa),
- * ASLA körlemesine kenardan yürüyüp yere/boşluğa düşmez!
+ * Bir sandığa veya hedef noktaya güvenli GİDİŞ-DÖNÜŞ (two-way) A* yolu olup olmadığını
+ * hareket etmeden ÖNCE hafızada hesaplar.
+ * - Eğer sandık alt katmandaysa ve merdiven yoksa (veya tek yönlü düşüş varsa ve geri çıkılamıyorsa),
+ *   null döndürür; böylece bot ASLA sandığa gitmeye çalışmaz ve aşağı düşmez!
  */
-async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs = 15000) {
-  if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
+function findSafeTwoWayChestRoute(bot, session, targetBlockPos, maxNodes = 2000) {
+  if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return null;
   const botPos = bot.entity.position;
-  const directDist = botPos.distanceTo(targetBlockPos);
-  if (directDist <= 3.8) return true; // Zaten hedefin başında
+  const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
+  const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
 
-  // 1. Hedef bloğun etrafındaki komşu bloklarda sağlam basamak/zemin ara
-  const offsets = [
-    new Vec3(1, 0, 0),
-    new Vec3(-1, 0, 0),
-    new Vec3(0, 0, 1),
-    new Vec3(0, 0, -1),
-    new Vec3(1, -1, 0),
-    new Vec3(-1, -1, 0),
-    new Vec3(0, -1, 1),
-    new Vec3(0, -1, -1),
-    new Vec3(1, 1, 0),
-    new Vec3(-1, 1, 0),
-    new Vec3(0, 1, 1),
-    new Vec3(0, 1, -1)
-  ];
+  // Zaten uzanma mesafesindeyse (<= 3.8m) yürümeye gerek yok
+  if (botPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= 3.85) {
+    return { spot: startStand, pathToChest: [], pathBack: [] };
+  }
 
-  let bestSpot = null;
-  let bestSpotDist = Infinity;
-  for (const off of offsets) {
-    const spot = targetBlockPos.plus(off);
-    if (isWalkablePosition(bot, spot, session)) {
-      const d = botPos.distanceTo(spot);
-      if (d < bestSpotDist) {
-        bestSpotDist = d;
-        bestSpot = spot;
+  // Sandığın etrafındaki (dx: -3..3, dz: -3..3, dy: -1..1) yürünebilir duruş noktalarını bul
+  const spotCandidates = [];
+  for (let dx = -3; dx <= 3; dx++) {
+    for (let dz = -3; dz <= 3; dz++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const spot = new Vec3(targetBlockPos.x + dx, targetBlockPos.y + dy, targetBlockPos.z + dz);
+        const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
+        const reachDist = eyeFromSpot.distanceTo(targetCenter);
+        if (reachDist > 3.75) continue;
+        if (isWalkablePosition(bot, spot, session)) {
+          spotCandidates.push({
+            spot,
+            distToBot: botPos.distanceTo(spot.offset(0.5, 0, 0.5)),
+            sameLevel: spot.y === startStand.y ? 0 : 1
+          });
+        }
       }
     }
   }
 
-  // Eğer hedef çevresinde doğrudan yürünebilir nokta yoksa, hedefin kendisi yürünebilirse onu dene
-  if (!bestSpot && isWalkablePosition(bot, targetBlockPos, session)) {
-    bestSpot = targetBlockPos;
+  if (spotCandidates.length === 0) return null;
+
+  // Önce botla aynı katmanda olan ve en yakın olan duruş noktalarını dene
+  spotCandidates.sort((a, b) => {
+    if (a.sameLevel !== b.sameLevel) return a.sameLevel - b.sameLevel;
+    return a.distToBot - b.distToBot;
+  });
+
+  // 1. Öncelik: Hiç katman değiştirmeden (allowStepDown: false) gidilebilen güvenli yol
+  for (let i = 0; i < Math.min(spotCandidates.length, 10); i++) {
+    const cand = spotCandidates[i];
+    if (cand.spot.y < startStand.y) continue;
+    const pathSameLayer = findBuilderPath(bot, startStand, cand.spot, session, maxNodes, {
+      allowStepDown: false,
+      minY: startStand.y
+    });
+    if (pathSameLayer !== null) {
+      const pathBack = findBuilderPath(bot, cand.spot, startStand, session, maxNodes, {
+        allowStepDown: true,
+        minY: startStand.y
+      });
+      if (pathBack !== null) {
+        return { spot: cand.spot, pathToChest: pathSameLayer, pathBack };
+      }
+    }
   }
 
-  if (!bestSpot) return false;
-
-  // Bot zaten sandığın hemen yanında veya uzanma mesafesinde mi?
-  if (botPos.distanceTo(targetBlockPos) <= 3.8 || botPos.distanceTo(bestSpot) <= 1.4) {
-    return true;
+  // 2. Öncelik: Merdiven/basamak ile inilip GERİ ÇIKILABİLEN (çift yönlü doğrulanmış) yol
+  for (let i = 0; i < Math.min(spotCandidates.length, 8); i++) {
+    const cand = spotCandidates[i];
+    const pathToChest = findBuilderPath(bot, startStand, cand.spot, session, maxNodes, {
+      allowStepDown: true
+    });
+    if (pathToChest !== null) {
+      // Geri dönüş yolu (pathBack) da KESİNLİKLE mevcut olmalı (tek yönlü atlama/düşüş yasak!)
+      const pathBack = findBuilderPath(bot, cand.spot, startStand, session, maxNodes, {
+        allowStepDown: true
+      });
+      if (pathBack !== null) {
+        return { spot: cand.spot, pathToChest, pathBack };
+      }
+    }
   }
 
-  // 2. A* yol bulucu ile kesintisiz güvenli rota ara (uçurum/boşluk kontrolü)
-  const startPos = botPos.floored();
-  const path = (typeof findBuilderPath === 'function')
-    ? findBuilderPath(bot, startPos, bestSpot, session, 1500)
-    : null;
+  return null;
+}
 
-  // KESİN DÜŞME KORUMASI: Eğer güvenli ve kesintisiz zemin rotası bulunamadıysa (örneğin bot havada inşaatta,
-  // sandık aşağıda ve merdiven yoksa), ASLA KÖRLEMESİNE UÇURUMA DOĞRU YÜRÜME!
+/**
+ * Sandığa veya malzeme alanına KESİNTİSİZ ve GÜVENLİ A* rotasıyla gider.
+ * Eğer havada asılı inşaat ile sandık arasında uçurum/boşluk varsa (veya geri çıkış yolu yoksa),
+ * ASLA hareket etmez ve aşağı düşmez!
+ */
+async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs = 15000, precomputedPath = null) {
+  if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
+  const botPos = bot.entity.position;
+  const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
+  if (botPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= 3.85) return true;
+
+  let path = precomputedPath;
+  if (!path) {
+    const route = findSafeTwoWayChestRoute(bot, session, targetBlockPos, 2000);
+    if (!route) {
+      if (session && session.account) {
+        addLog(
+          session.account.id,
+          'AUTO-BUILDER',
+          `⚠️ Sandığa (${targetBlockPos.x}, ${targetBlockPos.y}, ${targetBlockPos.z}) güvenli gidiş-dönüş yolu bulunamadı. Düşmemek için hareket edilmedi.`,
+          chalk.yellow
+        );
+      }
+      return false;
+    }
+    path = route.pathToChest;
+  }
+
   if (!path || path.length === 0) {
-    if (botPos.distanceTo(targetBlockPos) <= 4.2) {
-      return true;
-    }
-    if (session && session.account) {
-      addLog(
-        session.account.id,
-        'AUTO-BUILDER',
-        `Sandığa (${targetBlockPos.x}, ${targetBlockPos.y}, ${targetBlockPos.z}) güvenli zemin/merdiven yolu bulunamadı (uçurum veya bağlantısız zemin). Düşmemek için hareket iptal edildi.`,
-        chalk.yellow
-      );
-    }
-    return false;
+    return bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.1;
   }
 
-  // 3. Bulunan rotadaki her adımı dikkatle, eğilme/kenar korumasıyla yürü
+  // Bulunan rotadaki her adımı tam merkez hizalaması (<= 0.24m) ve düşme korumasıyla yürü
   const startTime = Date.now();
-  const startY = botPos.y;
   let currentTargetIndex = 0;
+  let lastAllowedY = Math.round(bot.entity.position.y);
 
   try {
     while (currentTargetIndex < path.length && Date.now() - startTime < maxTimeoutMs) {
-      if (!session || !session.builder || session.builder.status !== 'building') break;
+      if (!session || !session.bot || session.status !== 'online') break;
 
       const curPos = bot.entity.position;
+      const curEye = curPos.offset(0, 1.62, 0);
 
-      // 1 BLOKTAN FAZLA AŞAĞI DÜŞME KORUMASI:
-      if (curPos.y < startY - 1.25) {
-        bot.setControlState('forward', false);
-        bot.setControlState('sneak', true);
-        return false;
-      }
-
-      // Sandığa yeterince yaklaştıysak (<= 3.8m) erken sonlandır
-      if (curPos.distanceTo(targetBlockPos) <= 3.8) {
-        break;
+      // Sandığa yeterince yaklaştıysak (<= 3.75m) ve merkezimiz sağlam zemindeyse dur
+      if (curEye.distanceTo(targetCenter) <= 3.75) {
+        const floorBelow = bot.blockAt(new Vec3(Math.floor(curPos.x), Math.round(curPos.y) - 1, Math.floor(curPos.z)));
+        if (floorBelow && isBlockWalkableFloor(floorBelow, session)) {
+          break;
+        }
       }
 
       const targetNode = path[currentTargetIndex];
       const nodeCenter = targetNode.offset(0.5, 0, 0.5);
 
-      // Hedef düğüm 1 bloktan daha aşağıdaysa (uçurum) güvenli zemin olmadan inme
-      if (targetNode.y < curPos.y - 1.25) {
+      // Beklenmeyen düşme koruması (hedef düğümün Y değerinden 1 bloktan fazla aşağı düşüldüyse derhal dur)
+      const minStepY = Math.min(lastAllowedY, targetNode.y) - 0.35;
+      if (curPos.y < minStepY) {
         bot.setControlState('forward', false);
         bot.setControlState('sneak', true);
         return false;
       }
 
       const horizDist = Math.hypot(nodeCenter.x - curPos.x, nodeCenter.z - curPos.z);
-      if (horizDist <= 0.45 && Math.abs(targetNode.y - curPos.y) <= 0.6) {
+      if (horizDist <= 0.24 && Math.abs(targetNode.y - curPos.y) <= 0.65) {
+        lastAllowedY = targetNode.y;
         currentTargetIndex++;
         continue;
       }
@@ -8805,8 +8998,8 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
       const dz = nodeCenter.z - curPos.z;
       const targetYaw = Math.atan2(-dx, -dz);
 
-      // Ada kenarı ve boşluk kontrolü (her adımda çalıştır)
-      if (typeof isSafeToStep === 'function' && !isSafeToStep(bot, targetYaw, session)) {
+      const isStepDown = targetNode.y < Math.round(curPos.y);
+      if (!isSafeToStep(bot, targetYaw, session, { allowStepDown: isStepDown })) {
         bot.setControlState('forward', false);
         bot.setControlState('sprint', false);
         bot.setControlState('sneak', true);
@@ -8815,9 +9008,16 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
 
       await bot.look(targetYaw, 0, true);
       bot.setControlState('forward', true);
-      bot.setControlState('sprint', false); // Koşma kapalı, kayıp uçmayı engeller
+      bot.setControlState('sprint', false);
 
-      // Sadece gerçek basamak çıkışında zıpla (asla kenarlarda rastgele zıplama)
+      // Düz yolda ve yukarı çıkarken sneak açık (köşelerden düşmeyi engeller);
+      // yalnızca doğrulanmış 1 blok merdiven inişinde basamağa inmek için bırakılır
+      if (isStepDown) {
+        bot.setControlState('sneak', false);
+      } else {
+        bot.setControlState('sneak', true);
+      }
+
       const dy = targetNode.y - curPos.y;
       if (dy >= 0.5 && dy <= 1.25) {
         bot.setControlState('jump', true);
@@ -8832,191 +9032,257 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
       bot.setControlState('forward', false);
       bot.setControlState('sprint', false);
       bot.setControlState('jump', false);
-      if (session && !session.sneakLock) bot.setControlState('sneak', false);
+      await stabilizeBotOnBlockCenter(bot, session);
+      const keepSneak =
+        Boolean(session && session.sneakLock) ||
+        isBotOverhangingOrNearEdge(bot, session);
+      bot.setControlState('sneak', keepSneak);
     }
   }
 
-  return bot.entity.position.distanceTo(targetBlockPos) <= 4.2;
+  return bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.25;
 }
 
-async function restockFromNearbyChestsForBuilder(accountId, primaryBlockName) {
+async function restockFromNearbyChestsForBuilder(accountId, primaryBlockName = null) {
   const session = sessions.get(accountId);
   if (!session || !session.bot || !session.builder || session.status !== 'online') return false;
   const bot = session.bot;
   const builder = session.builder;
 
-  const containerNames = new Set([
-    'chest',
-    'trapped_chest',
-    'barrel',
-    'shulker_box',
-    'white_shulker_box',
-    'orange_shulker_box',
-    'magenta_shulker_box',
-    'light_blue_shulker_box',
-    'yellow_shulker_box',
-    'lime_shulker_box',
-    'pink_shulker_box',
-    'gray_shulker_box',
-    'light_gray_shulker_box',
-    'cyan_shulker_box',
-    'purple_shulker_box',
-    'blue_shulker_box',
-    'brown_shulker_box',
-    'green_shulker_box',
-    'red_shulker_box',
-    'black_shulker_box'
-  ]);
-  const now = Date.now();
+  if (builder.isRestockingNow) return false;
+  builder.isRestockingNow = true;
 
-  // 80x80 alandaki (bot veya inşa merkezinden ~40 blok yarıçap) tüm sandıkları ara
-  const botPos = bot.entity.position;
-  const maxSearchDist = 56; // 80x80 karenin köşegen mesafesi: sqrt(40^2 + 40^2) ~= 56.5 blok
-  let rawPositions = [];
   try {
-    rawPositions = bot.findBlocks({
-      matching: (blk) => blk && containerNames.has(blk.name),
-      maxDistance: maxSearchDist,
-      count: 128
-    });
-  } catch (e) {
-    rawPositions = [];
-  }
+    const containerNames = new Set([
+      'chest',
+      'trapped_chest',
+      'barrel',
+      'shulker_box',
+      'white_shulker_box',
+      'orange_shulker_box',
+      'magenta_shulker_box',
+      'light_blue_shulker_box',
+      'yellow_shulker_box',
+      'lime_shulker_box',
+      'pink_shulker_box',
+      'gray_shulker_box',
+      'light_gray_shulker_box',
+      'cyan_shulker_box',
+      'purple_shulker_box',
+      'blue_shulker_box',
+      'brown_shulker_box',
+      'green_shulker_box',
+      'red_shulker_box',
+      'black_shulker_box'
+    ]);
+    const now = Date.now();
 
-  if (!rawPositions || rawPositions.length === 0) {
-    return false;
-  }
+    if (!builder.knownChestPositions) {
+      builder.knownChestPositions = new Map();
+    }
 
-  // 80x80 yatay alan filtresi: |dx| <= 40 ve |dz| <= 40
-  const positions = rawPositions.filter((pos) => {
-    const dx = Math.abs(pos.x - botPos.x);
-    const dz = Math.abs(pos.z - botPos.z);
-    const dy = Math.abs(pos.y - botPos.y);
-    return dx <= 40 && dz <= 40 && dy <= 30;
-  });
+    const botPos = bot.entity.position;
+    const preRestockStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
 
-  if (positions.length === 0) {
-    return false;
-  }
+    // 96 blok yarıçapındaki tüm sandıkları tara ve hafızaya kaydet
+    try {
+      const scanned = bot.findBlocks({
+        matching: (blk) => blk && containerNames.has(blk.name),
+        maxDistance: 80,
+        count: 128
+      });
+      for (const p of scanned) {
+        builder.knownChestPositions.set(`${p.x},${p.y},${p.z}`, new Vec3(p.x, p.y, p.z));
+      }
+    } catch (e) {}
 
-  // EN YAKIN SANDIKTAN BAŞLA: Mesafeye göre küçükten büyüğe sırala
-  positions.sort((a, b) => botPos.distanceTo(a) - botPos.distanceTo(b));
+    // Hafızadaki sandıklardan hala dünyada var olanları listele
+    const positions = [];
+    for (const [key, pos] of builder.knownChestPositions.entries()) {
+      const blk = bot.blockAt(pos);
+      if (blk && containerNames.has(blk.name)) {
+        const dx = Math.abs(pos.x - botPos.x);
+        const dz = Math.abs(pos.z - botPos.z);
+        const dy = Math.abs(pos.y - botPos.y);
+        if (dx <= 75 && dz <= 75 && dy <= 40) {
+          positions.push(pos);
+        }
+      } else if (blk && blk.name === 'air') {
+        builder.knownChestPositions.delete(key);
+      }
+    }
 
-  const neededMap = getRemainingNeededMaterials(builder);
-
-  for (const pos of positions) {
-    const posKey = `${pos.x},${pos.y},${pos.z}`;
-    const lastEmpty = builder.recentEmptyChests.get(posKey) || 0;
-    if (now - lastEmpty < 12000) continue; // Son 12 saniyede boş olduğu teyit edilen sandıkları geç
-
-    const dist = bot.entity.position.distanceTo(pos);
-    if (dist > 3.8 && builder.autoMove) {
-      builder.statusMessage = `[SANDIK] Malzeme için en yakın sandığa gidiliyor (${dist.toFixed(1)}m)...`;
+    if (positions.length === 0) {
+      builder.statusMessage = `[SANDIK YOK] Çevrede malzeme sandığı bulunamadı.`;
       broadcastState();
-      const reached = await safelyNavigateToChest(bot, session, pos, Math.max(4000, Math.min(22000, Math.ceil(dist * 450))));
-      if (!reached) {
+      return false;
+    }
+
+    // Önce aynı Y katmanındaki ve en yakın olan sandıklardan başla
+    positions.sort((a, b) => {
+      const aSameY = Math.abs(a.y - preRestockStand.y) <= 1 ? 0 : 1;
+      const bSameY = Math.abs(b.y - preRestockStand.y) <= 1 ? 0 : 1;
+      if (aSameY !== bSameY) return aSameY - bSameY;
+      return botPos.distanceTo(a) - botPos.distanceTo(b);
+    });
+
+    const neededMap = getRemainingNeededMaterials(builder);
+    if (!primaryBlockName) {
+      const firstUnplaced = Array.isArray(builder.blocks) ? builder.blocks.find((b) => !b.placed) : null;
+      primaryBlockName = firstUnplaced ? firstUnplaced.name : Object.keys(neededMap)[0] || 'stone';
+    }
+
+    let anyChestHadRoute = false;
+
+    for (const pos of positions) {
+      const posKey = `${pos.x},${pos.y},${pos.z}`;
+      const lastEmpty = builder.recentEmptyChests.get(posKey) || 0;
+      if (now - lastEmpty < 8000) continue;
+
+      const eyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
+      let route = null;
+
+      if (eyeDist > 3.85) {
+        if (!builder.autoMove) continue;
+        // HAREKET ETMEDEN ÖNCE GÜVENLİ GİDİŞ-DÖNÜŞ YOLU VAR MI KONTROL ET!
+        route = findSafeTwoWayChestRoute(bot, session, pos, 2000);
+        if (!route) {
+          // Bu sandığa güvenli yol yok (uçurum / merdivensiz katman), ASLA gitmeye çalışma!
+          continue;
+        }
+        anyChestHadRoute = true;
+        builder.statusMessage = `[SANDIK] "${primaryBlockName}" tazelemek için güvenli yoldan sandığa gidiliyor (${pos.x}, ${pos.y}, ${pos.z})...`;
+        broadcastState();
+
+        const reached = await safelyNavigateToChest(
+          bot,
+          session,
+          pos,
+          Math.max(5000, Math.min(25000, Math.ceil(route.pathToChest.length * 420))),
+          route.pathToChest
+        );
+        if (!reached) {
+          continue;
+        }
+      } else {
+        anyChestHadRoute = true;
+      }
+
+      const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
+      if (curEyeDist > 4.35) {
         continue;
       }
-    }
 
-    const curDist = bot.entity.position.distanceTo(pos);
-    if (curDist > 4.3) {
-      // Sandığa ulaşılamadıysa (yolda engel/duvar varsa) bir sonraki sandığa geç
-      continue;
-    }
+      const chestBlock = bot.blockAt(pos);
+      if (!chestBlock) continue;
 
-    const chestBlock = bot.blockAt(pos);
-    if (!chestBlock) continue;
-
-    let opened = null;
-    try {
-      opened = await safelyOpenContainer(bot, chestBlock, session);
-      const container = opened.container;
-      let withdrewAny = false;
-      let withdrewPrimary = false;
-
-      const primaryCandidateNames = resolveCandidateItemNamesForBlock(primaryBlockName);
-
-      // 1. ÖNCE acil aranan birincil bloğu (primaryBlockName) çek (envanter dolmadan önce!)
-      for (let slot = 0; slot < container.inventoryStart; slot++) {
-        const slotItem = container.slots[slot];
-        if (!slotItem) continue;
-        const normItem = normalizeBlockName(slotItem.name);
-        if (primaryCandidateNames.includes(normItem)) {
-          try {
-            await withPromiseTimeout(bot.clickWindow(slot, 0, 1), 1600);
-            await new Promise((r) => setTimeout(r, 95));
-            withdrewAny = true;
-            withdrewPrimary = true;
-          } catch (e) {
-            break;
-          }
-        }
-      }
-
-      // 2. SONRA kalan diğer gerekli şema malzemelerini çek
-      for (let slot = 0; slot < container.inventoryStart; slot++) {
-        const slotItem = container.slots[slot];
-        if (!slotItem) continue;
-        const normItem = normalizeBlockName(slotItem.name);
-        if (primaryCandidateNames.includes(normItem)) continue;
-
-        if (neededMap[normItem] > 0 || neededMap[slotItem.name] > 0) {
-          try {
-            await withPromiseTimeout(bot.clickWindow(slot, 0, 1), 1600);
-            await new Promise((r) => setTimeout(r, 95));
-            withdrewAny = true;
-          } catch (e) {
-            break;
-          }
-        }
-      }
-
+      let opened = null;
       try {
-        container.close();
-      } catch (e) {}
+        opened = await safelyOpenContainer(bot, chestBlock, session);
+        const container = opened.container;
+        let withdrewAny = false;
+        let withdrewPrimary = false;
 
-      if (withdrewPrimary || withdrewAny) {
-        addLog(
-          accountId,
-          'AUTO-BUILDER',
-          `80x80 alandaki sandıktan (${pos.x}, ${pos.y}, ${pos.z}) "${primaryBlockName}" ve inşa malzemeleri çekildi.`,
-          chalk.green
-        );
+        const primaryCandidateNames = resolveCandidateItemNamesForBlock(primaryBlockName);
 
-        // Sandıktan malzeme aldıktan sonra inşa alanına güvenle geri yaklaş
-        if (builder.autoMove && dist > 4.5) {
-          const nextBlock = builder.blocks.find((b) => !b.placed);
-          if (nextBlock) {
-            const buildTarget = new Vec3(
-              builder.origin.x + nextBlock.x,
-              builder.origin.y + nextBlock.y,
-              builder.origin.z + nextBlock.z
-            );
-            builder.statusMessage = `[İNŞA] Malzemeler tedarik edildi, inşa alanına dönülüyor...`;
-            broadcastState();
-            await safelyNavigateToChest(bot, session, buildTarget, Math.min(18000, Math.ceil(dist * 400)));
+        // 1. ÖNCE acil aranan birincil bloğu (primaryBlockName) çek
+        for (let slot = 0; slot < container.inventoryStart; slot++) {
+          if (isBotInventoryFull(bot)) break;
+          const slotItem = container.slots[slot];
+          if (!slotItem) continue;
+          const normItem = normalizeBlockName(slotItem.name);
+          if (primaryCandidateNames.includes(normItem)) {
+            try {
+              await withPromiseTimeout(bot.clickWindow(slot, 0, 1), 1600);
+              await new Promise((r) => setTimeout(r, 95));
+              withdrewAny = true;
+              withdrewPrimary = true;
+            } catch (e) {
+              break;
+            }
           }
         }
 
-        return true;
-      }
+        // 2. SONRA kalan diğer gerekli şema malzemelerini çek
+        for (let slot = 0; slot < container.inventoryStart; slot++) {
+          if (isBotInventoryFull(bot)) break;
+          const slotItem = container.slots[slot];
+          if (!slotItem) continue;
+          const normItem = normalizeBlockName(slotItem.name);
+          if (primaryCandidateNames.includes(normItem)) continue;
 
-      if (!withdrewAny) {
-        builder.recentEmptyChests.set(posKey, Date.now());
-      }
-    } catch (err) {
-      builder.recentEmptyChests.set(posKey, Date.now());
-    } finally {
-      if (opened && opened.hadSneakLock && session.bot && session.status === 'online') {
+          if (neededMap[normItem] > 0 || neededMap[slotItem.name] > 0) {
+            try {
+              await withPromiseTimeout(bot.clickWindow(slot, 0, 1), 1600);
+              await new Promise((r) => setTimeout(r, 95));
+              withdrewAny = true;
+            } catch (e) {
+              break;
+            }
+          }
+        }
+
         try {
-          session.bot.setControlState('sneak', true);
+          container.close();
         } catch (e) {}
+
+        if (withdrewPrimary || withdrewAny) {
+          addLog(
+            accountId,
+            'AUTO-BUILDER',
+            `📦 Sandıktan (${pos.x}, ${pos.y}, ${pos.z}) "${primaryBlockName}" ve inşa blokları tazelendi.`,
+            chalk.green
+          );
+
+          // Sandıktan malzeme aldıktan sonra ayrıldığı inşa noktasına (preRestockStand) güvenle geri dön!
+          if (builder.autoMove && route && route.pathBack && route.pathBack.length > 0) {
+            builder.statusMessage = `[İNŞA] Malzemeler alındı, inşa noktasına güvenli yoldan dönülüyor...`;
+            broadcastState();
+            await safelyNavigateToChest(
+              bot,
+              session,
+              preRestockStand,
+              Math.max(5000, Math.min(25000, Math.ceil(route.pathBack.length * 420))),
+              route.pathBack
+            );
+          }
+
+          return true;
+        }
+
+        if (!withdrewAny) {
+          builder.recentEmptyChests.set(posKey, Date.now());
+        }
+      } catch (err) {
+        builder.recentEmptyChests.set(posKey, Date.now());
+      } finally {
+        if (opened && session.bot && session.status === 'online') {
+          await stabilizeBotOnBlockCenter(bot, session);
+          const keepSneak =
+            Boolean(opened.hadSneakLock || session.sneakLock) ||
+            isBotOverhangingOrNearEdge(bot, session);
+          try {
+            session.bot.setControlState('sneak', keepSneak);
+          } catch (e) {}
+        }
       }
     }
-  }
 
-  return Boolean(findMatchingInventoryItem(bot, primaryBlockName));
+    if (!anyChestHadRoute && positions.length > 0) {
+      builder.statusMessage = `[SANDIK YOLU YOK] Sandık bulundu ancak güvenli gidiş-dönüş yolu yok (düşme koruması nedeniyle gidilmedi).`;
+      addLog(
+        accountId,
+        'AUTO-BUILDER',
+        `⚠️ Sandık bulundu ancak güvenli zemin/merdiven yolu olmadığı için düşmemek adına sandığa gidilmedi.`,
+        chalk.yellow
+      );
+      broadcastState();
+    }
+
+    return Boolean(findMatchingInventoryItem(bot, primaryBlockName));
+  } finally {
+    builder.isRestockingNow = false;
+  }
 }
 
 function isSolidReferenceBlock(refBlock) {
@@ -9266,6 +9532,77 @@ function findPlaceReferenceBlock(bot, targetPos, builder = null) {
   return { refBlock: valid[0].refBlock, faceVec: valid[0].faceVec, dot: valid[0].dot };
 }
 
+function startBuilderContinuousRestockLoop(accountId) {
+  const session = sessions.get(accountId);
+  if (!session) return;
+  if (!session.builder) session.builder = createDefaultBuilderState();
+  const builder = session.builder;
+
+  if (session.builderRestockTimer) {
+    clearTimeout(session.builderRestockTimer);
+    session.builderRestockTimer = null;
+  }
+
+  if (!builder.autoRestockChest) return;
+
+  const tick = async () => {
+    session.builderRestockTimer = null;
+    if (!session.builder || !session.builder.autoRestockChest) return;
+
+    // Eğer aktif inşa (status === 'building') çalışıyorsa sandık tedariğini zaten runAutoBuilderStep yönetir;
+    // ancak inşa duraklatılmış veya beklemedeyse (idle/paused) ve şema yüklüyse eksik malzemeleri otomatik çeker.
+    if (
+      session.status === 'online' &&
+      session.bot &&
+      session.builder.status !== 'building' &&
+      !session.builder.isStepBusy &&
+      !session.builder.isRestockingNow &&
+      Array.isArray(session.builder.blocks) &&
+      session.builder.blocks.length > 0 &&
+      !isBotInventoryFull(session.bot)
+    ) {
+      const neededMap = getRemainingNeededMaterials(session.builder);
+      let missingBlockName = null;
+      for (const [bName, neededCount] of Object.entries(neededMap)) {
+        if (neededCount <= 0) continue;
+        let haveCount = 0;
+        const cands = resolveCandidateItemNamesForBlock(bName);
+        for (const it of session.bot.inventory.items()) {
+          if (cands.includes(normalizeBlockName(it.name))) {
+            haveCount += it.count;
+          }
+        }
+        if (haveCount < neededCount) {
+          missingBlockName = bName;
+          break;
+        }
+      }
+
+      if (missingBlockName) {
+        try {
+          await restockFromNearbyChestsForBuilder(accountId, missingBlockName);
+          broadcastState();
+        } catch (e) {}
+      }
+    }
+
+    if (session.builder && session.builder.autoRestockChest) {
+      session.builderRestockTimer = setTimeout(tick, 4500);
+    }
+  };
+
+  session.builderRestockTimer = setTimeout(tick, 300);
+}
+
+function stopBuilderContinuousRestockLoop(accountId) {
+  const session = sessions.get(accountId);
+  if (!session) return;
+  if (session.builderRestockTimer) {
+    clearTimeout(session.builderRestockTimer);
+    session.builderRestockTimer = null;
+  }
+}
+
 function scheduleNextBuilderStep(accountId, customDelayMs) {
   const session = sessions.get(accountId);
   if (!session || !session.builder || session.builder.status !== 'building') return;
@@ -9461,22 +9798,29 @@ async function runAutoBuilderStep(accountId) {
         layerY: blk.y
       };
 
-      // Envanter kontrolü
+      // Envanter kontrolü ve otomatik sandığa dönüş
+      if (!builder.lastChestFailByBlock) {
+        builder.lastChestFailByBlock = new Map();
+      }
       let invItem = findMatchingInventoryItem(bot, blk.name);
-      const lastChestCheck = builder.lastChestCheckTime || 0;
-      if (!invItem && builder.autoRestockChest && (Date.now() - lastChestCheck > 15000)) {
-        builder.lastChestCheckTime = Date.now();
-        builder.statusMessage = `[SANDIK] Envanterde "${blk.name}" kalmadı, yakındaki sandıklar kontrol ediliyor...`;
+      const lastFailAt = builder.lastChestFailByBlock.get(blk.name) || 0;
+      if (!invItem && builder.autoRestockChest && (Date.now() - lastFailAt > 5000)) {
+        builder.statusMessage = `[SANDIK] Envanterde "${blk.name}" bitti, sandığa dönülüyor...`;
         broadcastState();
         await restockFromNearbyChestsForBuilder(accountId, blk.name);
         invItem = findMatchingInventoryItem(bot, blk.name);
+        if (invItem) {
+          builder.lastChestFailByBlock.delete(blk.name);
+        } else {
+          builder.lastChestFailByBlock.set(blk.name, Date.now());
+        }
       }
 
       if (!invItem) {
-        // Çevrede (3.8m mesafe) yere atılmış eşya var mı? Varsa gidip hemen toplasın!
-        const dropped = findNearbyDroppedItem(bot, 3.8);
-        if (dropped) {
-          builder.statusMessage = `[TOPLAMA] Yere atılan eşya toplanıyor...`;
+        // Çevrede (aynı katmanda <= 3.5m mesafe) yere atılmış eşya var mı?
+        const dropped = findNearbyDroppedItem(bot, 3.5);
+        if (dropped && Math.abs(dropped.position.y - bot.entity.position.y) <= 0.55) {
+          builder.statusMessage = `[TOPLAMA] Aynı katmandaki yere atılan eşya toplanıyor...`;
           broadcastState();
           await stepMoveBotTowards(bot, dropped.position, 320);
           scheduleNextBuilderStep(accountId, 120);
@@ -9490,16 +9834,16 @@ async function runAutoBuilderStep(accountId) {
           scheduleNextBuilderStep(accountId, 100);
           return;
         } else {
-          builder.statusMessage = `[BEKLENİYOR] "${blk.name}" bloğu bekleniyor. Envantere atın veya yakındaki sandığa ekleyin.`;
+          builder.statusMessage = `[BEKLENİYOR] "${blk.name}" bloğu bitti. Envantere atın veya güvenli yoldaki sandığa ekleyin.`;
           broadcastState();
           scheduleNextBuilderStep(accountId, 1000);
           return;
         }
       }
 
-      // Botun 0.6 genişliğindeki AABB hitbox'ı hedef bloğun içine giriyorsa güvenli bir komşu bloğa çekil
+      // Botun 0.6 genişliğindeki AABB hitbox'ı hedef bloğun içine giriyorsa AYNI KATMANDAKİ güvenli bir komşu bloğa çekil
       if (doesBotIntersectBlock(bot.entity.position, targetPos, 0.36)) {
-        const botFloored = bot.entity.position.floored();
+        const botFloored = getEffectiveBotStandBlock(bot, session) || bot.entity.position.floored();
         bot.setControlState('sneak', true);
         const escapeDirs = [
           new Vec3(0, 0, -1),
@@ -9515,24 +9859,27 @@ async function runAutoBuilderStep(accountId) {
         for (const d of escapeDirs) {
           const p = botFloored.plus(d);
           if (
+            p.y === botFloored.y &&
             !doesBotIntersectBlock(p.offset(0.5, 0, 0.5), targetPos, 0.40) &&
-            isWalkablePosition(bot, p, session) &&
-            p.y >= botFloored.y - 1
+            isWalkablePosition(bot, p, session)
           ) {
             escapeTarget = p;
             break;
           }
         }
         if (escapeTarget) {
-          await walkBotAlongPath(bot, session, [escapeTarget], 650, null);
+          await walkBotAlongPath(bot, session, [escapeTarget], 650, null, { allowStepDown: false });
         } else {
-          bot.setControlState('back', true);
-          await new Promise((r) => setTimeout(r, 180));
-          bot.setControlState('back', false);
+          const backYaw = (bot.entity.yaw || 0) + Math.PI;
+          if (isSafeToStep(bot, backYaw, session, { allowStepDown: false })) {
+            bot.setControlState('back', true);
+            await new Promise((r) => setTimeout(r, 150));
+            bot.setControlState('back', false);
+          }
         }
-        if (!session.sneakLock) {
-          bot.setControlState('sneak', false);
-        }
+        await stabilizeBotOnBlockCenter(bot, session);
+        const keepSneak = Boolean(session.sneakLock) || isBotOverhangingOrNearEdge(bot, session);
+        bot.setControlState('sneak', keepSneak);
 
         // Geri çekildikten sonra hala bloğun içindeyse bu adımı zorlama, sonraki adımda yeniden konumlan
         if (doesBotIntersectBlock(bot.entity.position, targetPos, 0.32)) {
@@ -9659,17 +10006,13 @@ async function runAutoBuilderStep(accountId) {
           builder.failedAttemptsMap.delete(posKey);
         }
       } finally {
-        if (sneakTurnedOnForPlace && !session.sneakLock) {
+        if (sneakTurnedOnForPlace && !session.sneakLock && !isBotOverhangingOrNearEdge(bot, session)) {
           bot.setControlState('sneak', false);
         }
       }
 
       if (placedSuccess) {
         // KRİTİK 1.17.1+ / 1.20+ ENVANTER YIĞIN (64 BLOK) SENKRONİZASYONU:
-        // Modern Minecraft sunucuları normal blok yerleştirmede istemciye set_slot paketi göndermez
-        // (istemcinin kendi elindeki eşyayı 1 azaltmasını bekler). Mineflayer'ın _genericPlace metodu
-        // bot.heldItem.count değerini azaltmadığı için 64 blok bittiğinde bot hala elinde 64 blok var
-        // sanıp boş elle sonsuza kadar blok koymaya çalışarak duruyordu!
         const isCreative = Boolean(bot.game && bot.game.gameMode === 'creative');
         if (!isCreative && bot.inventory && Array.isArray(bot.inventory.slots)) {
           const curSlotItem = bot.inventory.slots[heldSlotBefore] || bot.heldItem;
@@ -9709,7 +10052,7 @@ async function runAutoBuilderStep(accountId) {
             const altSpot = findBuilderStandingSpot(bot, targetPos, session, { excludeCurrentSpot: true });
             if (altSpot && altSpot.spot) {
               const altPath = Array.isArray(altSpot.path) && altSpot.path.length > 0 ? altSpot.path : [altSpot.spot];
-              await walkBotAlongPath(bot, session, altPath, 1600, null);
+              await walkBotAlongPath(bot, session, altPath, 1600, null, { allowStepDown: false });
             }
           }
         }
@@ -9733,9 +10076,29 @@ async function runAutoBuilderStep(accountId) {
         return a.dist - b.dist;
       });
 
+      // Uzaktaki bloğa yürümeden ÖNCE envanterde o bloğun olup olmadığını kontrol et;
+      // eğer blok bittiyse boşuna uzağa yürümek yerine önce sandığa gidip tazele!
+      const nextWantedName = supportedList[0].blk.name;
+      if (!findMatchingInventoryItem(bot, nextWantedName) && builder.autoRestockChest) {
+        if (!builder.lastChestFailByBlock) builder.lastChestFailByBlock = new Map();
+        const lastFailAt = builder.lastChestFailByBlock.get(nextWantedName) || 0;
+        if (Date.now() - lastFailAt > 5000) {
+          builder.statusMessage = `[SANDIK] Envanterde "${nextWantedName}" bitti, sandığa dönülüyor...`;
+          broadcastState();
+          await restockFromNearbyChestsForBuilder(accountId, nextWantedName);
+          if (findMatchingInventoryItem(bot, nextWantedName)) {
+            builder.lastChestFailByBlock.delete(nextWantedName);
+            scheduleNextBuilderStep(accountId, 120);
+            return;
+          } else {
+            builder.lastChestFailByBlock.set(nextWantedName, Date.now());
+          }
+        }
+      }
+
       let moved = false;
       if (builder.autoMove) {
-        // En yakın destekli bloklardan başlayarak rotası olan İLK bloğu bul ve ona yürü
+        // En yakın destekli bloklardan başlayarak AYNI KATMANDA rotası olan İLK bloğu bul ve ona yürü
         for (let i = 0; i < Math.min(supportedList.length, 40); i++) {
           const candTarget = supportedList[i];
           const standResult = findBuilderStandingSpot(bot, candTarget.targetPos, session);
@@ -12323,6 +12686,8 @@ const server = http.createServer(async (req, res) => {
                 blk.placed = false;
               });
             }
+            if (s.builder.recentEmptyChests) s.builder.recentEmptyChests.clear();
+            if (s.builder.lastChestFailByBlock) s.builder.lastChestFailByBlock.clear();
             s.builder.status = 'building';
             s.builder.statusMessage = `[İNŞA] İnşa başlatıldı. Hedef başlangıç: X:${s.builder.origin.x} Y:${s.builder.origin.y} Z:${s.builder.origin.z}`;
             addLog(
@@ -12398,6 +12763,13 @@ const server = http.createServer(async (req, res) => {
           }
           if (typeof body.autoRestockChest !== 'undefined') {
             s.builder.autoRestockChest = Boolean(body.autoRestockChest);
+            if (s.builder.autoRestockChest) {
+              if (s.builder.recentEmptyChests) s.builder.recentEmptyChests.clear();
+              if (s.builder.lastChestFailByBlock) s.builder.lastChestFailByBlock.clear();
+              startBuilderContinuousRestockLoop(accId);
+            } else {
+              stopBuilderContinuousRestockLoop(accId);
+            }
           }
           if (typeof body.autoMove !== 'undefined') {
             s.builder.autoMove = Boolean(body.autoMove);
@@ -12433,13 +12805,34 @@ const server = http.createServer(async (req, res) => {
           }
           broadcastState();
           break;
+        case 'builderToggleRestock':
         case 'builderRestockNow':
-          if (s.builder && s.builder.blocks && s.builder.blocks.length > 0) {
-            const nextBlk = s.builder.blocks[s.builder.currentIndex] || s.builder.blocks[0];
-            restockFromNearbyChestsForBuilder(accId, nextBlk ? nextBlk.name : 'sand').then(() => {
-              broadcastState();
-            });
+          if (!s.builder) s.builder = createDefaultBuilderState();
+          if (body.action === 'builderToggleRestock' || typeof body.enabled === 'boolean') {
+            s.builder.autoRestockChest = typeof body.enabled === 'boolean' ? body.enabled : !s.builder.autoRestockChest;
+          } else {
+            s.builder.autoRestockChest = !s.builder.autoRestockChest;
           }
+          if (s.builder.autoRestockChest) {
+            if (s.builder.recentEmptyChests) s.builder.recentEmptyChests.clear();
+            if (s.builder.lastChestFailByBlock) s.builder.lastChestFailByBlock.clear();
+            addLog(
+              accId,
+              'AUTO-BUILDER',
+              '📦 Yakındaki Sandıktan Sürekli Malzeme Çekme: AÇIK (Blok bittiğinde güvenli yoldan sandığa gidip tazeler)',
+              chalk.greenBright
+            );
+            startBuilderContinuousRestockLoop(accId);
+          } else {
+            stopBuilderContinuousRestockLoop(accId);
+            addLog(
+              accId,
+              'AUTO-BUILDER',
+              '📦 Yakındaki Sandıktan Sürekli Malzeme Çekme: KAPALI',
+              chalk.yellow
+            );
+          }
+          broadcastState();
           break;
         case 'builderSetCorners':
           if (!s.builder) s.builder = createDefaultBuilderState();
