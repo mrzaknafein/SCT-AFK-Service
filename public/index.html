@@ -2301,6 +2301,16 @@
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
+                  <div class="auto-mode-title">İnşa ➔ Çapa ➔ Ekim Zinciri</div>
+                  <div class="auto-mode-desc">Oto-İnşa bitince çapalar, o da bitince tohum eker.</div>
+                </div>
+                <button class="btn btn-outline btn-sm" id="btnAutoChainTillPlant" style="min-width: 96px; justify-content: center;" onclick="toggleBuilderChainPipeline()">
+                  <span id="badgeAutoChainTillPlant">● Aktif</span>
+                </button>
+              </div>
+
+              <div class="auto-mode-card">
+                <div class="auto-mode-info">
                   <div class="auto-mode-title">Oto Çiftçi NPC Satıcı</div>
                   <div class="auto-mode-desc">Çiftçi NPC deposunu periyodik olarak satar.</div>
                 </div>
@@ -2851,6 +2861,7 @@
                   <button type="button" class="btn btn-outline" style="flex: 1;" id="btnBuilderPause" onclick="sendBotAction('builderPause')">Duraklat</button>
                   <button type="button" class="btn btn-danger" style="flex: 0.9;" onclick="sendBotAction('builderStop')">Sıfırla</button>
                   <button type="button" class="btn btn-outline btn-sm" id="btnBuilderRestockToggle" style="width: 100%; font-weight: 700;" onclick="toggleBuilderContinuousRestock()">📦 Yakındaki Sandıktan Malzeme Çek: AÇIK (Sürekli)</button>
+                  <button type="button" class="btn btn-outline btn-sm" id="btnBuilderChainToggle" style="width: 100%; font-weight: 700;" onclick="toggleBuilderChainPipeline()">🔄 Oto-İnşa Bitince Çapala ➔ Ek: AÇIK</button>
                 </div>
               </div>
             </div>
@@ -3433,7 +3444,7 @@
                       <span id="updateStatusBadge" class="badge status-online">Güncel</span>
                     </div>
                     <div style="background: var(--bg-base); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 12px; line-height: 1.5;">
-                      <div>Mevcut Sürüm: <strong id="updateCurBuildId" style="color: #ffffff;">20261026_builder_chest_v33</strong></div>
+                      <div>Mevcut Sürüm: <strong id="updateCurBuildId" style="color: #ffffff;">20261026_auto_pipeline_v35</strong></div>
                       <div id="updateLatestInfo" style="margin-top: 4px; color: var(--text-muted);">Sunucu kontrol ediliyor...</div>
                       <div id="updateNotesBox" style="display: none; margin-top: 8px; padding: 8px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px; color: #93c5fd;"></div>
                     </div>
@@ -4659,6 +4670,8 @@
       updateToggleButton('btnAutoFarm', b.autoFarm, '🌾 Oto-Hasat: Açık', '🌾 Oto-Hasat: Kapalı');
       updateToggleButton('btnAutoTill', b.autoTill, '🌱 Oto-Çapala: Açık', '🌱 Oto-Çapala: Kapalı');
       updateToggleButton('btnAutoPlant', b.autoPlant, '🌿 Oto-Ekme: Açık', '🌿 Oto-Ekme: Kapalı');
+      const isChainTillPlantOn = b.builder ? b.builder.autoChainTillPlant !== false : (b.autoChainTillPlant !== false && acc.autoChainTillPlant !== false);
+      updateToggleButton('btnAutoChainTillPlant', isChainTillPlantOn, '🔄 İnşa➔Çapa➔Ek: Açık', '🔄 İnşa➔Çapa➔Ek: Kapalı');
       updateToggleButton('btnSneakLock', b.sneakLock, 'Eğilme Kilidi (Shift): Açık', 'Eğilme Kilidi (Shift): Kapalı');
 
       const farmerCfg = b.autoFarmerSell || acc.autoFarmerSell || { enabled: false, intervalSec: 120 };
@@ -5923,6 +5936,24 @@
         }
       }
 
+      const isChainOn = bld.autoChainTillPlant !== false;
+      const btnChainToggle = document.getElementById('btnBuilderChainToggle');
+      if (btnChainToggle) {
+        if (isChainOn) {
+          btnChainToggle.className = 'btn btn-primary btn-sm';
+          btnChainToggle.style.background = 'rgba(59, 130, 246, 0.20)';
+          btnChainToggle.style.borderColor = '#3b82f6';
+          btnChainToggle.style.color = '#60a5fa';
+          btnChainToggle.textContent = '🔄 Oto-İnşa Bitince Çapala ➔ Ek: AÇIK';
+        } else {
+          btnChainToggle.className = 'btn btn-outline btn-sm';
+          btnChainToggle.style.background = '';
+          btnChainToggle.style.borderColor = '';
+          btnChainToggle.style.color = '';
+          btnChainToggle.textContent = '🔄 Oto-İnşa Bitince Çapala ➔ Ek: KAPALI';
+        }
+      }
+
       const chkMove = document.getElementById('builderAutoMove');
       if (chkMove) chkMove.checked = bld.autoMove !== false;
 
@@ -6421,6 +6452,22 @@
         nextEnabled
           ? 'Yakındaki sandıktan sürekli malzeme çekme AÇILDI.'
           : 'Yakındaki sandıktan sürekli malzeme çekme KAPATILDI.',
+        nextEnabled ? 'success' : 'info'
+      );
+    }
+
+    async function toggleBuilderChainPipeline() {
+      if (!selectedAccountId) return;
+      const curBot = appState.bots && appState.bots[selectedAccountId];
+      const curEnabled = curBot && curBot.builder
+        ? curBot.builder.autoChainTillPlant !== false
+        : (curBot ? curBot.autoChainTillPlant !== false : true);
+      const nextEnabled = !curEnabled;
+      await sendBotAction('builderToggleChain', { enabled: nextEnabled });
+      showAppToast(
+        nextEnabled
+          ? 'Otomatik Zincir (İnşa ➔ Çapala ➔ Ek) AÇILDI! İnşa bitince çapalamaya, o da bitince ekmeye geçecek.'
+          : 'Otomatik Zincir (İnşa ➔ Çapala ➔ Ek) KAPATILDI.',
         nextEnabled ? 'success' : 'info'
       );
     }
