@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_clean_ui_v31';
+const ENGINE_BUILD_ID = '20261026_autotill_fix_v32';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5284,18 +5284,15 @@ function isSafeToStep(bot, yaw, session = null) {
 function checkAndDescendFromFarmObstacle(bot, session) {
   if (!bot || !bot.entity || !bot.entity.position) return false;
   const pos = bot.entity.position;
-  const farmY = session && session.tillFarmY !== undefined && session.tillFarmY !== null
-    ? session.tillFarmY
-    : (session && session.plantFarmY !== undefined && session.plantFarmY !== null ? session.plantFarmY : null);
+  const footY = Math.floor(pos.y + 0.25);
 
-  const curFloor = bot.blockAt(new Vec3(Math.floor(pos.x), Math.floor(pos.y - 0.1), Math.floor(pos.z)));
+  const curFloor = bot.blockAt(new Vec3(Math.floor(pos.x), footY - 1, Math.floor(pos.z)));
   const isOnObstacle = curFloor && isLightingOrObstacleBlock(curFloor);
-  const isElevated = typeof farmY === 'number' && Math.floor(pos.y) > farmY;
 
-  if (!isOnObstacle && !isElevated) return false;
+  if (!isOnObstacle) return false;
 
-  // Bot aydınlatma üzerinde veya tarladan yüksekte kilitlenmiş!
-  const targetGroundY = typeof farmY === 'number' ? farmY : Math.floor(pos.y - 1);
+  // Bot aydınlatma bloğu (sea_lantern, glowstone, lantern vb.) üzerinde kilitlenmiş; yanındaki tarlaya in
+  const targetGroundY = footY - 1;
   const curX = Math.floor(pos.x);
   const curZ = Math.floor(pos.z);
 
@@ -5986,54 +5983,127 @@ function getHoeItem(bot) {
   return bot.inventory.items().find((item) => HOE_NAMES.includes(item.name.toLowerCase()));
 }
 
+const TILLABLE_DIRT_NAMES = new Set([
+  'dirt',
+  'grass_block',
+  'grass',
+  'coarse_dirt',
+  'rooted_dirt',
+  'dirt_path',
+  'grass_path'
+]);
+
+const CLEARABLE_WEED_ABOVE_DIRT = new Set([
+  'short_grass',
+  'tall_grass',
+  'grass',
+  'fern',
+  'large_fern',
+  'dead_bush',
+  'dandelion',
+  'poppy',
+  'blue_orchid',
+  'allium',
+  'azure_bluet',
+  'red_tulip',
+  'orange_tulip',
+  'white_tulip',
+  'pink_tulip',
+  'oxeye_daisy',
+  'cornflower',
+  'lily_of_the_valley'
+]);
+
 function isTillableDirt(block) {
   if (!block || !block.name) return false;
-  const name = block.name.toLowerCase();
-  return (
-    name === 'dirt' ||
-    name === 'grass_block' ||
-    name === 'coarse_dirt' ||
-    name === 'rooted_dirt' ||
-    name === 'dirt_path'
-  );
+  return TILLABLE_DIRT_NAMES.has(block.name.toLowerCase());
 }
 
 function canBlockBeTilled(bot, block) {
   if (!isTillableDirt(block)) return false;
   const above = bot.blockAt(block.position.offset(0, 1, 0));
-  if (!above) return false;
+  if (!above || !above.name) return false;
   const aboveName = above.name.toLowerCase();
-  if (aboveName === 'water' || aboveName === 'lava') return false;
-  return isBlockPassable(above);
+  if (aboveName === 'air' || aboveName === 'cave_air' || aboveName === 'void_air') {
+    return true;
+  }
+  return CLEARABLE_WEED_ABOVE_DIRT.has(aboveName);
 }
 
-function findTillableDirtAround(bot, maxRadius = 36, session = null) {
+function findTillableDirtAround(bot, maxRadius = 96, session = null) {
   if (!bot || !bot.entity || !bot.entity.position) return [];
   const botPos = bot.entity.position;
   const baseX = Math.floor(botPos.x);
-  const baseY = (session && typeof session.tillFarmY === 'number') ? session.tillFarmY : Math.floor(botPos.y);
+  const footY = Math.floor(botPos.y + 0.25);
+  const botFloorY = footY - 1;
   const baseZ = Math.floor(botPos.z);
-  const r = Math.min(Math.ceil(maxRadius), 36);
-  const results = [];
+  const blacklist = (session && session.tillBlacklist) ? session.tillBlacklist : null;
 
-  // dy: -2 ile 1 arası (botun bulunduğu Y seviyesindeki zemin ve basamak toprakları)
-  for (let dx = -r; dx <= r; dx++) {
-    for (let dy = -2; dy <= 1; dy++) {
-      for (let dz = -r; dz <= r; dz++) {
-        const targetPos = new Vec3(baseX + dx, baseY + dy, baseZ + dz);
-        if (session && session.tillBlacklist && session.tillBlacklist.has(targetPos.toString())) {
-          continue;
-        }
+  const results = [];
+  const seenKeys = new Set();
+
+  // 1. Hızlı Yakın Çevre Taraması (16 blok yarıçap, dy: -4..+3)
+  const localR = Math.min(Math.ceil(maxRadius), 16);
+  for (let dx = -localR; dx <= localR; dx++) {
+    for (let dy = -4; dy <= 3; dy++) {
+      for (let dz = -localR; dz <= localR; dz++) {
+        const targetPos = new Vec3(baseX + dx, botFloorY + dy, baseZ + dz);
+        const key = targetPos.toString();
+        if (blacklist && blacklist.has(key)) continue;
         const block = bot.blockAt(targetPos);
         if (canBlockBeTilled(bot, block)) {
+          seenKeys.add(key);
           results.push(block);
         }
       }
     }
   }
 
-  // Bota en yakın olandan uzağa doğru sırala
+  // 2. Yakında toprak kalmadıysa tüm adayı / geniş tarlayı (96 blok yarıçap) chunk-tabanlı hızlı tara
+  if (results.length === 0 && maxRadius > 16) {
+    const scanDist = Math.min(Math.max(Math.ceil(maxRadius), 64), 112);
+    if (typeof bot.findBlocks === 'function') {
+      const foundPositions = bot.findBlocks({
+        matching: (blk) => blk && blk.name && TILLABLE_DIRT_NAMES.has(blk.name.toLowerCase()),
+        maxDistance: scanDist,
+        count: 3500
+      });
+      for (const pos of foundPositions) {
+        if (Math.abs(pos.y - botFloorY) > 8) continue;
+        const key = pos.toString();
+        if (seenKeys.has(key)) continue;
+        if (blacklist && blacklist.has(key)) continue;
+        const block = bot.blockAt(pos);
+        if (canBlockBeTilled(bot, block)) {
+          seenKeys.add(key);
+          results.push(block);
+        }
+      }
+    } else {
+      const wideR = Math.min(scanDist, 64);
+      for (let dx = -wideR; dx <= wideR; dx++) {
+        for (let dy = -4; dy <= 3; dy++) {
+          for (let dz = -wideR; dz <= wideR; dz++) {
+            const targetPos = new Vec3(baseX + dx, botFloorY + dy, baseZ + dz);
+            const key = targetPos.toString();
+            if (seenKeys.has(key)) continue;
+            if (blacklist && blacklist.has(key)) continue;
+            const block = bot.blockAt(targetPos);
+            if (canBlockBeTilled(bot, block)) {
+              seenKeys.add(key);
+              results.push(block);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Aynı katmandaki (Y seviyesi yakın) ve bota en yakın toprakları öncele
   results.sort((a, b) => {
+    const aSameLayer = Math.abs(a.position.y - botFloorY) <= 1 ? 0 : 1;
+    const bSameLayer = Math.abs(b.position.y - botFloorY) <= 1 ? 0 : 1;
+    if (aSameLayer !== bSameLayer) return aSameLayer - bSameLayer;
     return (
       botPos.distanceTo(a.position.offset(0.5, 0.5, 0.5)) -
       botPos.distanceTo(b.position.offset(0.5, 0.5, 0.5))
@@ -6058,9 +6128,12 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  // Üstteki ot/çiçek varsa anında paketle kır
+  const posKey = targetBlock.position.toString();
+  if (!session.tillAttemptCounts) session.tillAttemptCounts = new Map();
+
+  // Üstteki ot/çiçek varsa önce kır
   const above = bot.blockAt(targetBlock.position.offset(0, 1, 0));
-  if (above && above.name !== 'air' && above.name !== 'cave_air' && isBlockPassable(above)) {
+  if (above && above.name && CLEARABLE_WEED_ABOVE_DIRT.has(above.name.toLowerCase())) {
     try {
       const face = 1;
       bot._sctSequence = ((bot._sctSequence || 0) + 1) & 0x7FFFFFFF;
@@ -6078,14 +6151,24 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
         face: face,
         sequence: seq
       });
+      await new Promise((r) => setTimeout(r, 45));
     } catch (e) {}
   }
 
-  const myPos = bot.entity.position;
-  const dx = targetBlock.position.x + 0.5 - myPos.x;
-  const dz = targetBlock.position.z + 0.5 - myPos.z;
+  const eyePos = bot.entity.position.offset(0, 1.62, 0);
+  const topCenter = targetBlock.position.offset(0.5, 1.0, 0.5);
+  const dx = topCenter.x - eyePos.x;
+  const dy = topCenter.y - eyePos.y;
+  const dz = topCenter.z - eyePos.z;
+  const horizDist = Math.hypot(dx, dz);
   const targetYaw = Math.atan2(-dx, -dz);
-  smoothHumanLook(bot, targetYaw, 0.35);
+  const targetPitch = Math.atan2(dy, horizDist);
+
+  try {
+    await bot.look(targetYaw, targetPitch, true);
+  } catch (e) {
+    smoothHumanLook(bot, targetYaw, targetPitch);
+  }
 
   try {
     if (typeof bot._genericPlace === 'function') {
@@ -6105,17 +6188,43 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  session.stats.blocksTilled = (session.stats.blocksTilled || 0) + 1;
-  if (session.stats.blocksTilled % 15 === 0 || session.stats.blocksTilled === 1) {
-    addLog(
-      accountId,
-      'OTO-ÇAPALAMA',
-      `🌱 Toprak çapalandı: [${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z}] (Toplam: ${session.stats.blocksTilled})`,
-      chalk.green
-    );
+  await new Promise((r) => setTimeout(r, 85));
+
+  const updatedBlock = bot.blockAt(targetBlock.position);
+  const updatedName = updatedBlock && updatedBlock.name ? updatedBlock.name.toLowerCase() : '';
+  const becameFarmland = updatedName === 'farmland';
+  const convertedCoarse = (targetBlock.name === 'coarse_dirt' || targetBlock.name === 'rooted_dirt') && updatedName === 'dirt';
+
+  if (becameFarmland || convertedCoarse) {
+    session.tillAttemptCounts.delete(posKey);
+    session.tillEmptyScanCount = 0;
+    if (becameFarmland) {
+      session.stats.blocksTilled = (session.stats.blocksTilled || 0) + 1;
+      if (session.stats.blocksTilled % 15 === 0 || session.stats.blocksTilled === 1) {
+        addLog(
+          accountId,
+          'OTO-ÇAPALAMA',
+          `🌱 Toprak çapalandı: [${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z}] (Toplam: ${session.stats.blocksTilled})`,
+          chalk.green
+        );
+      }
+      broadcastState();
+    }
+    return true;
   }
-  broadcastState();
-  return true;
+
+  const attempts = (session.tillAttemptCounts.get(posKey) || 0) + 1;
+  session.tillAttemptCounts.set(posKey, attempts);
+  if (attempts >= 4) {
+    if (!session.tillBlacklist) session.tillBlacklist = new Set();
+    session.tillBlacklist.add(posKey);
+    session.tillAttemptCounts.delete(posKey);
+    if (session.tillTargetDirtPos && session.tillTargetDirtPos.toString() === posKey) {
+      session.tillTargetDirtPos = null;
+      session.tillCurrentPath = null;
+    }
+  }
+  return false;
 }
 
 function startAutoTillLoop(accountId) {
@@ -6132,9 +6241,15 @@ function startAutoTillLoop(accountId) {
   session.tillTargetDirtPos = null;
   session.tillTargetStuckCount = 0;
   session.tillLastTargetPosStr = null;
+  session.tillBlacklist = new Set();
+  session.tillAttemptCounts = new Map();
+  session.tillEmptyScanCount = 0;
+  session.tillRetriedBlacklist = false;
+  session.lastTillWalkPos = null;
+  session.lastTillWalkMoveTime = Date.now();
 
   if (session.bot && session.bot.entity && session.bot.entity.position) {
-    session.tillFarmY = Math.floor(session.bot.entity.position.y);
+    session.tillFarmY = Math.floor(session.bot.entity.position.y + 0.25);
   }
 
   const step = async () => {
@@ -6168,7 +6283,7 @@ function startAutoTillLoop(accountId) {
       bot.setControlState('sneak', false);
     }
 
-    // Aydınlatma veya 1 blok yüksekteki engelden tarlaya geri in
+    // Aydınlatma bloğu üzerindeyse tarlaya geri in
     if (checkAndDescendFromFarmObstacle(bot, session)) {
       session.tillTimer = setTimeout(step, 280);
       return;
@@ -6222,17 +6337,28 @@ function startAutoTillLoop(accountId) {
       } catch (e) {}
     }
 
-    // Etraftaki tüm çapalanabilir toprakları bul (geniş 36 blok yarıçap)
-    let tillableBlocks = findTillableDirtAround(bot, 36, session);
+    // Etraftaki tüm çapalanabilir toprakları bul (geniş 96 blok ada taraması)
+    let tillableBlocks = findTillableDirtAround(bot, 96, session);
 
-    // Eğer blacklist doluysa ve blok kalmadıysa blacklist'i temizleyip bir kez daha bak
-    if (tillableBlocks.length === 0 && session.tillBlacklist && session.tillBlacklist.size > 0) {
+    // Eğer blacklist yüzünden blok kalmadıysa blacklist'i temizleyip tekrar kontrol et
+    if (tillableBlocks.length === 0 && session.tillBlacklist && session.tillBlacklist.size > 0 && !session.tillRetriedBlacklist) {
+      session.tillRetriedBlacklist = true;
       session.tillBlacklist.clear();
-      tillableBlocks = findTillableDirtAround(bot, 36, session);
+      if (session.tillAttemptCounts) session.tillAttemptCounts.clear();
+      tillableBlocks = findTillableDirtAround(bot, 96, session);
     }
 
-    // Etrafta hiç toprak kalmadıysa işlemi tamamla
+    // Etrafta hiç toprak görünmüyorsa hemen kapanma; 3 ardışık tam ada taraması boyunca doğrula
     if (tillableBlocks.length === 0) {
+      try {
+        bot.setControlState('forward', false);
+        bot.setControlState('jump', false);
+      } catch (e) {}
+      session.tillEmptyScanCount = (session.tillEmptyScanCount || 0) + 1;
+      if (session.tillEmptyScanCount < 3) {
+        session.tillTimer = setTimeout(step, 550);
+        return;
+      }
       addLog(
         accountId,
         'OTO-ÇAPALAMA',
@@ -6244,32 +6370,37 @@ function startAutoTillLoop(accountId) {
       return;
     }
 
-    const myPos = bot.entity.position;
+    session.tillEmptyScanCount = 0;
+    if (tillableBlocks.length > 5) {
+      session.tillRetriedBlacklist = false;
+    }
 
-    // 1. MENZİLDEKİ TOPRAKLARI (<= 4.25 BLOK) ÇAPALA (BİTENE KADAR ASLA YERİNDEN AYRILMA!)
+    const myPos = bot.entity.position;
+    const eyePos = myPos.offset(0, 1.62, 0);
+
+    // 1. GÖZ MENZİLİNDEKİ TOPRAKLARI (<= 3.85 BLOK) ÇAPALA
     const immediateBlocks = tillableBlocks.filter((b) => {
-      return myPos.distanceTo(b.position.offset(0.5, 0.5, 0.5)) <= 4.25;
+      const topCenter = b.position.offset(0.5, 1.0, 0.5);
+      const eyeDist = eyePos.distanceTo(topCenter);
+      const horizDist = Math.hypot(b.position.x + 0.5 - myPos.x, b.position.z + 0.5 - myPos.z);
+      return eyeDist <= 3.85 && horizDist <= 3.65;
     });
 
     if (immediateBlocks.length > 0) {
       bot.setControlState('forward', false);
       bot.setControlState('jump', false);
 
-      const batch = immediateBlocks.slice(0, 6);
+      const batch = immediateBlocks.slice(0, 2);
       for (const block of batch) {
         if (!session.autoTill || session.tillLoopId !== thisLoopId || session.status !== 'online') break;
         const curB = bot.blockAt(block.position);
         if (curB && canBlockBeTilled(bot, curB)) {
           await tillDirtBlock(bot, session, curB, accountId);
-          await new Promise((r) => setTimeout(r, 25));
         }
       }
 
-      // Eğer menzilde hala çapalanacak toprak varsa yerinden kıpırdamadan devam et
-      if (immediateBlocks.length > 6) {
-        session.tillTimer = setTimeout(step, 40);
-        return;
-      }
+      session.tillTimer = setTimeout(step, 50);
+      return;
     }
 
     if (!session.autoTill || session.tillLoopId !== thisLoopId || session.status !== 'online') {
@@ -6284,7 +6415,9 @@ function startAutoTillLoop(accountId) {
     // 2. EN YAKIN ÇAPALANMAMIŞ TOPRAĞA DOĞRU YÜRÜ
     let targetDirt = null;
     if (session.tillTargetDirtPos) {
-      const curB = bot.blockAt(session.tillTargetDirtPos);
+      const tKey = session.tillTargetDirtPos.toString();
+      const isBlacklisted = session.tillBlacklist && session.tillBlacklist.has(tKey);
+      const curB = !isBlacklisted ? bot.blockAt(session.tillTargetDirtPos) : null;
       if (curB && canBlockBeTilled(bot, curB)) {
         targetDirt = curB;
       } else {
@@ -6294,16 +6427,16 @@ function startAutoTillLoop(accountId) {
     }
 
     if (!targetDirt) {
-      const remaining = findTillableDirtAround(bot, 36, session);
+      const remaining = findTillableDirtAround(bot, 96, session);
       if (remaining.length > 0) {
         targetDirt = remaining[0];
         session.tillTargetDirtPos = targetDirt.position.clone();
         const botFootPos = new Vec3(
           Math.floor(bot.entity.position.x),
-          Math.floor(bot.entity.position.y + 0.2),
+          Math.floor(bot.entity.position.y + 0.25),
           Math.floor(bot.entity.position.z)
         );
-        session.tillCurrentPath = findFarmPath(bot, botFootPos, targetDirt.position, session, 350);
+        session.tillCurrentPath = findFarmPath(bot, botFootPos, targetDirt.position, session, 1500);
         session.tillPathIndex = 0;
       } else {
         session.tillTargetDirtPos = null;
@@ -6315,9 +6448,27 @@ function startAutoTillLoop(accountId) {
 
     if (targetDirt) {
       const curTargetStr = targetDirt.position.toString();
+      const now = Date.now();
+
+      // Hareket ilerleme kontrolü (takılma önleyici)
+      if (!session.lastTillWalkPos || myPos.distanceTo(session.lastTillWalkPos) > 0.28) {
+        session.lastTillWalkPos = myPos.clone();
+        session.lastTillWalkMoveTime = now;
+      } else if (now - (session.lastTillWalkMoveTime || now) > 1500) {
+        // 1.5 saniyedir ilerleyemediyse yeni A* rotası hesapla
+        const botFootPos = new Vec3(
+          Math.floor(myPos.x),
+          Math.floor(myPos.y + 0.25),
+          Math.floor(myPos.z)
+        );
+        session.tillCurrentPath = findFarmPath(bot, botFootPos, targetDirt.position, session, 1500);
+        session.tillPathIndex = 0;
+        session.lastTillWalkMoveTime = now;
+      }
+
       if (session.tillLastTargetPosStr === curTargetStr) {
         session.tillTargetStuckCount = (session.tillTargetStuckCount || 0) + 1;
-        if (session.tillTargetStuckCount > 60) {
+        if (session.tillTargetStuckCount > 75) {
           if (!session.tillBlacklist) session.tillBlacklist = new Set();
           session.tillBlacklist.add(curTargetStr);
           session.tillTargetDirtPos = null;
@@ -6329,13 +6480,15 @@ function startAutoTillLoop(accountId) {
         session.tillTargetStuckCount = 0;
       }
 
-      const distToDirt = myPos.distanceTo(targetDirt.position.offset(0.5, 0.5, 0.5));
+      const topCenter = targetDirt.position.offset(0.5, 1.0, 0.5);
+      const eyeDistToDirt = eyePos.distanceTo(topCenter);
+      const horizDistToDirt = Math.hypot(targetDirt.position.x + 0.5 - myPos.x, targetDirt.position.z + 0.5 - myPos.z);
 
-      // Eğer hedef toprak menzilimize girdiyse (<= 3.85m), DUR! Sakın ada kenarına doğru ileri yürüyüp düşme!
-      if (distToDirt <= 3.85) {
+      // Eğer hedef toprak göz menzilimize girdiyse (<= 3.55m), dur ve bir sonraki adımda çapala!
+      if (eyeDistToDirt <= 3.55 && horizDistToDirt <= 3.45) {
         bot.setControlState('forward', false);
         bot.setControlState('jump', false);
-        session.tillTimer = setTimeout(step, 40);
+        session.tillTimer = setTimeout(step, 35);
         return;
       }
 
@@ -6346,7 +6499,7 @@ function startAutoTillLoop(accountId) {
           const wpCenter = waypoint.offset(0.5, 0, 0.5);
           const distToWp = Math.hypot(wpCenter.x - myPos.x, wpCenter.z - myPos.z);
 
-          if (distToWp < 0.45) {
+          if (distToWp < 0.48) {
             session.tillPathIndex = (session.tillPathIndex || 0) + 1;
             if (session.tillPathIndex >= session.tillCurrentPath.length) {
               session.tillCurrentPath = null;
@@ -6420,6 +6573,9 @@ function stopAutoTillLoop(accountId) {
   session.tillStandPos = null;
   session.tillTargetDirtPos = null;
   session.tillBlacklist = null;
+  session.tillAttemptCounts = null;
+  session.tillEmptyScanCount = 0;
+  session.tillRetriedBlacklist = false;
   session.tillTargetStuckCount = 0;
   session.tillLastTargetPosStr = null;
   if (session.tillTimer) {
@@ -6473,20 +6629,25 @@ function isPlantableFarmland(bot, block) {
   return aboveName === 'air' || aboveName === 'cave_air' || aboveName === 'void_air';
 }
 
-function findPlantableFarmlandAround(bot, maxRadius = 36, session = null) {
+function findPlantableFarmlandAround(bot, maxRadius = 96, session = null) {
   if (!bot || !bot.entity || !bot.entity.position) return [];
   const botPos = bot.entity.position;
   const baseX = Math.floor(botPos.x);
-  const baseY = (session && typeof session.plantFarmY === 'number') ? session.plantFarmY : Math.floor(botPos.y);
+  const footY = Math.floor(botPos.y + 0.25);
+  const baseY = (session && typeof session.plantFarmY === 'number') ? session.plantFarmY : footY;
   const baseZ = Math.floor(botPos.z);
-  const r = Math.min(Math.ceil(maxRadius), 36);
   const results = [];
+  const seen = new Set();
 
-  for (let dx = -r; dx <= r; dx++) {
-    for (let dy = -2; dy <= 1; dy++) {
-      for (let dz = -r; dz <= r; dz++) {
-        const targetPos = new Vec3(baseX + dx, baseY + dy, baseZ + dz);
-        if (session && session.plantBlacklist && session.plantBlacklist.has(targetPos.toString())) {
+  // 1. Önce botun yakın çevresini (16 blok yarıçap) hızlıca tara
+  const localR = Math.min(Math.ceil(maxRadius), 16);
+  for (let dx = -localR; dx <= localR; dx++) {
+    for (let dy = -3; dy <= 2; dy++) {
+      for (let dz = -localR; dz <= localR; dz++) {
+        const targetPos = new Vec3(baseX + dx, footY + dy, baseZ + dz);
+        const key = targetPos.toString();
+        seen.add(key);
+        if (session && session.plantBlacklist && session.plantBlacklist.has(key)) {
           continue;
         }
         const block = bot.blockAt(targetPos);
@@ -6495,6 +6656,31 @@ function findPlantableFarmlandAround(bot, maxRadius = 36, session = null) {
         }
       }
     }
+  }
+
+  // 2. Yakın çevrede boş tarla kalmadıysa tüm adayı (96-112 blok yarıçap) chunk bazlı tara
+  if (results.length === 0 && maxRadius > 16 && typeof bot.findBlocks === 'function') {
+    const wideR = Math.min(Math.ceil(maxRadius), 112);
+    try {
+      const candidatePositions = bot.findBlocks({
+        matching: (blk) => blk && blk.name && blk.name.toLowerCase() === 'farmland',
+        maxDistance: wideR,
+        count: 3500
+      });
+      for (const pos of candidatePositions) {
+        if (Math.abs(pos.y - baseY) > 8 && Math.abs(pos.y - footY) > 8) continue;
+        const key = pos.toString();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (session && session.plantBlacklist && session.plantBlacklist.has(key)) {
+          continue;
+        }
+        const block = bot.blockAt(pos);
+        if (isPlantableFarmland(bot, block)) {
+          results.push(block);
+        }
+      }
+    } catch (e) {}
   }
 
   // Bota en yakın olandan uzağa doğru sırala
@@ -6517,22 +6703,32 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
   if (!bot.heldItem || !PLANTABLE_SEED_NAMES.includes(bot.heldItem.name.toLowerCase())) {
     try {
       await bot.equip(seed, 'hand');
+      await new Promise((r) => setTimeout(r, 40));
     } catch (e) {}
   }
 
-  const myPos = bot.entity.position;
-  const dx = targetBlock.position.x + 0.5 - myPos.x;
-  const dz = targetBlock.position.z + 0.5 - myPos.z;
+  const eyePos = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
+  const topFaceCenter = targetBlock.position.offset(0.5, 0.9375, 0.5);
+  const dx = topFaceCenter.x - eyePos.x;
+  const dy = topFaceCenter.y - eyePos.y;
+  const dz = topFaceCenter.z - eyePos.z;
   const targetYaw = Math.atan2(-dx, -dz);
-  smoothHumanLook(bot, targetYaw, 0.35);
+  const groundDist = Math.hypot(dx, dz);
+  const targetPitch = Math.atan2(dy, groundDist);
 
   try {
-    if (typeof bot._genericPlace === 'function') {
+    await bot.look(targetYaw, targetPitch, true);
+  } catch (e) {
+    smoothHumanLook(bot, targetYaw, 0.45);
+  }
+
+  try {
+    if (typeof bot.activateBlock === 'function') {
+      await bot.activateBlock(targetBlock, new Vec3(0, 1, 0));
+    } else if (typeof bot._genericPlace === 'function') {
       await bot._genericPlace(targetBlock, new Vec3(0, 1, 0), { swingArm: 'right', forceLook: 'ignore' });
     } else if (typeof bot._placeBlockWithOptions === 'function') {
       await bot._placeBlockWithOptions(targetBlock, new Vec3(0, 1, 0), { swingArm: 'right', forceLook: 'ignore' });
-    } else if (typeof bot.activateBlock === 'function') {
-      await bot.activateBlock(targetBlock, new Vec3(0, 1, 0));
     } else {
       bot.activateItem();
       bot.swingArm('right');
@@ -6544,17 +6740,37 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  session.stats.cropsPlanted = (session.stats.cropsPlanted || 0) + 1;
-  if (session.stats.cropsPlanted % 15 === 0 || session.stats.cropsPlanted === 1) {
-    addLog(
-      accountId,
-      'OTO-EKİM',
-      `🌱 Ekin ekildi: [${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z}] (Toplam: ${session.stats.cropsPlanted})`,
-      chalk.green
-    );
+  await new Promise((r) => setTimeout(r, 75));
+
+  const posKey = targetBlock.position.toString();
+  const aboveNow = bot.blockAt(targetBlock.position.offset(0, 1, 0));
+  const aboveName = aboveNow && aboveNow.name ? aboveNow.name.toLowerCase() : 'air';
+  const plantedSuccess = aboveName !== 'air' && aboveName !== 'cave_air' && aboveName !== 'void_air';
+
+  if (plantedSuccess) {
+    if (session.plantFailCounts) session.plantFailCounts.delete(posKey);
+    session.stats.cropsPlanted = (session.stats.cropsPlanted || 0) + 1;
+    if (session.stats.cropsPlanted % 15 === 0 || session.stats.cropsPlanted === 1) {
+      addLog(
+        accountId,
+        'OTO-EKİM',
+        `🌱 Ekin ekildi: [${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z}] (Toplam: ${session.stats.cropsPlanted})`,
+        chalk.green
+      );
+    }
+    broadcastState();
+    return true;
   }
-  broadcastState();
-  return true;
+
+  if (!session.plantFailCounts) session.plantFailCounts = new Map();
+  const fails = (session.plantFailCounts.get(posKey) || 0) + 1;
+  session.plantFailCounts.set(posKey, fails);
+  if (fails >= 4) {
+    if (!session.plantBlacklist) session.plantBlacklist = new Set();
+    session.plantBlacklist.add(posKey);
+    session.plantFailCounts.delete(posKey);
+  }
+  return false;
 }
 
 function startAutoPlantLoop(accountId) {
@@ -6573,6 +6789,8 @@ function startAutoPlantLoop(accountId) {
   session.plantLastTargetPosStr = null;
   session.plantReturnPath = null;
   session.plantReturnPathIndex = 0;
+  session.plantFailCounts = new Map();
+  session.plantEmptyScanCount = 0;
 
   if (session.bot && session.bot.entity && session.bot.entity.position) {
     if (!session.plantStartPos) {
@@ -6584,7 +6802,7 @@ function startAutoPlantLoop(accountId) {
         chalk.cyan
       );
     }
-    session.plantFarmY = Math.floor(session.bot.entity.position.y);
+    session.plantFarmY = Math.floor(session.bot.entity.position.y + 0.25);
   }
 
   const step = async () => {
@@ -6653,12 +6871,12 @@ function startAutoPlantLoop(accountId) {
       if (distToStart > 2.2) {
         const botFootPos = new Vec3(
           Math.floor(myPos.x),
-          Math.floor(myPos.y + 0.2),
+          Math.floor(myPos.y + 0.25),
           Math.floor(myPos.z)
         );
 
         if (!session.plantReturnPath || session.plantReturnPath.length === 0) {
-          session.plantReturnPath = findFarmPath(bot, botFootPos, startPos, session, 350);
+          session.plantReturnPath = findFarmPath(bot, botFootPos, startPos, session, 1500);
           session.plantReturnPathIndex = 0;
         }
 
@@ -6796,21 +7014,29 @@ function startAutoPlantLoop(accountId) {
       } catch (e) {}
     }
 
-    // Etraftaki tüm ekilebilir boş tarlaları bul (geniş 36 blok yarıçap)
-    let plantableBlocks = findPlantableFarmlandAround(bot, 36, session);
+    // Etraftaki tüm ekilebilir boş tarlaları bul (96 blok yarıçap - tüm ada)
+    let plantableBlocks = findPlantableFarmlandAround(bot, 96, session);
 
     // Eğer blacklist doluysa ve blok kalmadıysa blacklist'i temizleyip bir kez daha bak
     if (plantableBlocks.length === 0 && session.plantBlacklist && session.plantBlacklist.size > 0) {
       session.plantBlacklist.clear();
-      plantableBlocks = findPlantableFarmlandAround(bot, 36, session);
+      if (session.plantFailCounts) session.plantFailCounts.clear();
+      plantableBlocks = findPlantableFarmlandAround(bot, 96, session);
     }
 
-    // Etrafta hiç boş tarla kalmadıysa işlemi tamamla
+    // Etrafta hiç boş tarla kalmadıysa arka arkaya 3 tarama boyunca doğrula
     if (plantableBlocks.length === 0) {
+      bot.setControlState('forward', false);
+      bot.setControlState('jump', false);
+      session.plantEmptyScanCount = (session.plantEmptyScanCount || 0) + 1;
+      if (session.plantEmptyScanCount < 3) {
+        session.plantTimer = setTimeout(step, 500);
+        return;
+      }
       addLog(
         accountId,
         'OTO-EKİM',
-        `🎉 Tebrikler! Etraftaki tüm boş tarlalar başarıyla ekildi (Toplam: ${session.stats.cropsPlanted || 0} ekim).`,
+        `🎉 Tebrikler! Adadaki tüm boş tarlalar başarıyla ekildi (Toplam: ${session.stats.cropsPlanted || 0} ekim).`,
         chalk.greenBright
       );
       stopAutoPlantLoop(accountId);
@@ -6818,30 +7044,30 @@ function startAutoPlantLoop(accountId) {
       return;
     }
 
-    // 1. MENZİLDEKİ BOŞ TARLALARI (<= 4.25 BLOK) EK (BİTENE KADAR ASLA YERİNDEN AYRILMA!)
+    session.plantEmptyScanCount = 0;
+
+    // 1. MENZİLDEKİ BOŞ TARLALARI (GÖZ MESAFESİ <= 3.85 BLOK) EK (BİTENE KADAR ASLA YERİNDEN AYRILMA!)
+    const eyePos = myPos.offset(0, bot.entity.height || 1.62, 0);
     const immediateBlocks = plantableBlocks.filter((b) => {
-      return myPos.distanceTo(b.position.offset(0.5, 0.5, 0.5)) <= 4.25;
+      const topCenter = b.position.offset(0.5, 0.9375, 0.5);
+      return eyePos.distanceTo(topCenter) <= 3.85 && Math.abs(b.position.y - Math.floor(myPos.y + 0.25)) <= 2;
     });
 
     if (immediateBlocks.length > 0) {
       bot.setControlState('forward', false);
       bot.setControlState('jump', false);
 
-      const batch = immediateBlocks.slice(0, 6);
+      const batch = immediateBlocks.slice(0, 3);
       for (const block of batch) {
         if (!session.autoPlant || session.plantLoopId !== thisLoopId || session.status !== 'online') break;
         const curB = bot.blockAt(block.position);
         if (curB && isPlantableFarmland(bot, curB)) {
           await plantFarmlandBlock(bot, session, curB, accountId);
-          await new Promise((r) => setTimeout(r, 25));
         }
       }
 
-      // Eğer menzilde hala ekilecek boş tarla kaldıysa yerinden kıpırdamadan devam et
-      if (immediateBlocks.length > 6) {
-        session.plantTimer = setTimeout(step, 40);
-        return;
-      }
+      session.plantTimer = setTimeout(step, 60);
+      return;
     }
 
     if (!session.autoPlant || session.plantLoopId !== thisLoopId || session.status !== 'online') {
@@ -6856,8 +7082,10 @@ function startAutoPlantLoop(accountId) {
     // 2. EN YAKIN EKİLMEMİŞ BOŞ TARLAYA DOĞRU YÜRÜ
     let targetFarmland = null;
     if (session.plantTargetDirtPos) {
+      const curTargetStr = session.plantTargetDirtPos.toString();
+      const isBlacklisted = session.plantBlacklist && session.plantBlacklist.has(curTargetStr);
       const curB = bot.blockAt(session.plantTargetDirtPos);
-      if (curB && isPlantableFarmland(bot, curB)) {
+      if (!isBlacklisted && curB && isPlantableFarmland(bot, curB)) {
         targetFarmland = curB;
       } else {
         session.plantTargetDirtPos = null;
@@ -6866,16 +7094,16 @@ function startAutoPlantLoop(accountId) {
     }
 
     if (!targetFarmland) {
-      const remaining = findPlantableFarmlandAround(bot, 36, session);
+      const remaining = plantableBlocks;
       if (remaining.length > 0) {
         targetFarmland = remaining[0];
         session.plantTargetDirtPos = targetFarmland.position.clone();
         const botFootPos = new Vec3(
           Math.floor(bot.entity.position.x),
-          Math.floor(bot.entity.position.y + 0.2),
+          Math.floor(bot.entity.position.y + 0.25),
           Math.floor(bot.entity.position.z)
         );
-        session.plantCurrentPath = findFarmPath(bot, botFootPos, targetFarmland.position, session, 350);
+        session.plantCurrentPath = findFarmPath(bot, botFootPos, targetFarmland.position, session, 1500);
         session.plantPathIndex = 0;
       } else {
         session.plantTargetDirtPos = null;
@@ -6889,7 +7117,7 @@ function startAutoPlantLoop(accountId) {
       const curTargetStr = targetFarmland.position.toString();
       if (session.plantLastTargetPosStr === curTargetStr) {
         session.plantTargetStuckCount = (session.plantTargetStuckCount || 0) + 1;
-        if (session.plantTargetStuckCount > 60) {
+        if (session.plantTargetStuckCount > 65) {
           if (!session.plantBlacklist) session.plantBlacklist = new Set();
           session.plantBlacklist.add(curTargetStr);
           session.plantTargetDirtPos = null;
@@ -6901,10 +7129,11 @@ function startAutoPlantLoop(accountId) {
         session.plantTargetStuckCount = 0;
       }
 
-      const distToFarmland = myPos.distanceTo(targetFarmland.position.offset(0.5, 0.5, 0.5));
+      const topCenter = targetFarmland.position.offset(0.5, 0.9375, 0.5);
+      const distToFarmland = eyePos.distanceTo(topCenter);
 
-      // Eğer hedef menzilimize girdiyse (<= 3.85m), DUR! Sakın ada kenarına doğru ileri yürüyüp düşme!
-      if (distToFarmland <= 3.85) {
+      // Eğer hedef göz menzilimize girdiyse (<= 3.80m), DUR! Sakın ada kenarına doğru ileri yürüyüp düşme!
+      if (distToFarmland <= 3.80) {
         bot.setControlState('forward', false);
         bot.setControlState('jump', false);
         session.plantTimer = setTimeout(step, 40);
@@ -6990,6 +7219,8 @@ function stopAutoPlantLoop(accountId) {
   session.plantCurrentPath = null;
   session.plantTargetDirtPos = null;
   session.plantBlacklist = null;
+  session.plantFailCounts = null;
+  session.plantEmptyScanCount = 0;
   session.plantTargetStuckCount = 0;
   session.plantLastTargetPosStr = null;
   session.plantReturnPath = null;
