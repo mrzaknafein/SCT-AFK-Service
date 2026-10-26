@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_keyauth_chain_fix_v36';
+const ENGINE_BUILD_ID = '20261026_ciftci_cmd_sell_v37';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -3373,26 +3373,41 @@ function findNearbyFarmerNPC(bot, maxDist = 5.5) {
 /**
  * İlk menünün (CIFTCI YONETIMI) açılmasını bekler
  */
-function waitForFarmerWindow(bot, timeoutMs = 6000) {
+function waitForFarmerWindow(bot, timeoutMs = 6500) {
   return new Promise((resolve) => {
     let resolved = false;
     let timer = null;
+    let pollTimer = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (pollTimer) clearInterval(pollTimer);
+      bot.removeListener('windowOpen', onWin);
+    };
 
     const onWin = (w) => {
       if (resolved) return;
       resolved = true;
-      if (timer) clearTimeout(timer);
-      bot.removeListener('windowOpen', onWin);
+      cleanup();
       resolve(w);
     };
 
     bot.once('windowOpen', onWin);
 
+    pollTimer = setInterval(() => {
+      if (resolved) return;
+      if (bot.currentWindow) {
+        resolved = true;
+        cleanup();
+        resolve(bot.currentWindow);
+      }
+    }, 120);
+
     timer = setTimeout(() => {
       if (resolved) return;
       resolved = true;
-      bot.removeListener('windowOpen', onWin);
-      resolve(null);
+      cleanup();
+      resolve(bot.currentWindow || null);
     }, timeoutMs);
   });
 }
@@ -3487,50 +3502,25 @@ async function executeFarmerSellRoutine(accountId, isManual = false) {
   const hadSneakLock = Boolean(session.sneakLock);
 
   try {
-    const npc = findNearbyFarmerNPC(bot, 5.5);
-    if (!npc) {
-      addLog(accountId, 'ÇİFTÇİ', '⚠️ 5.5 blok yakınlıkta Çiftçi NPC bulunamadı! Çiftçinin yakınında olduğunuzdan emin olun.', chalk.yellowBright);
+    // Açık kalmış eski bir pencere varsa temiz kapat
+    if (bot.currentWindow) {
+      try { bot.closeWindow(bot.currentWindow); } catch (_) {}
+      await new Promise((r) => setTimeout(r, 180));
+    }
+
+    // 1. /çiftçi komutunu gir ve 1. Menüyü (ÇİFTÇİ YÖNETİMİ) bekle
+    addLog(accountId, 'ÇİFTÇİ', '🌾 "/çiftçi" komutu girilerek çiftçi yönetim menüsü açılıyor...', chalk.cyanBright);
+    const win1Promise = waitForFarmerWindow(bot, 6500);
+    try {
+      bot.chat('/çiftçi');
+    } catch (e) {
+      addLog(accountId, 'ÇİFTÇİ', `❌ "/çiftçi" komutu gönderilemedi: ${e.message}`, chalk.red);
       return false;
     }
 
-    // 1. Düz duruşa geç (sneak kapat)
-    if (hadSneakLock && typeof bot.setControlState === 'function') {
-      bot.setControlState('sneak', false);
-    }
-    if (bot._client && bot.entity) {
-      try {
-        if (bot.supportFeature && bot.supportFeature('newPlayerInputPacket')) {
-          bot._client.write('player_input', { inputs: { shift: false, jump: false } });
-        } else {
-          bot._client.write('entity_action', { entityId: bot.entity.id, actionId: 1, jumpBoost: 0 });
-        }
-      } catch (_) {}
-    }
-    await new Promise((r) => setTimeout(r, 80));
-
-    // 2. NPC'ye insansı şekilde bak
-    try {
-      const targetEye = npc.position.offset(0, npc.height ? npc.height * 0.75 : 1.3, 0);
-      await bot.lookAt(targetEye, true);
-    } catch (_) {}
-    await new Promise((r) => setTimeout(r, 120));
-
-    // 3. NPC'ye sağ tıkla ve 1. Menüyü (CIFTCI YONETIMI) bekle
-    const win1Promise = waitForFarmerWindow(bot, 6000);
-    try {
-      if (typeof bot.activateEntity === 'function') {
-        await bot.activateEntity(npc);
-      } else if (typeof bot.useOn === 'function') {
-        bot.useOn(npc);
-      }
-    } catch (e) {
-      try { bot.useOn(npc); } catch (_) {}
-    }
-    bot.swingArm('right', true);
-
     const win1 = await win1Promise;
     if (!win1) {
-      addLog(accountId, 'ÇİFTÇİ', '⚠️ Çiftçi NPC\'sine sağ tıklandı ancak yönetim menüsü açılmadı.', chalk.redBright);
+      addLog(accountId, 'ÇİFTÇİ', '⚠️ "/çiftçi" komutu girildi ancak çiftçi menüsü açılmadı.', chalk.redBright);
       return false;
     }
 
