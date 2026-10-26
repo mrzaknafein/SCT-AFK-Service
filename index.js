@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261026_smooth_chain_fast_normal_walk_v40';
+const ENGINE_BUILD_ID = '20261026_smooth_chain_vulcan_safe_v41';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -7715,7 +7715,7 @@ function createDefaultBuilderState(accountId = null) {
   };
   let origin = { x: 0, y: 64, z: 0, initialized: false };
   let rotation = 0;
-  let delayMs = 160;
+  let delayMs = 220;
   let autoChainTillPlant = true;
 
   if (typeof config !== 'undefined' && config && config.builderSharedCoords) {
@@ -7753,7 +7753,7 @@ function createDefaultBuilderState(accountId = null) {
     totalBlocks: 0,
     currentBlock: null,
     statusMessage: 'Şema yüklenmedi. Bir .schem / .litematic dosyası yükleyin veya hazır şablon seçin.',
-    delayMs: typeof delayMs === 'number' ? delayMs : 160,
+    delayMs: 260,
     autoRestockChest: true,
     autoChainTillPlant,
     autoMove: true,
@@ -8704,9 +8704,6 @@ async function stabilizeBotOnBlockCenter(bot, session = null) {
     await new Promise((r) => setTimeout(r, 40));
   }
   bot.setControlState('forward', false);
-  if (!session || !session.sneakLock) {
-    bot.setControlState('sneak', false);
-  }
 }
 
 /**
@@ -9055,15 +9052,12 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
 
         await bot.look(yaw, 0, true);
         bot.setControlState('forward', true);
+        bot.setControlState('sprint', false);
 
-        // Katman üzerinde güvenli A* rotasında normal hızda yürü; yalnızca bot bir kenardan sarkıyorsa veya sneakLock varsa eğil
-        const mustSneak = Boolean(session && session.sneakLock) || (!isSteppingDown && isBotOverhangingOrNearEdge(bot, session));
-        bot.setControlState('sneak', mustSneak);
-        if (!mustSneak && !isSteppingDown) {
-          bot.setControlState('sprint', true);
-        } else {
-          bot.setControlState('sprint', false);
-        }
+        // Vulcan güvenli yürüyüş: Yalnızca uçurum/katman kenarına (<0.22m) yaklaşıldığında eğil (sneak),
+        // güvenli zemin ve merdiven inişinde normal yürüme hızında ilerle
+        const shouldSneak = Boolean(session && session.sneakLock) || (!isSteppingDown && isBotOverhangingOrNearEdge(bot, session));
+        bot.setControlState('sneak', shouldSneak);
 
         const dy = nodeCenter.y - cur.y;
         if (dy >= 0.55 && dy <= 1.25) {
@@ -9299,15 +9293,12 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
 
       await bot.look(targetYaw, 0, true);
       bot.setControlState('forward', true);
+      bot.setControlState('sprint', false);
 
-      // Katman üzerinde güvenli A* rotasında normal hızda yürü; yalnızca bot bir kenardan sarkıyorsa veya sneakLock varsa eğil
-      const mustSneak = Boolean(session && session.sneakLock) || (!isStepDown && isBotOverhangingOrNearEdge(bot, session));
-      bot.setControlState('sneak', mustSneak);
-      if (!mustSneak && !isStepDown) {
-        bot.setControlState('sprint', true);
-      } else {
-        bot.setControlState('sprint', false);
-      }
+      // Vulcan güvenli yürüyüş: Yalnızca uçurum/katman kenarına (<0.22m) yaklaşıldığında eğil (sneak),
+      // güvenli zemin ve merdiven inişinde normal yürüme hızında ilerle
+      const shouldSneak = Boolean(session && session.sneakLock) || (!isStepDown && isBotOverhangingOrNearEdge(bot, session));
+      bot.setControlState('sneak', shouldSneak);
 
       const dy = targetNode.y - curPos.y;
       if (dy >= 0.5 && dy <= 1.25) {
@@ -9898,7 +9889,7 @@ function scheduleNextBuilderStep(accountId, customDelayMs) {
   const session = sessions.get(accountId);
   if (!session || !session.builder || session.builder.status !== 'building') return;
   if (session.builderTimer) clearTimeout(session.builderTimer);
-  const safeDelay = Math.max(130, Number(session.builder.delayMs) || 160);
+  const safeDelay = Math.max(250, Number(session.builder.delayMs) || 270);
   const delay = typeof customDelayMs === 'number' ? customDelayMs : safeDelay;
   session.builderTimer = setTimeout(() => {
     runAutoBuilderStep(accountId);
@@ -10353,9 +10344,9 @@ async function runAutoBuilderStep(accountId) {
         builder.statusMessage = `[İNŞA] Blok yerleştirildi: ${blk.name} (${targetPos.x}, ${targetPos.y}, ${targetPos.z}) • Toplam: ${builder.placedCount}/${builder.totalBlocks}`;
         broadcastState();
 
-        // Vulcan FastPlace koruması: Hızlandırılmış akıcı doğal tıklama aralığı (140ms - 175ms) + organik insan jitter
-        const baseDelay = Math.max(135, Number(builder.delayMs) || 160);
-        const jitter = Math.floor(Math.random() * 25);
+        // Vulcan FastPlace koruması: Doğal insan tıklama aralığı (270ms - 335ms) + organik insan jitter
+        const baseDelay = Math.max(260, Number(builder.delayMs) || 280);
+        const jitter = Math.floor(Math.random() * 55);
         scheduleNextBuilderStep(accountId, baseDelay + jitter);
         return;
       } else {
@@ -13086,7 +13077,7 @@ const server = http.createServer(async (req, res) => {
             };
           }
           if (typeof body.delayMs !== 'undefined') {
-            s.builder.delayMs = Math.max(120, Math.min(3000, Number(body.delayMs) || 160));
+            s.builder.delayMs = Math.max(160, Math.min(3000, Number(body.delayMs) || 190));
           }
           if (typeof body.autoRestockChest !== 'undefined') {
             s.builder.autoRestockChest = Boolean(body.autoRestockChest);
