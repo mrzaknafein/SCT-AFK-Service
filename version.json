@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_builder_chest_v33",
-  "version": "2.2.2",
-  "releaseNotes": "Oto-İnşa katmandan düşme koruması, çift yönlü güvenli sandık yolu kontrolü ve açılıp kapatılabilir sürekli malzeme çekme butonu eklendi.",
+  "buildId": "20261026_farm_nav_chest_v34",
+  "version": "2.2.3",
+  "releaseNotes": "Oto-Ekim ve Oto-Çapalama için 112 blok katman tarayıcı (uzak alanları görme), kendi etrafında dönmeyi (yörünge hatasını) önleyen açılı yürüyüş motoru ve adadaki tüm sandıkları algılayan çoklu sandık tazeleme sistemi eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
