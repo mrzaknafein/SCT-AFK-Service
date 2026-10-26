@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_clean_ui_v31",
-  "version": "2.2.0",
-  "releaseNotes": "Arayüz sadeleştirildi, 4 ana sekmeye düşürüldü, Oto-İnşa ve Farm iyileştirildi, Anlık Hot-Update sistemi eklendi.",
+  "buildId": "20261026_autotill_fix_v32",
+  "version": "2.2.1",
+  "releaseNotes": "Oto-Çapalama ve Oto-Ekim tüm adayı (96+ blok) tarayacak şekilde genişletildi, erken durma ve tarla yükseklik algılama hataları giderildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
