@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_admin_telemetry_relay_v43",
-  "version": "2.2.12",
-  "releaseNotes": "SCT HQ Yönetici bildirimleri için uygulama içi Cyberpunk pop-up sistemi, stabil filo sıralaması ve uzaktan güvenli restart iyileştirmeleri eklendi.",
+  "buildId": "20261027_miner_chest_cobble_sell_v44",
+  "version": "2.2.13",
+  "releaseNotes": "Miner Sandık menüsünden yalnızca cobblestone yığınlarını çekip otomatik '/sat hepsi' yapan akıllı satış modülü eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"

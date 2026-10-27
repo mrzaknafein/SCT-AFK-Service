@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_admin_telemetry_relay_v43';
+const ENGINE_BUILD_ID = '20261027_miner_chest_cobble_sell_v44';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -527,6 +527,9 @@ function loadConfig() {
         autoFarmerSell: acc.autoFarmerSell && typeof acc.autoFarmerSell === 'object'
           ? { enabled: Boolean(acc.autoFarmerSell.enabled), intervalSec: Math.max(5, Number(acc.autoFarmerSell.intervalSec) || 120) }
           : { enabled: false, intervalSec: 120 },
+        autoMinerChestSell: acc.autoMinerChestSell && typeof acc.autoMinerChestSell === 'object'
+          ? { enabled: Boolean(acc.autoMinerChestSell.enabled), intervalSec: Math.max(5, Number(acc.autoMinerChestSell.intervalSec) || 60) }
+          : { enabled: false, intervalSec: 60 },
         clientBrand: 'vanilla',
         customBrand: '',
         clientLocale: 'tr_TR',
@@ -2023,6 +2026,9 @@ function getPublicState() {
         autoFarmerSell: acc.autoFarmerSell || { enabled: false, intervalSec: 120 },
         isFarmerSelling: false,
         lastFarmerSellTime: 0,
+        autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 60 },
+        isMinerChestSelling: false,
+        lastMinerChestSellTime: 0,
         heldItem: null,
         inventory: [],
         openWindow: null,
@@ -2114,6 +2120,9 @@ function getPublicState() {
         autoFarmerSell: acc.autoFarmerSell || { enabled: false, intervalSec: 120 },
         isFarmerSelling: Boolean(s.isFarmerSelling),
         lastFarmerSellTime: s.lastFarmerSellTime || 0,
+        autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 60 },
+        isMinerChestSelling: Boolean(s.isMinerChestSelling),
+        lastMinerChestSellTime: s.lastMinerChestSellTime || 0,
         health: bot && typeof bot.health === 'number' ? Math.round(bot.health) : 20,
         food: bot && typeof bot.food === 'number' ? Math.round(bot.food) : 20,
         version: bot && bot.version ? bot.version : null,
@@ -2459,6 +2468,9 @@ function getOrCreateSession(accountId) {
       farmerSellTimer: null,
       isFarmerSelling: false,
       lastFarmerSellTime: 0,
+      minerChestSellTimer: null,
+      isMinerChestSelling: false,
+      lastMinerChestSellTime: 0,
       builder: createDefaultBuilderState(accountId),
       scoreboard: {
         objectives: {},
@@ -2487,6 +2499,11 @@ function getOrCreateSession(accountId) {
 }
 
 function clearSessionTimers(session) {
+  if (session.minerChestSellTimer) {
+    clearTimeout(session.minerChestSellTimer);
+    session.minerChestSellTimer = null;
+  }
+  session.isMinerChestSelling = false;
   session.farmLoopId = (session.farmLoopId || 0) + 1;
   session.farmCurrentPath = null;
   session.farmTargetCropPos = null;
@@ -4634,6 +4651,20 @@ async function depositToNearbyChest(accountId, onlyWhenFull = false) {
     hadSneakLock = opened.hadSneakLock;
     let movedStacks = 0;
 
+    // Eğer açılan sandık "Miner Sandık" ise (örn. "Miner Sandık - Sayfa 1"), eşya koymak yerine
+    // doğrudan içindeki cobblestone'ların tamamını çekip "/sat hepsi" yapan rutini çalıştır!
+    if (isMinerChestWindow(container)) {
+      session.isDepositing = false;
+      await executeMinerChestCobbleSellRoutine(accountId, !onlyWhenFull, {
+        container,
+        hadSneakLock,
+        prevYaw,
+        prevPitch,
+        savedMiningBlockPos
+      });
+      return;
+    }
+
     // Açılan container içerisinde aktif el yuvasını hesapla:
     const activeQuickBar = typeof bot.quickBarSlot === 'number' ? bot.quickBarSlot : 0;
     const handSlotInContainer = container.hotbarStart + activeQuickBar;
@@ -4722,6 +4753,572 @@ async function depositToNearbyChest(accountId, onlyWhenFull = false) {
       }, 350);
     }
   }
+}
+
+// --- 5.1. MINER SANDIK COBBLESTONE ÇEKME VE /sat hepsi SİSTEMİ ---
+function isMinerChestWindow(win) {
+  if (!win) return false;
+  const titleNorm = normalizeTurkishText(parseWindowTitle(win) || '');
+  if (
+    titleNorm.includes('miner sandik') ||
+    titleNorm.includes('miner sandigi') ||
+    titleNorm.includes('madenci sandik') ||
+    titleNorm.includes('madenci sandigi') ||
+    (titleNorm.includes('miner') && titleNorm.includes('sayfa'))
+  ) {
+    return true;
+  }
+  // Görseldeki 6 satırlı (54 slot) Miner Sandık alt kontrol çubuğu imzası:
+  // Slot 45: hopper, Slot 46: furnace, Slot 49: experience_bottle, Slot 52: arrow
+  const containerEnd = win.inventoryStart || Math.min((win.slots && win.slots.length) || 0, 54);
+  if (containerEnd === 54 && Array.isArray(win.slots)) {
+    const s45 = win.slots[45] && String(win.slots[45].name || '').toLowerCase();
+    const s46 = win.slots[46] && String(win.slots[46].name || '').toLowerCase();
+    const s49 = win.slots[49] && String(win.slots[49].name || '').toLowerCase();
+    if (s45 === 'hopper' && (s46 === 'furnace' || s46 === 'blast_furnace') && s49 === 'experience_bottle') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isCobblestoneSlotItem(it) {
+  if (!it || !it.name) return false;
+  const rawName = String(it.name).toLowerCase().replace(/^minecraft:/, '');
+  return rawName === 'cobblestone';
+}
+
+function countBotInventoryCobblestone(bot, win) {
+  let total = 0;
+  if (win && Array.isArray(win.slots) && typeof win.inventoryStart === 'number') {
+    const end = win.inventoryEnd || win.slots.length;
+    for (let i = win.inventoryStart; i < end; i++) {
+      const it = win.slots[i];
+      if (isCobblestoneSlotItem(it)) {
+        total += Number(it.count) || 0;
+      }
+    }
+    return total;
+  }
+  if (bot && bot.inventory && typeof bot.inventory.items === 'function') {
+    for (const it of bot.inventory.items()) {
+      if (isCobblestoneSlotItem(it)) {
+        total += Number(it.count) || 0;
+      }
+    }
+  }
+  return total;
+}
+
+function hasBotSpaceForCobblestone(bot, win) {
+  if (win && Array.isArray(win.slots) && typeof win.inventoryStart === 'number') {
+    const end = win.inventoryEnd || win.slots.length;
+    for (let i = win.inventoryStart; i < end; i++) {
+      if (!win.slots[i]) return true;
+    }
+    return false;
+  }
+  if (!bot || !bot.inventory) return false;
+  if (typeof bot.inventory.emptySlotCount === 'function') {
+    return bot.inventory.emptySlotCount() >= 1;
+  }
+  for (let s = 9; s <= 44; s++) {
+    if (!bot.inventory.slots[s]) return true;
+  }
+  return false;
+}
+
+function findFirstEmptyPlayerSlotInWindow(win) {
+  if (!win || !Array.isArray(win.slots) || typeof win.inventoryStart !== 'number') return -1;
+  const end = win.inventoryEnd || win.slots.length;
+  for (let i = win.inventoryStart; i < end; i++) {
+    if (!win.slots[i]) return i;
+  }
+  return -1;
+}
+
+function getMinerChestStorageEndSlot(win) {
+  if (!win || !Array.isArray(win.slots)) return 0;
+  const containerEnd = win.inventoryStart || Math.min(win.slots.length, 54);
+  // 54 slotluk Miner Sandık menüsünde ilk 5 satır (0..44) eşya alanıdır, 6. satır (45..53) kontrol butonlarıdır
+  if (containerEnd >= 54) {
+    return 45;
+  }
+  return containerEnd;
+}
+
+function findMinerChestNextPageSlot(win) {
+  if (!win || !Array.isArray(win.slots)) return -1;
+  const containerEnd = win.inventoryStart || Math.min(win.slots.length, 54);
+  if (containerEnd < 54) return -1;
+
+  // 1. Önce 6. satırda (45..53) özel adında/açıklamasında "sonraki / ileri / next" geçen oku ara
+  for (let i = 45; i < 54; i++) {
+    const it = win.slots[i];
+    if (!it) continue;
+    const itName = String(it.name || '').toLowerCase();
+    const customNorm = normalizeTurkishText(`${getItemCustomName(it) || ''} ${it.displayName || ''} ${getItemLoreText(it) || ''}`);
+    if (customNorm.includes('onceki') || customNorm.includes('geri') || customNorm.includes('prev')) {
+      continue;
+    }
+    if (
+      itName.includes('arrow') &&
+      (customNorm.includes('sonraki') || customNorm.includes('ileri') || customNorm.includes('next') || customNorm.includes('sayfa'))
+    ) {
+      return i;
+    }
+  }
+
+  // 2. Görseldeki standart konum: 6. Satır, 8. Sütun (Slot 52) ok ikonu
+  for (const candidateSlot of [52, 53, 51, 50]) {
+    const it = win.slots[candidateSlot];
+    if (!it) continue;
+    const itName = String(it.name || '').toLowerCase();
+    const customNorm = normalizeTurkishText(`${getItemCustomName(it) || ''} ${it.displayName || ''} ${getItemLoreText(it) || ''}`);
+    if (customNorm.includes('onceki') || customNorm.includes('geri') || customNorm.includes('prev')) {
+      continue;
+    }
+    if (itName.includes('arrow')) {
+      return candidateSlot;
+    }
+  }
+
+  return -1;
+}
+
+function getMinerChestPageSignature(win) {
+  if (!win || !Array.isArray(win.slots)) return '';
+  const title = parseWindowTitle(win) || '';
+  const storageEnd = getMinerChestStorageEndSlot(win);
+  const parts = [title];
+  for (let i = 0; i < storageEnd; i++) {
+    const it = win.slots[i];
+    parts.push(it ? `${it.name}:${it.count}` : '_');
+  }
+  return parts.join('|');
+}
+
+async function openMinerChestWindow(bot, chestBlock, session, timeoutMs = 6000) {
+  if (!bot || !chestBlock) throw new Error('Geçersiz bot veya sandık hedefi');
+
+  const hadSneakLock = session ? Boolean(session.sneakLock) : false;
+
+  if (bot.currentWindow) {
+    try {
+      bot.closeWindow(bot.currentWindow);
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 180));
+  }
+
+  if (typeof bot.setControlState === 'function') {
+    bot.setControlState('sneak', false);
+  }
+
+  if (bot._client && bot.entity) {
+    try {
+      if (bot.supportFeature && bot.supportFeature('newPlayerInputPacket')) {
+        bot._client.write('player_input', { inputs: { shift: false, jump: false } });
+      } else {
+        bot._client.write('entity_action', {
+          entityId: bot.entity.id,
+          actionId: 1,
+          jumpBoost: 0
+        });
+      }
+    } catch (e) {}
+  }
+
+  await new Promise((r) => setTimeout(r, 80));
+
+  try {
+    await bot.lookAt(chestBlock.position.offset(0.5, 0.5, 0.5), true);
+  } catch (e) {}
+
+  const winPromise = waitForFarmerWindow(bot, timeoutMs);
+  bot.openContainer(chestBlock).catch(async () => {
+    try {
+      if (!bot.currentWindow && typeof bot.activateBlock === 'function') {
+        await bot.activateBlock(chestBlock);
+      }
+    } catch (_) {}
+  });
+
+  const win = await winPromise;
+  if (!win && !bot.currentWindow) {
+    throw new Error('Miner Sandık menüsü zaman aşımına uğradı (6sn)');
+  }
+  await new Promise((r) => setTimeout(r, 280));
+  return { container: bot.currentWindow || win, hadSneakLock };
+}
+
+async function withdrawCobblestoneFromOpenMinerWindow(bot, win, accountId) {
+  let withdrawnStacks = 0;
+  let inventoryFull = false;
+  if (!bot || !win || !Array.isArray(win.slots)) {
+    return { withdrawnStacks, inventoryFull };
+  }
+
+  // Aynı sayfada cobblestone yığınları çekildikçe eklenti slotları kaydırabileceği için
+  // sayfada cobblestone kalmayana veya envanter dolana kadar taramayı sürdür (maksimum 60 tıklama/sayfa)
+  let safetyClicks = 0;
+  while (safetyClicks < 60) {
+    const activeWin = bot.currentWindow || win;
+    if (!activeWin || !Array.isArray(activeWin.slots)) break;
+
+    if (!hasBotSpaceForCobblestone(bot, activeWin)) {
+      inventoryFull = true;
+      break;
+    }
+
+    const storageEnd = getMinerChestStorageEndSlot(activeWin);
+    let targetSlot = -1;
+    for (let s = 0; s < storageEnd; s++) {
+      if (isCobblestoneSlotItem(activeWin.slots[s])) {
+        targetSlot = s;
+        break;
+      }
+    }
+
+    if (targetSlot === -1) {
+      break; // Bu sayfada başka cobblestone kalmadı
+    }
+
+    safetyClicks++;
+    const slotItemBefore = activeWin.slots[targetSlot];
+    const countBefore = slotItemBefore ? slotItemBefore.count : 0;
+    const invCobbleBefore = countBotInventoryCobblestone(bot, activeWin);
+
+    try {
+      // Shift-Sol Tık (mode: 1, button: 0) ile cobblestone yığınını doğrudan envantere çek
+      await withPromiseTimeout(bot.clickWindow(targetSlot, 0, 1), 1800);
+      await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 45)));
+
+      const curWin = bot.currentWindow || activeWin;
+      // Eğer özel eklenti Shift-tık yerine normal Sol-tık (mode: 0) bekliyorsa ve yığın hiç oynamadıysa:
+      const slotItemAfter = curWin.slots[targetSlot];
+      const invCobbleAfter = countBotInventoryCobblestone(bot, curWin);
+      const unchanged =
+        isCobblestoneSlotItem(slotItemAfter) &&
+        slotItemAfter.count === countBefore &&
+        invCobbleAfter <= invCobbleBefore &&
+        !curWin.selectedItem;
+
+      if (unchanged) {
+        await withPromiseTimeout(bot.clickWindow(targetSlot, 0, 0), 1800);
+        await new Promise((r) => setTimeout(r, 115 + Math.floor(Math.random() * 35)));
+      }
+
+      // Eğer eşya imleçte (cursor / selectedItem) kaldıysa boş envanter yuvasına bırak
+      const winAfterClick = bot.currentWindow || curWin;
+      if (winAfterClick && winAfterClick.selectedItem) {
+        const emptySlot = findFirstEmptyPlayerSlotInWindow(winAfterClick);
+        if (emptySlot !== -1) {
+          await withPromiseTimeout(bot.clickWindow(emptySlot, 0, 0), 1800);
+          await new Promise((r) => setTimeout(r, 95));
+        } else {
+          inventoryFull = true;
+          break;
+        }
+      }
+
+      const invCobbleFinal = countBotInventoryCobblestone(bot, bot.currentWindow || curWin);
+      const slotAfterFinal = (bot.currentWindow || curWin).slots[targetSlot];
+      const moved =
+        invCobbleFinal > invCobbleBefore ||
+        !isCobblestoneSlotItem(slotAfterFinal) ||
+        (slotAfterFinal && slotAfterFinal.count < countBefore);
+
+      if (moved) {
+        withdrawnStacks++;
+      } else {
+        // Slot hareket etmediyse (envanter dolmuş veya korumalı slot) döngüyü sonlandır
+        if (!hasBotSpaceForCobblestone(bot, bot.currentWindow || curWin)) {
+          inventoryFull = true;
+        }
+        break;
+      }
+    } catch (clickErr) {
+      break;
+    }
+  }
+
+  return { withdrawnStacks, inventoryFull };
+}
+
+/**
+ * Yakındaki Miner Sandık'ı açar, yalnızca cobblestone'ların tamamını (sayfaları gezerek ve envanter doldukça
+ * "/sat hepsi" yapıp tekrar açarak) çeker ve satar. Kömür, elmas vb. diğer madenlere dokunmaz.
+ */
+async function executeMinerChestCobbleSellRoutine(accountId, isManual = false, existingContext = null) {
+  const session = getOrCreateSession(accountId);
+  const bot = session.bot;
+  if (!bot || !bot.entity || session.status !== 'online') {
+    if (isManual) {
+      addLog(accountId, 'MINER-SANDIK', 'Bot çevrimdışı olduğu için Miner Sandık işlemi yapılamadı.', chalk.yellow);
+    }
+    return false;
+  }
+
+  if (session.isMinerChestSelling) return false;
+  if (!isManual && !existingContext && (session.isFarmerSelling || session.isDepositing || session.isDropping || session.isEating || session.isRepairing || session.isSolvingCaptcha)) {
+    return false;
+  }
+
+  const acc = config.accounts.find((a) => a.id === accountId);
+  const sellCmd = (acc && acc.autoSellCommand ? acc.autoSellCommand.trim() : '') || '/sat hepsi';
+
+  const chestBlock = findNearestContainerBlock(bot, 5.2);
+  if (!chestBlock && (!existingContext || !existingContext.container)) {
+    if (isManual) {
+      addLog(accountId, 'MINER-SANDIK', '⚠️ 5 blok yakınlıkta Miner Sandık (sandık/varil) bulunamadı!', chalk.red);
+    }
+    return false;
+  }
+
+  const prevYaw = existingContext && existingContext.prevYaw !== undefined
+    ? existingContext.prevYaw
+    : (session.baseYaw !== undefined && session.baseYaw !== null ? session.baseYaw : (bot.entity ? bot.entity.yaw : null));
+  const prevPitch = existingContext && existingContext.prevPitch !== undefined
+    ? existingContext.prevPitch
+    : (session.basePitch !== undefined && session.basePitch !== null ? session.basePitch : (bot.entity ? bot.entity.pitch : null));
+  const savedMiningBlockPos = existingContext && existingContext.savedMiningBlockPos
+    ? existingContext.savedMiningBlockPos
+    : (session.lockedMinePos ? session.lockedMinePos.clone() : (session.lastMinedPos ? session.lastMinedPos.clone() : null));
+  let hadSneakLock = existingContext && typeof existingContext.hadSneakLock === 'boolean'
+    ? existingContext.hadSneakLock
+    : Boolean(session.sneakLock);
+
+  session.isMinerChestSelling = true;
+  session.isDepositing = true;
+  session.isMiningBlock = false;
+  if (session.mineTimer) {
+    clearTimeout(session.mineTimer);
+    session.mineTimer = null;
+  }
+  if (bot.targetDigBlock) {
+    try {
+      bot.stopDigging();
+    } catch (_) {}
+    bot.targetDigBlock = null;
+  }
+
+  let totalWithdrawnStacks = 0;
+  let totalSellCount = 0;
+
+  try {
+    const MAX_ROUNDS = 25;
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      if (!session.bot || session.status !== 'online') break;
+
+      let win = null;
+      if (round === 0 && existingContext && existingContext.container) {
+        win = existingContext.container;
+      } else {
+        const currentChest = findNearestContainerBlock(bot, 5.2) || chestBlock;
+        if (!currentChest) break;
+        const opened = await openMinerChestWindow(bot, currentChest, session, 6000);
+        win = opened.container;
+        if (round === 0) {
+          hadSneakLock = opened.hadSneakLock;
+        }
+      }
+
+      if (!win) break;
+
+      const winTitle = parseWindowTitle(win) || 'Miner Sandık';
+      if (round === 0) {
+        addLog(accountId, 'MINER-SANDIK', `🪨 "${winTitle}" açıldı. Yalnızca cobblestone yığınları çekiliyor...`, chalk.cyanBright);
+      }
+
+      let roundWithdrawn = 0;
+      let roundInventoryFull = false;
+      let allPagesDone = false;
+      const visitedSignatures = new Set();
+
+      // Sayfalar arası gezinme döngüsü (Sayfa 1 -> Sayfa 2 -> ...)
+      for (let pageIdx = 0; pageIdx < 15; pageIdx++) {
+        const curWin = bot.currentWindow || win;
+        if (!curWin) {
+          allPagesDone = true;
+          break;
+        }
+
+        const pageRes = await withdrawCobblestoneFromOpenMinerWindow(bot, curWin, accountId);
+        roundWithdrawn += pageRes.withdrawnStacks;
+        totalWithdrawnStacks += pageRes.withdrawnStacks;
+
+        if (pageRes.inventoryFull || !hasBotSpaceForCobblestone(bot, bot.currentWindow || curWin)) {
+          roundInventoryFull = true;
+          break;
+        }
+
+        // Mevcut sayfada cobblestone bittiyse ve envanterde hala yer varsa sonraki sayfa (Ok - Slot 52) var mı bak
+        const activeWinAfter = bot.currentWindow || curWin;
+        const nextPageSlot = findMinerChestNextPageSlot(activeWinAfter);
+        if (nextPageSlot === -1) {
+          allPagesDone = true;
+          break;
+        }
+
+        const sigBefore = getMinerChestPageSignature(activeWinAfter);
+        visitedSignatures.add(sigBefore);
+
+        try {
+          await withPromiseTimeout(bot.clickWindow(nextPageSlot, 0, 0), 1800);
+          await new Promise((r) => setTimeout(r, 380));
+        } catch (err) {
+          allPagesDone = true;
+          break;
+        }
+
+        const winAfterNext = bot.currentWindow || activeWinAfter;
+        const sigAfter = getMinerChestPageSignature(winAfterNext);
+        if (!sigAfter || visitedSignatures.has(sigAfter)) {
+          // Sayfa değişmedi (son sayfadayız)
+          allPagesDone = true;
+          break;
+        }
+      }
+
+      // Sandık penceresini kapat
+      const winToClose = bot.currentWindow || win;
+      if (winToClose) {
+        try {
+          bot.closeWindow(winToClose);
+        } catch (_) {}
+      }
+      await new Promise((r) => setTimeout(r, 250));
+
+      const cobbleInInv = countBotInventoryCobblestone(bot, null);
+      if (roundWithdrawn > 0 || cobbleInInv > 0) {
+        try {
+          bot.chat(sellCmd);
+          totalSellCount++;
+          session.lastMinerChestSellTime = Date.now();
+          session.lastAutoSellTime = Date.now();
+          if (!session.stats) session.stats = {};
+          session.stats.minerChestSalesCount = (session.stats.minerChestSalesCount || 0) + 1;
+        } catch (chatErr) {}
+
+        if (roundInventoryFull && !allPagesDone) {
+          addLog(
+            accountId,
+            'MINER-SANDIK',
+            `💰 Envanter doldu (${roundWithdrawn} yığın cobblestone çekildi), "${sellCmd}" gönderildi. Kalan cobblestone'lar için sandık tekrar açılıyor...`,
+            chalk.yellowBright
+          );
+          broadcastState();
+          await new Promise((r) => setTimeout(r, 700));
+          continue;
+        }
+      }
+
+      if (allPagesDone || roundWithdrawn === 0) {
+        break;
+      }
+    }
+
+    if (totalWithdrawnStacks > 0 || totalSellCount > 0) {
+      addLog(
+        accountId,
+        'MINER-SANDIK',
+        `✅ 🪨 Miner Sandık'taki tüm cobblestone'lar çekildi (${totalWithdrawnStacks} yığın) ve "${sellCmd}" komutuyla satıldı!`,
+        chalk.greenBright
+      );
+      triggerSoundAlert('notify', accountId, 'Miner Sandık Cobblestone Satıldı');
+      broadcastState();
+      return true;
+    } else {
+      if (isManual) {
+        addLog(accountId, 'MINER-SANDIK', 'ℹ️ Miner Sandık kontrol edildi, çekilecek cobblestone bulunamadı.', chalk.yellow);
+      }
+      return false;
+    }
+  } catch (err) {
+    if (isManual) {
+      addLog(accountId, 'MINER-SANDIK', `❌ Miner Sandık işlemi sırasında hata: ${err.message}`, chalk.red);
+    }
+    return false;
+  } finally {
+    if (bot.currentWindow) {
+      try {
+        bot.closeWindow(bot.currentWindow);
+      } catch (_) {}
+    }
+    session.isMinerChestSelling = false;
+    session.isDepositing = false;
+
+    if (hadSneakLock && session.bot && session.status === 'online') {
+      try {
+        session.bot.setControlState('sneak', true);
+      } catch (_) {}
+    }
+
+    if (session.bot && session.bot.entity && session.status === 'online') {
+      try {
+        if (session.baseYaw !== undefined && session.basePitch !== undefined && session.baseYaw !== null && session.basePitch !== null) {
+          await session.bot.look(session.baseYaw, session.basePitch, true);
+        } else if (savedMiningBlockPos) {
+          await session.bot.lookAt(savedMiningBlockPos.offset(0.5, 0.5, 0.5), true);
+        } else if (prevYaw !== null && prevPitch !== null) {
+          await session.bot.look(prevYaw, prevPitch, true);
+        }
+      } catch (_) {}
+    }
+
+    broadcastState();
+
+    if (session.autoMine && session.status === 'online') {
+      if (session.mineTimer) clearTimeout(session.mineTimer);
+      session.mineTimer = setTimeout(() => {
+        if (session.autoMine && session.bot && session.status === 'online') {
+          startAutoMineLoop(accountId);
+        }
+      }, 350);
+    }
+  }
+}
+
+function startMinerChestSellLoop(accountId) {
+  const session = getOrCreateSession(accountId);
+  if (session.minerChestSellTimer) {
+    clearTimeout(session.minerChestSellTimer);
+    session.minerChestSellTimer = null;
+  }
+  const acc = config.accounts.find((a) => a.id === accountId);
+  if (!acc || !acc.autoMinerChestSell || !acc.autoMinerChestSell.enabled) return;
+
+  const intervalSec = Math.max(5, Number(acc.autoMinerChestSell.intervalSec) || 60);
+  const intervalMs = intervalSec * 1000;
+
+  session.minerChestSellTimer = setTimeout(async () => {
+    session.minerChestSellTimer = null;
+    if (
+      session.status === 'online' &&
+      session.bot &&
+      !session.isMinerChestSelling &&
+      !session.isFarmerSelling &&
+      !session.isDepositing &&
+      !session.isEating &&
+      !session.isRepairing
+    ) {
+      try {
+        await executeMinerChestCobbleSellRoutine(accountId, false);
+      } catch (err) {
+        console.error('[MINER SANDIK SATIŞ DÖNGÜ HATA]', err);
+      }
+    }
+    startMinerChestSellLoop(accountId);
+  }, intervalMs);
+}
+
+function stopMinerChestSellLoop(accountId) {
+  const session = getOrCreateSession(accountId);
+  if (session.minerChestSellTimer) {
+    clearTimeout(session.minerChestSellTimer);
+    session.minerChestSellTimer = null;
+  }
+  session.isMinerChestSelling = false;
 }
 
 function startAutoChestLoop(accountId) {
@@ -11636,6 +12233,7 @@ async function startBot(accountId) {
     if (session.autoTill) startAutoTillLoop(accountId);
     if (session.autoPlant) startAutoPlantLoop(accountId);
     if (acc.autoFarmerSell && acc.autoFarmerSell.enabled) startFarmerSellLoop(accountId);
+    if (acc.autoMinerChestSell && acc.autoMinerChestSell.enabled) startMinerChestSellLoop(accountId);
   });
 
   bot.on('messagestr', (message, position) => {
@@ -12802,6 +13400,46 @@ const server = http.createServer(async (req, res) => {
             stopFarmerSellLoop(accId);
           }
           addLog(accId, 'ÇİFTÇİ', `Çiftçi satış aralığı ${acc.autoFarmerSell.intervalSec} saniye olarak güncellendi.`, chalk.cyan);
+          broadcastState();
+          break;
+        case 'minerChestSellNow':
+          if (s.bot && s.bot.entity && s.status === 'online') {
+            executeMinerChestCobbleSellRoutine(accId, true);
+          } else {
+            addLog(accId, 'MINER-SANDIK', 'Bot sunucuya bağlı değil!', chalk.red);
+          }
+          break;
+        case 'toggleAutoMinerChestSell':
+          if (!acc.autoMinerChestSell) {
+            acc.autoMinerChestSell = { enabled: false, intervalSec: 60 };
+          }
+          acc.autoMinerChestSell.enabled = !acc.autoMinerChestSell.enabled;
+          saveConfig();
+          if (acc.autoMinerChestSell.enabled) {
+            addLog(accId, 'MINER-SANDIK', `🪨 Otomatik Miner Sandık Cobblestone Satıcı başlatıldı. Kontrol aralığı: ${acc.autoMinerChestSell.intervalSec || 60} saniye.`, chalk.greenBright);
+            startMinerChestSellLoop(accId);
+            if (s.bot && s.bot.entity && s.status === 'online') {
+              executeMinerChestCobbleSellRoutine(accId, false);
+            }
+          } else {
+            stopMinerChestSellLoop(accId);
+            addLog(accId, 'MINER-SANDIK', '🪨 Otomatik Miner Sandık Cobblestone Satıcı durduruldu.', chalk.magenta);
+          }
+          broadcastState();
+          break;
+        case 'updateMinerChestSellConfig':
+          if (!acc.autoMinerChestSell) {
+            acc.autoMinerChestSell = { enabled: false, intervalSec: 60 };
+          }
+          if (typeof body.enabled !== 'undefined') acc.autoMinerChestSell.enabled = Boolean(body.enabled);
+          if (typeof body.intervalSec !== 'undefined') acc.autoMinerChestSell.intervalSec = Math.max(5, Number(body.intervalSec) || 60);
+          saveConfig();
+          if (acc.autoMinerChestSell.enabled) {
+            startMinerChestSellLoop(accId);
+          } else {
+            stopMinerChestSellLoop(accId);
+          }
+          addLog(accId, 'MINER-SANDIK', `Miner Sandık cobblestone satış aralığı ${acc.autoMinerChestSell.intervalSec} saniye olarak güncellendi.`, chalk.cyan);
           broadcastState();
           break;
         case 'depositChestNow':
