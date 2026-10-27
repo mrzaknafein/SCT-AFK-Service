@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_miner_chest_and_turbo_builder_v45",
-  "version": "2.2.14",
-  "releaseNotes": "Arkadaşın yeni özelliği (Miner Sandık Cobblestone otomatik çek & /sat hepsi modülü) + Oto-İnşa (Auto-Builder) akıcı performans optimizasyonları ve UI geliştirmeleri entegre edildi.",
+  "buildId": "20261027_auto_world_detect_and_smart_reach_v46",
+  "version": "2.2.15",
+  "releaseNotes": "Oto-İnşa (Auto-Builder): Kendiliğinden dinamik dünya/blok tespiti (durdur-başlat yapma zorunluluğu kalktı), takılma/kilitlenme koruması, genişletilmiş duruş noktaları (1.0m-3.85m) ve akıllı erişim iyileştirmesi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
