@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_audio_presets_and_mute_fix_v47';
+const ENGINE_BUILD_ID = '20261027_farm_till_plant_chest_perf_v48';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -6009,7 +6009,7 @@ function checkAndDescendFromFarmObstacle(bot, session) {
 }
 
 // --- AKILLI A* YOL BULUCU (ENGELLERİN VE ÇİTLERİN ETRAFINDAN DOLAŞIR) ---
-function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 2500, goalRadius = 1.85) {
+function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 600, goalRadius = 1.85) {
   if (!bot || !startPos || !goalPos) return null;
 
   // Eğer hedef blok bir zemin bloğuysa (farmland, dirt, grass_block vb.) ve üstü açıksa,
@@ -6050,8 +6050,20 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 2500, g
 
   while (openSet.length > 0 && nodesCount < maxNodes) {
     nodesCount++;
-    openSet.sort((a, b) => a.f - b.f);
-    const cur = openSet.shift();
+    // Yüksek Performanslı Min-Arama ve O(1) Pop-Swap (openSet.sort() darboğazını tamamen ortadan kaldırır)
+    let bestIdx = 0;
+    let bestF = openSet[0].f;
+    for (let i = 1; i < openSet.length; i++) {
+      if (openSet[i].f < bestF) {
+        bestF = openSet[i].f;
+        bestIdx = i;
+      }
+    }
+    const cur = openSet[bestIdx];
+    const last = openSet.pop();
+    if (bestIdx < openSet.length) {
+      openSet[bestIdx] = last;
+    }
     const curKey = cur.pos.toString();
 
     if (isGoal(cur.pos)) {
@@ -6151,10 +6163,10 @@ function findFarmPath(bot, startPos, goalPos, session = null, maxNodes = 2500, g
  */
 function alignAndStepForward(bot, targetYaw, session = null, dyStep = 0) {
   if (!bot || !bot.entity) return false;
-  const remYaw = smoothHumanLook(bot, targetYaw, 0.35, 1.85);
+  const remYaw = smoothHumanLook(bot, targetYaw, 0.40, 2.2);
 
-  // Sadece hedeften tamamen farklı bir yöne bakıyorsa (> 50 derece) keskin dönüş için durakla
-  if (remYaw > 0.85) {
+  // Sadece hedeften belirgin şekilde farklı bir yöne bakıyorsa (> 75 derece) keskin dönüş için durakla
+  if (remYaw > 1.30) {
     bot.setControlState('forward', false);
     bot.setControlState('sprint', false);
     bot.setControlState('jump', false);
@@ -6174,7 +6186,7 @@ function alignAndStepForward(bot, targetYaw, session = null, dyStep = 0) {
   }
 
   bot.setControlState('forward', true);
-  if (remYaw < 0.40) {
+  if (remYaw < 0.55) {
     bot.setControlState('sprint', true);
   } else {
     bot.setControlState('sprint', false);
@@ -6940,7 +6952,7 @@ function scanFarmLayerBlocksAround(bot, maxRadius = 112, session = null, refFloo
 
   const results = [];
   const seenKeys = new Set();
-  const limitR = farmBounds ? 64 : Math.min(Math.max(Math.ceil(maxRadius), 48), 64);
+  const limitR = farmBounds ? 64 : Math.min(Math.max(Math.ceil(maxRadius), 32), 48);
   let firstHitRing = -1;
 
   const scanCenterRings = (centerX, centerZ, maxRing) => {
@@ -6968,14 +6980,28 @@ function scanFarmLayerBlocksAround(bot, maxRadius = 112, session = null, refFloo
           }
         }
       }
-      // Yeterince yakın hedef bulunduğunda tüm tarla katmanını gereksiz taramamak için erken çık
-      if (results.length >= 80 && firstHitRing !== -1 && r >= firstHitRing + 4 && r >= 10) {
+      // Yeterince yakın hedef bulunduğunda tüm tarla katmanını gereksiz taramamak için derhal erken çık
+      if (results.length >= 24 && firstHitRing !== -1 && r >= firstHitRing + 3) {
+        break;
+      }
+      if (results.length >= 48) {
         break;
       }
     }
   };
 
-  scanCenterRings(baseX, baseZ, limitR);
+  // 1. Önce yakın yarıçapı tara (r <= 16): Son derece hızlıdır (~0.3ms)
+  scanCenterRings(baseX, baseZ, Math.min(limitR, 16));
+
+  // 2. Yakında hiç blok bulunamadıysa orta mesafeyi (r <= 32) tara
+  if (results.length === 0 && limitR > 16) {
+    scanCenterRings(baseX, baseZ, Math.min(limitR, 32));
+  }
+
+  // 3. Hala bulunamadıysa tam yarıçapı tara
+  if (results.length === 0 && limitR > 32) {
+    scanCenterRings(baseX, baseZ, limitR);
+  }
 
   // Eğer bot başlangıç noktasından çok uzaklaştıysa ve kendi çevresinde blok kalmadıysa,
   // başlangıç konumu etrafındaki uzak köşeleri de tara
@@ -6983,7 +7009,7 @@ function scanFarmLayerBlocksAround(bot, maxRadius = 112, session = null, refFloo
     const sx = Math.floor(startPos.x);
     const sz = Math.floor(startPos.z);
     if (Math.hypot(sx - baseX, sz - baseZ) > 16) {
-      scanCenterRings(sx, sz, limitR);
+      scanCenterRings(sx, sz, Math.min(limitR, 32));
     }
   }
 
@@ -7010,9 +7036,34 @@ function discoverFarmChests(bot, session, maxRadius = 88) {
   if (!session.farmKnownChests) session.farmKnownChests = new Map();
   if (!session.emptyFarmChests) session.emptyFarmChests = new Map();
 
+  const now = Date.now();
   const botPos = bot.entity.position;
-  const baseX = Math.floor(botPos.x);
   const botFloorY = Math.floor(botPos.y + 0.25) - 1;
+
+  // 15 saniyelik hafif önbellek: Bot sandığa yürürken her 55ms'de bir tüm adayı (118.000 blok) baştan taramasını engelle!
+  if (session.lastFarmChestScanTime && now - session.lastFarmChestScanTime < 15000 && session.farmKnownChests.size > 0) {
+    const valid = [];
+    for (const [key, pos] of session.farmKnownChests.entries()) {
+      const blk = bot.blockAt(pos);
+      if (blk && blk.name && isFarmContainerBlockName(blk.name)) {
+        valid.push(pos);
+      } else if (blk && (blk.name === 'air' || blk.name === 'cave_air' || blk.name === 'void_air')) {
+        session.farmKnownChests.delete(key);
+      }
+    }
+    if (valid.length > 0) {
+      valid.sort((a, b) => {
+        const aSameLayer = Math.abs(a.y - botFloorY) <= 3 ? 0 : 1;
+        const bSameLayer = Math.abs(b.y - botFloorY) <= 3 ? 0 : 1;
+        if (aSameLayer !== bSameLayer) return aSameLayer - bSameLayer;
+        return botPos.distanceTo(a.offset(0.5, 0.5, 0.5)) - botPos.distanceTo(b.offset(0.5, 0.5, 0.5));
+      });
+      return valid;
+    }
+  }
+  session.lastFarmChestScanTime = now;
+
+  const baseX = Math.floor(botPos.x);
   const baseZ = Math.floor(botPos.z);
 
   const addChestPos = (p) => {
@@ -7022,11 +7073,25 @@ function discoverFarmChests(bot, session, maxRadius = 88) {
     session.farmKnownChests.set(key, pos);
   };
 
-  // 1. Doğrudan katman taraması (r = 0..48, dy = -4..+5): bot.findBlocks kaçırsa bile %100 yakalar
-  const directR = Math.min(Math.ceil(maxRadius), 48);
+  // 1. Geniş ada taraması: bot.findBlocks ile yerel C++/V8 octree aramasını kullan (~1ms)
+  if (typeof bot.findBlocks === 'function') {
+    try {
+      const found = bot.findBlocks({
+        matching: (blk) => blk && blk.name && isFarmContainerBlockName(blk.name),
+        maxDistance: Math.min(Math.ceil(maxRadius), 96),
+        count: 64
+      });
+      for (const p of found) {
+        addChestPos(p);
+      }
+    } catch (e) {}
+  }
+
+  // 2. Doğrudan yakın katman taraması (r = 16, dy = -2..+3): Yakın sandıkları anında garantiye al
+  const directR = 16;
   for (let dx = -directR; dx <= directR; dx++) {
     for (let dz = -directR; dz <= directR; dz++) {
-      for (let dy = -4; dy <= 5; dy++) {
+      for (let dy = -2; dy <= 3; dy++) {
         const checkPos = new Vec3(baseX + dx, botFloorY + dy, baseZ + dz);
         const blk = bot.blockAt(checkPos);
         if (blk && blk.name && isFarmContainerBlockName(blk.name)) {
@@ -7036,15 +7101,15 @@ function discoverFarmChests(bot, session, maxRadius = 88) {
     }
   }
 
-  // Başlangıç noktasının (plantStartPos / tillStartPos) etrafını da doğrudan tara
+  // Başlangıç noktasının etrafını da doğrudan tara
   const refStart = session.plantStartPos || session.tillStartPos;
-  if (refStart && Math.hypot(refStart.x - botPos.x, refStart.z - botPos.z) > 12) {
+  if (refStart && Math.hypot(refStart.x - botPos.x, refStart.z - botPos.z) > 16) {
     const sx = Math.floor(refStart.x);
     const sy = Math.floor(refStart.y);
     const sz = Math.floor(refStart.z);
-    for (let dx = -24; dx <= 24; dx++) {
-      for (let dz = -24; dz <= 24; dz++) {
-        for (let dy = -4; dy <= 5; dy++) {
+    for (let dx = -16; dx <= 16; dx++) {
+      for (let dz = -16; dz <= 16; dz++) {
+        for (let dy = -2; dy <= 3; dy++) {
           const checkPos = new Vec3(sx + dx, sy + dy, sz + dz);
           const blk = bot.blockAt(checkPos);
           if (blk && blk.name && isFarmContainerBlockName(blk.name)) {
@@ -7053,20 +7118,6 @@ function discoverFarmChests(bot, session, maxRadius = 88) {
         }
       }
     }
-  }
-
-  // 2. Geniş ada taraması (bot.findBlocks ile 88 blok yarıçap)
-  if (typeof bot.findBlocks === 'function') {
-    try {
-      const found = bot.findBlocks({
-        matching: (blk) => blk && blk.name && isFarmContainerBlockName(blk.name),
-        maxDistance: Math.min(Math.ceil(maxRadius), 96),
-        count: 128
-      });
-      for (const p of found) {
-        addChestPos(p);
-      }
-    } catch (e) {}
   }
 
   // Hafızadaki sandıklardan hala dünyada var olanları filtrele ve bota yakınlığına göre sırala
@@ -7266,11 +7317,38 @@ async function stepFarmChestRestock(
   return 'next_chest';
 }
 
-function findTillableDirtAround(bot, maxRadius = 112, session = null) {
+function findTillableDirtAround(bot, maxRadius = 112, session = null, forceFresh = false) {
+  const now = Date.now();
+  const botPos = bot && bot.entity ? bot.entity.position : null;
+
+  // 2.2 saniyelik önbellek: Bot hareket halindeyken veya aynı noktadan çapalamaya devam ederken
+  // her 50ms'de bir tüm dünyayı taramak yerine önbellekteki geçerli blokları saniyenin binde birinde sunar.
+  if (!forceFresh && session && session._cachedTillBlocks && botPos && session._lastTillScanPos) {
+    const age = now - (session._lastTillScanTime || 0);
+    const moved = Math.hypot(botPos.x - session._lastTillScanPos.x, botPos.z - session._lastTillScanPos.z);
+    if (age < 2200 && moved < 7.0) {
+      const valid = [];
+      const bl = session.tillBlacklist;
+      for (const b of session._cachedTillBlocks) {
+        const k = `${b.position.x},${b.position.y},${b.position.z}`;
+        if (bl && (bl.has(k) || bl.has(`(${b.position.x}, ${b.position.y}, ${b.position.z})`))) continue;
+        const curB = bot.blockAt(b.position);
+        if (curB && canBlockBeTilled(bot, curB)) {
+          valid.push(curB);
+        }
+      }
+      if (valid.length > 0) {
+        valid.sort((a, b) => botPos.distanceTo(a.position.offset(0.5, 0.5, 0.5)) - botPos.distanceTo(b.position.offset(0.5, 0.5, 0.5)));
+        session._cachedTillBlocks = valid;
+        return valid;
+      }
+    }
+  }
+
   const blacklist = session && session.tillBlacklist ? session.tillBlacklist : null;
   const refFloorY = session && typeof session.tillFarmY === 'number' ? session.tillFarmY : null;
   const startPos = session && session.tillStartPos ? session.tillStartPos : null;
-  return scanFarmLayerBlocksAround(
+  const blocks = scanFarmLayerBlocksAround(
     bot,
     maxRadius,
     session,
@@ -7279,6 +7357,13 @@ function findTillableDirtAround(bot, maxRadius = 112, session = null) {
     startPos,
     canBlockBeTilled
   );
+
+  if (session && botPos) {
+    session._cachedTillBlocks = blocks;
+    session._lastTillScanTime = now;
+    session._lastTillScanPos = botPos.clone();
+  }
+  return blocks;
 }
 
 async function tillDirtBlock(bot, session, targetBlock, accountId) {
@@ -7292,6 +7377,7 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
   if (!bot.heldItem || !HOE_NAMES.includes(bot.heldItem.name.toLowerCase())) {
     try {
       await bot.equip(hoe, 'hand');
+      await waitOnePhysicsTick(bot, 35);
     } catch (e) {}
   }
 
@@ -7318,7 +7404,7 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
         face: face,
         sequence: seq
       });
-      await new Promise((r) => setTimeout(r, 45));
+      await waitOnePhysicsTick(bot, 35);
     } catch (e) {}
   }
 
@@ -7355,7 +7441,7 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  await new Promise((r) => setTimeout(r, 85));
+  await waitOnePhysicsTick(bot, 40);
 
   const updatedBlock = bot.blockAt(targetBlock.position);
   const updatedName = updatedBlock && updatedBlock.name ? updatedBlock.name.toLowerCase() : '';
@@ -7413,6 +7499,9 @@ function startAutoTillLoop(accountId) {
   session.tillTargetDirtPos = null;
   session.tillTargetStuckCount = 0;
   session.tillLastTargetPosStr = null;
+  session._cachedTillBlocks = null;
+  session._lastTillScanTime = 0;
+  session._lastTillScanPos = null;
   session.tillBlacklist = new Set();
   session.tillAttemptCounts = new Map();
   session.tillEmptyScanCount = 0;
@@ -7514,7 +7603,7 @@ function startAutoTillLoop(accountId) {
       } catch (e) {}
     }
 
-    // Etraftaki tüm çapalanabilir toprakları bul (tarla sınırları dahilinde)
+    // Etraftaki tüm çapalanabilir toprakları bul (önbellekli ve yüksek performanslı)
     let tillableBlocks = findTillableDirtAround(bot, 64, session);
 
     // Eğer blacklist yüzünden blok kalmadıysa ve henüz tekrar denenmediyse blacklist'i temizleyip bir kez daha bak
@@ -7522,7 +7611,13 @@ function startAutoTillLoop(accountId) {
       session.tillRetriedBlacklist = true;
       session.tillBlacklist.clear();
       if (session.tillAttemptCounts) session.tillAttemptCounts.clear();
-      tillableBlocks = findTillableDirtAround(bot, 64, session);
+      tillableBlocks = findTillableDirtAround(bot, 64, session, true);
+    }
+
+    // Önbellek boşaldıysa bir kez forceFresh ile doğrula
+    if (tillableBlocks.length === 0 && session._cachedTillBlocks && session._cachedTillBlocks.length > 0) {
+      session._cachedTillBlocks = null;
+      tillableBlocks = findTillableDirtAround(bot, 64, session, true);
     }
 
     // Etrafta hiç toprak kalmadıysa hareketi kes, 2 tarama doğrula ve derhal ekime geç!
@@ -7534,7 +7629,7 @@ function startAutoTillLoop(accountId) {
       } catch (e) {}
       session.tillEmptyScanCount = (session.tillEmptyScanCount || 0) + 1;
       if (session.tillEmptyScanCount < 2) {
-        session.tillTimer = setTimeout(step, 250);
+        session.tillTimer = setTimeout(step, 200);
         return;
       }
       addLog(
@@ -7574,7 +7669,7 @@ function startAutoTillLoop(accountId) {
             startAutoPlantLoop(accountId);
             broadcastState();
           }
-        }, 120);
+        }, 100);
       }
 
       broadcastState();
@@ -7597,8 +7692,9 @@ function startAutoTillLoop(accountId) {
     if (immediateBlocks.length > 0) {
       bot.setControlState('forward', false);
       bot.setControlState('jump', false);
+      bot.setControlState('sprint', false);
 
-      const batch = immediateBlocks.slice(0, 2);
+      const batch = immediateBlocks.slice(0, 3);
       for (const block of batch) {
         if (!session.autoTill || session.tillLoopId !== thisLoopId || session.status !== 'online') break;
         const curB = bot.blockAt(block.position);
@@ -7607,7 +7703,7 @@ function startAutoTillLoop(accountId) {
         }
       }
 
-      session.tillTimer = setTimeout(step, 50);
+      session.tillTimer = setTimeout(step, 40);
       return;
     }
 
@@ -7646,7 +7742,7 @@ function startAutoTillLoop(accountId) {
       }
     }
 
-    let nextDelay = 50;
+    let nextDelay = 45;
 
     if (targetDirt) {
       const navRes = stepFarmWalkTowardsTarget(
@@ -7666,9 +7762,12 @@ function startAutoTillLoop(accountId) {
         session.tillBlacklist.add(bKey);
         session.tillTargetDirtPos = null;
         session.tillCurrentPath = null;
-        nextDelay = 50;
+        if (session._cachedTillBlocks) {
+          session._cachedTillBlocks = session._cachedTillBlocks.filter(b => b.position.toString() !== targetDirt.position.toString());
+        }
+        nextDelay = 45;
       } else {
-        nextDelay = 50;
+        nextDelay = 45;
       }
     } else {
       try {
@@ -7707,6 +7806,9 @@ function stopAutoTillLoop(accountId) {
   session.tillRetriedBlacklist = false;
   session.tillTargetStuckCount = 0;
   session.tillLastTargetPosStr = null;
+  session._cachedTillBlocks = null;
+  session._lastTillScanTime = 0;
+  session._lastTillScanPos = null;
   if (session.tillTimer) {
     clearTimeout(session.tillTimer);
     session.tillTimer = null;
@@ -7762,11 +7864,38 @@ function isPlantableFarmland(bot, block) {
   return aboveName === 'air' || aboveName === 'cave_air' || aboveName === 'void_air';
 }
 
-function findPlantableFarmlandAround(bot, maxRadius = 112, session = null) {
+function findPlantableFarmlandAround(bot, maxRadius = 112, session = null, forceFresh = false) {
+  const now = Date.now();
+  const botPos = bot && bot.entity ? bot.entity.position : null;
+
+  // 2.2 saniyelik önbellek: Bot hareket halindeyken veya aynı noktadan ekmeye devam ederken
+  // her 55ms'de bir tüm dünyayı taramak yerine önbellekteki geçerli tarlaları anında sunar.
+  if (!forceFresh && session && session._cachedPlantBlocks && botPos && session._lastPlantScanPos) {
+    const age = now - (session._lastPlantScanTime || 0);
+    const moved = Math.hypot(botPos.x - session._lastPlantScanPos.x, botPos.z - session._lastPlantScanPos.z);
+    if (age < 2200 && moved < 7.0) {
+      const valid = [];
+      const bl = session.plantBlacklist;
+      for (const b of session._cachedPlantBlocks) {
+        const k = `${b.position.x},${b.position.y},${b.position.z}`;
+        if (bl && (bl.has(k) || bl.has(`(${b.position.x}, ${b.position.y}, ${b.position.z})`))) continue;
+        const curB = bot.blockAt(b.position);
+        if (curB && isPlantableFarmland(bot, curB)) {
+          valid.push(curB);
+        }
+      }
+      if (valid.length > 0) {
+        valid.sort((a, b) => botPos.distanceTo(a.position.offset(0.5, 0.5, 0.5)) - botPos.distanceTo(b.position.offset(0.5, 0.5, 0.5)));
+        session._cachedPlantBlocks = valid;
+        return valid;
+      }
+    }
+  }
+
   const blacklist = session && session.plantBlacklist ? session.plantBlacklist : null;
   const refFloorY = session && typeof session.plantFarmY === 'number' ? session.plantFarmY : null;
   const startPos = session && session.plantStartPos ? session.plantStartPos : null;
-  return scanFarmLayerBlocksAround(
+  const blocks = scanFarmLayerBlocksAround(
     bot,
     maxRadius,
     session,
@@ -7775,6 +7904,13 @@ function findPlantableFarmlandAround(bot, maxRadius = 112, session = null) {
     startPos,
     isPlantableFarmland
   );
+
+  if (session && botPos) {
+    session._cachedPlantBlocks = blocks;
+    session._lastPlantScanTime = now;
+    session._lastPlantScanPos = botPos.clone();
+  }
+  return blocks;
 }
 
 async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
@@ -7786,7 +7922,7 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
   if (!bot.heldItem || !PLANTABLE_SEED_NAMES.includes(bot.heldItem.name.toLowerCase())) {
     try {
       await bot.equip(seed, 'hand');
-      await new Promise((r) => setTimeout(r, 40));
+      await waitOnePhysicsTick(bot, 35);
     } catch (e) {}
   }
 
@@ -7823,7 +7959,7 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  await new Promise((r) => setTimeout(r, 75));
+  await waitOnePhysicsTick(bot, 40);
 
   const posKey = `${targetBlock.position.x},${targetBlock.position.y},${targetBlock.position.z}`;
   const aboveNow = bot.blockAt(targetBlock.position.offset(0, 1, 0));
@@ -7872,6 +8008,9 @@ function startAutoPlantLoop(accountId) {
   session.plantTargetDirtPos = null;
   session.plantTargetStuckCount = 0;
   session.plantLastTargetPosStr = null;
+  session._cachedPlantBlocks = null;
+  session._lastPlantScanTime = 0;
+  session._lastPlantScanPos = null;
   session.plantReturnPath = null;
   session.plantReturnPathIndex = 0;
   session.plantBlacklist = new Set();
@@ -7988,7 +8127,7 @@ function startAutoPlantLoop(accountId) {
       } catch (e) {}
     }
 
-    // Etraftaki tüm ekilebilir boş tarlaları bul (tarla sınırları dahilinde)
+    // Etraftaki tüm ekilebilir boş tarlaları bul (önbellekli ve yüksek performanslı)
     let plantableBlocks = findPlantableFarmlandAround(bot, 64, session);
 
     // Eğer blacklist doluysa ve blok kalmadıysa blacklist'i temizleyip bir kez daha bak
@@ -7996,7 +8135,13 @@ function startAutoPlantLoop(accountId) {
       session.plantRetriedBlacklist = true;
       session.plantBlacklist.clear();
       if (session.plantFailCounts) session.plantFailCounts.clear();
-      plantableBlocks = findPlantableFarmlandAround(bot, 64, session);
+      plantableBlocks = findPlantableFarmlandAround(bot, 64, session, true);
+    }
+
+    // Önbellek boşaldıysa bir kez forceFresh ile doğrula
+    if (plantableBlocks.length === 0 && session._cachedPlantBlocks && session._cachedPlantBlocks.length > 0) {
+      session._cachedPlantBlocks = null;
+      plantableBlocks = findPlantableFarmlandAround(bot, 64, session, true);
     }
 
     // Etrafta hiç boş tarla kalmadıysa 2 tarama doğrula ve temiz şekilde bitir
@@ -8008,7 +8153,7 @@ function startAutoPlantLoop(accountId) {
       } catch (e) {}
       session.plantEmptyScanCount = (session.plantEmptyScanCount || 0) + 1;
       if (session.plantEmptyScanCount < 2) {
-        session.plantTimer = setTimeout(step, 300);
+        session.plantTimer = setTimeout(step, 200);
         return;
       }
       addLog(
@@ -8036,8 +8181,9 @@ function startAutoPlantLoop(accountId) {
     if (immediateBlocks.length > 0) {
       bot.setControlState('forward', false);
       bot.setControlState('jump', false);
+      bot.setControlState('sprint', false);
 
-      const batch = immediateBlocks.slice(0, 3);
+      const batch = immediateBlocks.slice(0, 4);
       for (const block of batch) {
         if (!session.autoPlant || session.plantLoopId !== thisLoopId || session.status !== 'online') break;
         const curB = bot.blockAt(block.position);
@@ -8046,7 +8192,7 @@ function startAutoPlantLoop(accountId) {
         }
       }
 
-      session.plantTimer = setTimeout(step, 55);
+      session.plantTimer = setTimeout(step, 40);
       return;
     }
 
@@ -8085,7 +8231,7 @@ function startAutoPlantLoop(accountId) {
       }
     }
 
-    let nextDelay = 50;
+    let nextDelay = 45;
 
     if (targetFarmland) {
       const navRes = stepFarmWalkTowardsTarget(
@@ -8098,16 +8244,19 @@ function startAutoPlantLoop(accountId) {
         0.9375
       );
       if (navRes === 'reached') {
-        nextDelay = 40;
+        nextDelay = 35;
       } else if (navRes === 'unreachable') {
         const bKey = `${targetFarmland.position.x},${targetFarmland.position.y},${targetFarmland.position.z}`;
         if (!session.plantBlacklist) session.plantBlacklist = new Set();
         session.plantBlacklist.add(bKey);
         session.plantTargetDirtPos = null;
         session.plantCurrentPath = null;
-        nextDelay = 50;
+        if (session._cachedPlantBlocks) {
+          session._cachedPlantBlocks = session._cachedPlantBlocks.filter(b => b.position.toString() !== targetFarmland.position.toString());
+        }
+        nextDelay = 45;
       } else {
-        nextDelay = 50;
+        nextDelay = 45;
       }
     } else {
       try {
@@ -8144,6 +8293,9 @@ function stopAutoPlantLoop(accountId) {
   session.plantRetriedBlacklist = false;
   session.plantTargetStuckCount = 0;
   session.plantLastTargetPosStr = null;
+  session._cachedPlantBlocks = null;
+  session._lastPlantScanTime = 0;
+  session._lastPlantScanPos = null;
   session.plantReturnPath = null;
   session.plantReturnPathIndex = 0;
   session.plantFarmY = null;
