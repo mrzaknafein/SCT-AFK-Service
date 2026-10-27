@@ -528,8 +528,8 @@ function loadConfig() {
           ? { enabled: Boolean(acc.autoFarmerSell.enabled), intervalSec: Math.max(5, Number(acc.autoFarmerSell.intervalSec) || 120) }
           : { enabled: false, intervalSec: 120 },
         autoMinerChestSell: acc.autoMinerChestSell && typeof acc.autoMinerChestSell === 'object'
-          ? { enabled: Boolean(acc.autoMinerChestSell.enabled), intervalSec: Math.max(5, Number(acc.autoMinerChestSell.intervalSec) || 60) }
-          : { enabled: false, intervalSec: 60 },
+          ? { enabled: Boolean(acc.autoMinerChestSell.enabled), intervalSec: Math.max(5, Number(acc.autoMinerChestSell.intervalSec) || 10) }
+          : { enabled: false, intervalSec: 10 },
         clientBrand: 'vanilla',
         customBrand: '',
         clientLocale: 'tr_TR',
@@ -2026,7 +2026,7 @@ function getPublicState() {
         autoFarmerSell: acc.autoFarmerSell || { enabled: false, intervalSec: 120 },
         isFarmerSelling: false,
         lastFarmerSellTime: 0,
-        autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 60 },
+        autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 10 },
         isMinerChestSelling: false,
         lastMinerChestSellTime: 0,
         heldItem: null,
@@ -2120,7 +2120,7 @@ function getPublicState() {
         autoFarmerSell: acc.autoFarmerSell || { enabled: false, intervalSec: 120 },
         isFarmerSelling: Boolean(s.isFarmerSelling),
         lastFarmerSellTime: s.lastFarmerSellTime || 0,
-        autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 60 },
+        autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 10 },
         isMinerChestSelling: Boolean(s.isMinerChestSelling),
         lastMinerChestSellTime: s.lastMinerChestSellTime || 0,
         health: bot && typeof bot.health === 'number' ? Math.round(bot.health) : 20,
@@ -5190,7 +5190,7 @@ async function executeMinerChestCobbleSellRoutine(accountId, isManual = false, e
       await new Promise((r) => setTimeout(r, 250));
 
       const cobbleInInv = countBotInventoryCobblestone(bot, null);
-      if (roundWithdrawn > 0 || cobbleInInv > 0) {
+      if (roundWithdrawn > 0 || cobbleInInv > 0 || round === 0) {
         try {
           bot.chat(sellCmd);
           totalSellCount++;
@@ -5288,7 +5288,7 @@ function startMinerChestSellLoop(accountId) {
   const acc = config.accounts.find((a) => a.id === accountId);
   if (!acc || !acc.autoMinerChestSell || !acc.autoMinerChestSell.enabled) return;
 
-  const intervalSec = Math.max(5, Number(acc.autoMinerChestSell.intervalSec) || 60);
+  const intervalSec = Math.max(5, Number(acc.autoMinerChestSell.intervalSec) || 10);
   const intervalMs = intervalSec * 1000;
 
   session.minerChestSellTimer = setTimeout(async () => {
@@ -13411,12 +13411,12 @@ const server = http.createServer(async (req, res) => {
           break;
         case 'toggleAutoMinerChestSell':
           if (!acc.autoMinerChestSell) {
-            acc.autoMinerChestSell = { enabled: false, intervalSec: 60 };
+            acc.autoMinerChestSell = { enabled: false, intervalSec: 10 };
           }
           acc.autoMinerChestSell.enabled = !acc.autoMinerChestSell.enabled;
           saveConfig();
           if (acc.autoMinerChestSell.enabled) {
-            addLog(accId, 'MINER-SANDIK', `🪨 Otomatik Miner Sandık Cobblestone Satıcı başlatıldı. Kontrol aralığı: ${acc.autoMinerChestSell.intervalSec || 60} saniye.`, chalk.greenBright);
+            addLog(accId, 'MINER-SANDIK', `🪨 Otomatik Miner Sandık Cobblestone Satıcı başlatıldı. Kontrol aralığı: ${acc.autoMinerChestSell.intervalSec || 10} saniye.`, chalk.greenBright);
             startMinerChestSellLoop(accId);
             if (s.bot && s.bot.entity && s.status === 'online') {
               executeMinerChestCobbleSellRoutine(accId, false);
@@ -13429,10 +13429,10 @@ const server = http.createServer(async (req, res) => {
           break;
         case 'updateMinerChestSellConfig':
           if (!acc.autoMinerChestSell) {
-            acc.autoMinerChestSell = { enabled: false, intervalSec: 60 };
+            acc.autoMinerChestSell = { enabled: false, intervalSec: 10 };
           }
           if (typeof body.enabled !== 'undefined') acc.autoMinerChestSell.enabled = Boolean(body.enabled);
-          if (typeof body.intervalSec !== 'undefined') acc.autoMinerChestSell.intervalSec = Math.max(5, Number(body.intervalSec) || 60);
+          if (typeof body.intervalSec !== 'undefined') acc.autoMinerChestSell.intervalSec = Math.max(5, Number(body.intervalSec) || 10);
           saveConfig();
           if (acc.autoMinerChestSell.enabled) {
             startMinerChestSellLoop(accId);

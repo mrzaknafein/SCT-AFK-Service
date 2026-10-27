@@ -2422,8 +2422,8 @@
                   <input type="number" id="ctrlFarmerSellInterval" min="10" max="86400" step="10" value="120" class="form-control" onchange="updateFarmerSellInterval(this.value)" />
                 </div>
                 <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Miner Sandık Satış Aralığı (Sn) <span id="minerChestSellIntervalHelp" style="color: var(--text-muted);">(1 dk)</span></label>
-                  <input type="number" id="ctrlMinerChestSellInterval" min="10" max="86400" step="10" value="60" class="form-control" onchange="updateMinerChestSellInterval(this.value)" />
+                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Miner Sandık Satış Aralığı (Sn) <span id="minerChestSellIntervalHelp" style="color: var(--text-muted);">(10 sn)</span></label>
+                  <input type="number" id="ctrlMinerChestSellInterval" min="5" max="86400" step="5" value="10" class="form-control" onchange="updateMinerChestSellInterval(this.value)" />
                 </div>
               </div>
             </div>
@@ -4744,14 +4744,14 @@
 
       const farmerCfg = b.autoFarmerSell || acc.autoFarmerSell || { enabled: false, intervalSec: 120 };
       updateToggleButton('btnAutoFarmerSell', farmerCfg.enabled, '💰 Oto Çiftçi Satıcı: Açık', '💰 Oto Çiftçi Satıcı: Kapalı');
-      const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 60 };
+      const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 10 };
       updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
       const mIntervalEl = document.getElementById('ctrlMinerChestSellInterval');
       if (mIntervalEl && document.activeElement !== mIntervalEl) {
-        mIntervalEl.value = minerChestCfg.intervalSec || 60;
+        mIntervalEl.value = minerChestCfg.intervalSec || 10;
         const mHelpEl = document.getElementById('minerChestSellIntervalHelp');
         if (mHelpEl) {
-          const ms = minerChestCfg.intervalSec || 60;
+          const ms = minerChestCfg.intervalSec || 10;
           mHelpEl.textContent = ms >= 60 ? `(${Math.floor(ms / 60)} dk ${ms % 60 ? (ms % 60) + ' sn' : ''})` : `(${ms} sn)`;
         }
       }
@@ -6786,7 +6786,7 @@
     }
 
     async function updateMinerChestSellInterval(val) {
-      const s = Math.max(5, parseInt(val, 10) || 60);
+      const s = Math.max(5, parseInt(val, 10) || 10);
       const helpEl = document.getElementById('minerChestSellIntervalHelp');
       if (helpEl) {
         helpEl.textContent = s >= 60 ? `(${Math.floor(s / 60)} dk ${s % 60 ? (s % 60) + ' sn' : ''})` : `(${s} sn)`;
