@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_autobuild_smooth_walk_fix_v50';
+const ENGINE_BUILD_ID = '20261027_desktop_notification_fix_v51';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -622,6 +622,18 @@ function loadConfig() {
     }
   }
 
+  if (!parsed.desktopNotifications) {
+    parsed.desktopNotifications = {
+      enabled: false,
+      onMention: false,
+      onDisconnect: false,
+      onDeath: false,
+      onCaptcha: false,
+      onNotify: false
+    };
+    updated = true;
+  }
+
   if (typeof parsed.autoCaptcha === 'undefined') {
     parsed.autoCaptcha = { enabled: true };
     updated = true;
@@ -940,13 +952,63 @@ function triggerSoundAlert(alertType, accountId, message) {
   });
 }
 
-function sendDesktopNotification(title, body, accountId = null) {
+function sendDesktopNotification(typeOrTitle, titleOrBody, bodyOrAccountId = null, maybeAccountId = null) {
+  let alertType = 'notify';
+  let title = 'SCT AFK Bildirimi';
+  let body = '';
+  let accountId = null;
+
+  if (maybeAccountId !== null) {
+    alertType = typeOrTitle;
+    title = titleOrBody;
+    body = bodyOrAccountId;
+    accountId = maybeAccountId;
+  } else if (bodyOrAccountId !== null && typeof bodyOrAccountId === 'string') {
+    title = typeOrTitle;
+    body = titleOrBody;
+    accountId = bodyOrAccountId;
+  } else {
+    title = typeOrTitle;
+    body = titleOrBody;
+    accountId = bodyOrAccountId;
+  }
+
+  // Başlıktan tür çıkarımı yap
+  const tLower = (String(title) + ' ' + String(alertType)).toLowerCase();
+  if (tLower.includes('mention') || tLower.includes('adınız geçti') || tLower.includes('özel mesaj') || tLower.includes('whisper')) {
+    alertType = 'mention';
+  } else if (tLower.includes('atıldı') || tLower.includes('kop') || tLower.includes('disconnect') || tLower.includes('kick')) {
+    alertType = 'disconnect';
+  } else if (tLower.includes('öldü') || tLower.includes('ölüm') || tLower.includes('death')) {
+    alertType = 'death';
+  } else if (tLower.includes('captcha')) {
+    alertType = 'captcha';
+  }
+
+  // KESİN VE SIKI KONTROL (KULLANICI KAPATTIYSA KESİNLİKLE MASAÜSTÜ BİLDİRİMİ ATMA):
+  const notifCfg = config.desktopNotifications || {};
+  const soundCfg = config.soundAlerts || {};
+
+  // 1. Masaüstü bildirimleri ana anahtarı kapalıysa derhal çık
+  if (notifCfg.enabled === false) return;
+
+  // 2. İlgili kategori kapalıysa derhal çık (Ses veya Masaüstü bildirim ayarlarından herhangi biri kapalıysa bildirim atılmaz)
+  if (alertType === 'mention' && (notifCfg.onMention === false || soundCfg.onMention === false)) return;
+  if (alertType === 'disconnect' && (notifCfg.onDisconnect === false || soundCfg.onDisconnect === false)) return;
+  if (alertType === 'death' && (notifCfg.onDeath === false || soundCfg.onDamage === false)) return;
+  if (alertType === 'captcha' && (notifCfg.onCaptcha === false || soundCfg.onCaptcha === false)) return;
+  if (alertType === 'notify' && (notifCfg.onNotify === false || soundCfg.onNotify === false)) return;
+
+  // 3. Genel ses/uyarı anahtarı kapalıysa ve masaüstü bildirimleri açıkça true yapılmadıysa gönderme
+  if (soundCfg.enabled === false && notifCfg.enabled !== true) return;
+
   if (!body) return;
   const cleanTitle = (title || 'SCT AFK Bildirimi').replace(/§[0-9a-fk-or]/gi, '');
   const cleanBody = String(body).replace(/§[0-9a-fk-or]/gi, '');
   const acc = accountId ? config.accounts.find((a) => a.id === accountId) : null;
 
   broadcastSSE('desktop-notification', {
+    type: alertType,
     title: cleanTitle,
     body: cleanBody,
     accountId: accountId,
@@ -13633,29 +13695,56 @@ async function startBot(accountId) {
     const uLower = acc.username.toLowerCase();
 
     // 9. GELEN ÖZEL MESAJLARI (WHISPER) VE AD GEÇMESİNİ (MENTION) ALGILA VE BİLDİR
-    const isWhisper =
-      (lower.includes('fısıldıyor') ||
-        lower.includes('whispers') ||
-        lower.includes('-> size') ||
-        lower.includes('-> bana') ||
-        lower.includes('-> siz') ||
-        lower.includes('-> me')) &&
-      !lower.includes('bana fısıldıyor') &&
-      !lower.includes('size fısıldıyor') &&
-      !lower.startsWith('fısıldanan:') &&
-      !lower.startsWith('[bana ->');
+    const isSystemOrCommandMsg =
+      lower.includes('unknown or incomplete command') ||
+      lower.includes('see below for error') ||
+      lower.includes('<--[here]') ||
+      lower.includes('incorrect argument') ||
+      lower.includes('komut bulunamadı') ||
+      lower.includes('bilinmeyen komut') ||
+      lower.includes('yetkiniz yok') ||
+      lower.includes('permission') ||
+      lower.includes('kullanım:') ||
+      lower.includes('usage:') ||
+      lower.includes('/login') ||
+      lower.includes('login ') ||
+      lower.includes('/register') ||
+      lower.includes('register ') ||
+      lower.includes('giriş yap') ||
+      lower.includes('şifre') ||
+      lower.includes('kayıt ol') ||
+      lower.includes('oyuna katıldı') ||
+      lower.includes('oyundan ayrıldı') ||
+      lower.includes('joined the game') ||
+      lower.includes('left the game');
 
-    if (isWhisper) {
-      triggerSoundAlert('mention', accountId, `[ÖZEL MESAJ] ${trimmed}`);
-      sendDesktopNotification('Gelen Özel Mesaj', `[${acc.username}] ${trimmed}`, accountId);
-    } else if (
-      lower.includes(uLower) &&
-      !lower.startsWith(`<${uLower}>`) &&
-      !lower.startsWith(`${uLower}:`) &&
-      !lower.startsWith(`[${uLower}]`)
-    ) {
-      triggerSoundAlert('mention', accountId, trimmed);
-      sendDesktopNotification('Adınız Geçti (Mention)', `[${acc.username}] ${trimmed}`, accountId);
+    if (!isSystemOrCommandMsg) {
+      const isWhisper =
+        (lower.includes('fısıldıyor') ||
+          lower.includes('whispers') ||
+          lower.includes('-> size') ||
+          lower.includes('-> bana') ||
+          lower.includes('-> siz') ||
+          lower.includes('-> me')) &&
+        !lower.includes('bana fısıldıyor') &&
+        !lower.includes('size fısıldıyor') &&
+        !lower.startsWith('fısıldanan:') &&
+        !lower.startsWith('[bana ->');
+
+      const usernameRegex = new RegExp(`(?<=^|[^a-zA-Z0-9_])${uLower}(?=[^a-zA-Z0-9_]|$)`, 'i');
+      const isMention =
+        usernameRegex.test(lower) &&
+        !lower.startsWith(`<${uLower}>`) &&
+        !lower.startsWith(`${uLower}:`) &&
+        !lower.startsWith(`[${uLower}]`);
+
+      if (isWhisper) {
+        triggerSoundAlert('mention', accountId, `[ÖZEL MESAJ] ${trimmed}`);
+        sendDesktopNotification('mention', 'Gelen Özel Mesaj', `[${acc.username}] ${trimmed}`, accountId);
+      } else if (isMention) {
+        triggerSoundAlert('mention', accountId, trimmed);
+        sendDesktopNotification('mention', 'Adınız Geçti (Mention)', `[${acc.username}] ${trimmed}`, accountId);
+      }
     }
   });
 
@@ -15565,6 +15654,7 @@ const server = http.createServer(async (req, res) => {
     if (body.reconnect) config.reconnect = { ...config.reconnect, ...body.reconnect };
     if (body.discord) config.discord = { ...(config.discord || {}), ...body.discord };
     if (body.soundAlerts) config.soundAlerts = { ...(config.soundAlerts || {}), ...body.soundAlerts };
+    if (body.desktopNotifications) config.desktopNotifications = { ...(config.desktopNotifications || {}), ...body.desktopNotifications };
     if (body.autoCaptcha) config.autoCaptcha = { ...(config.autoCaptcha || {}), ...body.autoCaptcha };
     if (body.discordRpc) {
       const oldClientId = config.discordRpc?.clientId;
