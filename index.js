@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_dev_merge_spawner_and_farm_perf_v49';
+const ENGINE_BUILD_ID = '20261027_autobuild_smooth_walk_fix_v50';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -6904,6 +6904,11 @@ function isSafeToStep(bot, yaw, session = null, options = {}) {
 
     if (aheadX === Math.floor(pos.x) && aheadZ === Math.floor(pos.z)) continue;
 
+    // Hedef düğüm (targetNode) zaten A* tarafından doğrulanmış güvenli bir zemin ise kontrol doğrudan geçer
+    if (options && options.targetNode && aheadX === options.targetNode.x && aheadZ === options.targetNode.z) {
+      continue;
+    }
+
     const floorBlock = bot.blockAt(new Vec3(aheadX, curFloorY, aheadZ));
     const footBlock = bot.blockAt(new Vec3(aheadX, curFootY, aheadZ));
 
@@ -10336,7 +10341,7 @@ function isSamePlacedBlock(worldBlockName, targetBlockName) {
   const t = normalizeBlockName(targetBlockName);
   if (w === t) return true;
   if (t === 'redstone_wire' && w === 'redstone') return true;
-  const dirtVariants = new Set(['dirt', 'grass_block', 'dirt_path', 'grass_path', 'farmland', 'podzol', 'coarse_dirt', 'mycelium']);
+  const dirtVariants = new Set(['dirt', 'grass_block', 'dirt_path', 'grass_path', 'farmland', 'podzol', 'coarse_dirt', 'mycelium', 'rooted_dirt', 'mud', 'packed_mud']);
   if (dirtVariants.has(t) && dirtVariants.has(w)) return true;
   return false;
 }
@@ -10706,7 +10711,11 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
       (c) => c.pos.x === startStand.x && c.pos.z === startStand.z && c.pos.y === startStand.y
     );
     if (alreadyAtCand) {
-      return { spot: startStand, path: [] };
+      // SADECE mevcut duruş noktasından referans bloğu tıklanabiliyorsa ve occluded değilse mevcut noktada kal!
+      const testRef = findPlaceReferenceBlock(bot, targetPos, session?.builder);
+      if (testRef && (typeof testRef.dot !== 'number' || testRef.dot >= -0.15)) {
+        return { spot: startStand, path: [] };
+      }
     }
   }
 
@@ -10745,9 +10754,12 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
 
   const allowStepDown = Boolean(options && options.allowStepDown);
   const startTime = Date.now();
-  const startY = Math.round(bot.entity.position.y);
-  const minAllowedY = allowStepDown ? startY - 1.25 : startY - 0.20;
+  const startPos = bot.entity.position.clone();
+  const startY = Math.round(startPos.y);
+  // Katman düşme koruması: Doğal fizik jitter ve eğilme (sneak) için 0.55 tolerans (1 tam blok düşüşü kesin engeller)
+  const minAllowedY = allowStepDown ? startY - 1.25 : startY - 0.55;
   const targetCenter = stopNearTargetBlock ? stopNearTargetBlock.offset(0.5, 0.5, 0.5) : null;
+  let anyNodeReached = false;
 
   try {
     for (const node of path) {
@@ -10763,14 +10775,18 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
 
       const nodeCenter = new Vec3(node.x + 0.5, node.y, node.z + 0.5);
 
-      if (targetCenter) {
+      if (targetCenter && stopNearTargetBlock) {
         const curPos = bot.entity.position;
         const curEye = curPos.offset(0, 1.62, 0);
         if (
-          curEye.distanceTo(targetCenter) <= 3.15 &&
+          curEye.distanceTo(targetCenter) <= 3.20 &&
           !doesBotIntersectBlock(curPos, stopNearTargetBlock, 0.38)
         ) {
-          break;
+          const testRef = findPlaceReferenceBlock(bot, stopNearTargetBlock, session?.builder);
+          if (testRef && (typeof testRef.dot !== 'number' || testRef.dot >= -0.15)) {
+            anyNodeReached = true;
+            break;
+          }
         }
       }
 
@@ -10794,25 +10810,41 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
           break;
         }
 
-        const curEyeNow = cur.offset(0, 1.62, 0);
-        if (
-          targetCenter &&
-          curEyeNow.distanceTo(targetCenter) <= 3.15 &&
-          !doesBotIntersectBlock(cur, stopNearTargetBlock, 0.38)
-        ) {
-          break;
+        if (targetCenter && stopNearTargetBlock) {
+          const curEyeNow = cur.offset(0, 1.62, 0);
+          if (
+            curEyeNow.distanceTo(targetCenter) <= 3.20 &&
+            !doesBotIntersectBlock(cur, stopNearTargetBlock, 0.38)
+          ) {
+            const testRef = findPlaceReferenceBlock(bot, stopNearTargetBlock, session?.builder);
+            if (testRef && (typeof testRef.dot !== 'number' || testRef.dot >= -0.15)) {
+              anyNodeReached = true;
+              break;
+            }
+          }
         }
 
         const hDist = Math.hypot(nodeCenter.x - cur.x, nodeCenter.z - cur.z);
-        if (hDist <= 0.24 && Math.abs(nodeCenter.y - cur.y) <= 0.6) break;
+        const onSameBlock = Math.floor(cur.x) === node.x && Math.floor(cur.z) === node.z;
+        if ((hDist <= 0.28 || (onSameBlock && hDist <= 0.42)) && Math.abs(nodeCenter.y - cur.y) <= 0.7) {
+          anyNodeReached = true;
+          break;
+        }
 
         const dx = nodeCenter.x - cur.x;
         const dz = nodeCenter.z - cur.z;
         const yaw = Math.atan2(-dx, -dz);
 
         const isSteppingDown = allowStepDown && node.y < Math.round(cur.y);
-        const checkDist = Math.max(0.35, Math.min(0.85, hDist + 0.15));
-        if (!isSafeToStep(bot, yaw, session, { allowStepDown: isSteppingDown, maxDistance: checkDist })) {
+        // İleri adım kontrolü: Yalnızca hedef düğüme (node) doğru olan mesafeyi kontrol et,
+        // asla hedef düğümün ötesindeki (daha inşa edilmemiş) boşluğa taşma!
+        const maxStepCheckDist = Math.min(0.42, Math.max(0.18, hDist - 0.04));
+        const safe = onSameBlock || isSafeToStep(bot, yaw, session, {
+          allowStepDown: isSteppingDown,
+          maxDistance: maxStepCheckDist,
+          targetNode: node
+        });
+        if (!safe) {
           bot.setControlState('forward', false);
           bot.setControlState('sneak', true);
           break;
@@ -10850,7 +10882,8 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
         await new Promise((r) => setTimeout(r, 45));
       }
     }
-    return true;
+    const distFromStart = bot.entity ? bot.entity.position.distanceTo(startPos) : 0;
+    return anyNodeReached || distFromStart >= 0.22;
   } finally {
     if (bot) {
       bot.setControlState('forward', false);
@@ -10872,17 +10905,20 @@ async function builderMoveTowardsBlock(bot, session, targetWorldPos, maxDuration
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
   const targetCenter = targetWorldPos.offset(0.5, 0.5, 0.5);
 
-  // Eğer zaten güvenli uzanma mesafesindeyse (<= 3.80m) ve hedef bloğun içinde değilse hareket etmeye gerek yok
-  const currentEye = botPos.offset(0, 1.62, 0);
-  if (
-    currentEye.distanceTo(targetCenter) <= 3.80 &&
-    !doesBotIntersectBlock(botPos, targetWorldPos, 0.38)
-  ) {
-    return true;
-  }
-
   let path = precomputedPath;
   if (!path || path.length === 0) {
+    // Sadece önceden hesaplanmış rota yoksa ve bot mevcut duruşundan bloğu yerleştirebiliyorsa erken çık
+    const currentEye = botPos.offset(0, 1.62, 0);
+    if (
+      currentEye.distanceTo(targetCenter) <= 3.80 &&
+      !doesBotIntersectBlock(botPos, targetWorldPos, 0.38)
+    ) {
+      const ref = findPlaceReferenceBlock(bot, targetWorldPos, session?.builder);
+      if (ref && (typeof ref.dot !== 'number' || ref.dot >= -0.15)) {
+        return true;
+      }
+    }
+
     const standResult = findBuilderStandingSpot(bot, targetWorldPos, session);
     if (!standResult) return false;
     if (standResult.spot && Array.isArray(standResult.path)) {
@@ -12330,7 +12366,13 @@ async function runAutoBuilderStep(accountId) {
         // En yakın destekli bloklardan ilk 6 adaya yürüme rotası ara
         for (let i = 0; i < Math.min(supportedList.length, 6); i++) {
           const candTarget = supportedList[i];
-          const standResult = findBuilderStandingSpot(bot, candTarget.targetPos, session);
+          const posBefore = bot.entity.position.clone();
+
+          // Önce mevcut duruş noktası hariç alternatif nokta ara, yoksa en uygun noktayı al
+          const standResult =
+            findBuilderStandingSpot(bot, candTarget.targetPos, session, { excludeCurrentSpot: true }) ||
+            findBuilderStandingSpot(bot, candTarget.targetPos, session);
+
           if (standResult) {
             builder.statusMessage = `[HAREKET] Hedef bloğa yaklaşılıyor: (${candTarget.targetPos.x}, ${candTarget.targetPos.y}, ${candTarget.targetPos.z}) [${candTarget.blk.name}]`;
             broadcastState();
@@ -12340,14 +12382,18 @@ async function runAutoBuilderStep(accountId) {
                 : standResult.spot
                   ? [standResult.spot]
                   : null;
+
             const moveOk = await builderMoveTowardsBlock(bot, session, candTarget.targetPos, 2400, prePath);
-            if (moveOk) {
+            const distMoved = bot.entity.position.distanceTo(posBefore);
+
+            if (moveOk && distMoved >= 0.22) {
               moved = true;
               scheduleNextBuilderStep(accountId, 140);
               return;
             }
           }
-          // Duruş noktası veya yol bulunamadıysa bu bloğun sayacını artır (aynı bloğa asla kilitlenmesin!)
+
+          // Duruş noktası veya yol bulunamadıysa ya da bot hareket edemediyse bu bloğun sayacını artır (asla tek bloğa kilitlenmesin!)
           const prevFails = builder.failedWalkAttemptsMap.get(candTarget.posKey) || 0;
           builder.failedWalkAttemptsMap.set(candTarget.posKey, prevFails + 1);
 
