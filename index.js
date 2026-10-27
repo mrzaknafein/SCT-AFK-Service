@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_admin_telemetry_relay_v43';
+const ENGINE_BUILD_ID = '20261027_builder_perf_turbo_v44';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5279,8 +5279,13 @@ function isSafeToStep(bot, yaw, session = null, options = {}) {
     ? options.allowStepDown
     : !isBuilderBuilding;
 
-  // Öne doğru mesafeleri kontrol et (0.38m, 0.65m ve 0.90m)
-  for (const d of [0.38, 0.65, 0.90]) {
+  const maxCheckDist = options && typeof options.maxDistance === 'number' ? options.maxDistance : 0.90;
+  const allDists = [0.38, 0.65, 0.90];
+  const checkDistances = allDists.filter((d) => d <= maxCheckDist);
+  if (checkDistances.length === 0) checkDistances.push(Math.min(0.38, maxCheckDist));
+
+  // Öne doğru mesafeleri kontrol et
+  for (const d of checkDistances) {
     const aheadX = Math.floor(pos.x + sin * d);
     const aheadZ = Math.floor(pos.z + cos * d);
 
@@ -7761,7 +7766,8 @@ function createDefaultBuilderState(accountId = null) {
     skipMissingBlocks: false,
     isStepBusy: false,
     recentEmptyChests: new Map(),
-    failedAttemptsMap: new Map()
+    failedAttemptsMap: new Map(),
+    _scannedWorldLayerY: null
   };
 }
 
@@ -7777,11 +7783,7 @@ function getPublicBuilderSummary(session, accountId) {
   }
 
   let placedMaterials = b._cachedPlacedMaterials;
-  if (
-    !placedMaterials ||
-    b._cachedPlacedCount !== b.placedCount ||
-    b._cachedSchemName !== b.schematicName
-  ) {
+  if (!placedMaterials || b._cachedSchemName !== b.schematicName) {
     placedMaterials = {};
     if (Array.isArray(b.blocks)) {
       for (let i = 0; i < b.blocks.length; i++) {
@@ -8945,8 +8947,9 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
     }
   }
 
-  // Adaylar arasından botun mevcut konumundan (aşağı inmeden!) A* ile gidilebilen ilk adayı seç
-  for (const cand of candidates) {
+  // Adaylar arasından en yakın ilk 4 adayı A* ile dene (CPU donmasını ve lagı engellemek için)
+  const topCandidates = candidates.slice(0, 4);
+  for (const cand of topCandidates) {
     if (
       cand.pos.x === startStand.x &&
       cand.pos.z === startStand.z &&
@@ -8955,7 +8958,7 @@ function findBuilderStandingSpot(bot, targetPos, session = null, options = {}) {
       // Bot aynı blokta ama bloğun uzak kenarında duruyorsa doğrudan blok merkezine yürüsün
       return { spot: cand.pos, path: [cand.pos] };
     }
-    const path = findBuilderPath(bot, startStand, cand.pos, session, 650, {
+    const path = findBuilderPath(bot, startStand, cand.pos, session, 400, {
       allowStepDown: false,
       minY: minAllowedY
     });
@@ -9016,6 +9019,7 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
       }
 
       const nodeStartTime = Date.now();
+      let lastLookTime = 0;
       while (Date.now() - nodeStartTime < 1300) {
         if (session && session.builder && session.builder.status !== 'building') break;
         if (Date.now() - startTime > maxDurationMs) break;
@@ -9044,13 +9048,27 @@ async function walkBotAlongPath(bot, session, path, maxDurationMs = 2400, stopNe
         const yaw = Math.atan2(-dx, -dz);
 
         const isSteppingDown = allowStepDown && node.y < Math.round(cur.y);
-        if (!isSafeToStep(bot, yaw, session, { allowStepDown: isSteppingDown })) {
+        const checkDist = Math.max(0.35, Math.min(0.85, hDist + 0.15));
+        if (!isSafeToStep(bot, yaw, session, { allowStepDown: isSteppingDown, maxDistance: checkDist })) {
           bot.setControlState('forward', false);
           bot.setControlState('sneak', true);
           break;
         }
 
-        await bot.look(yaw, 0, true);
+        // Akıcı yürüyüş: Yalnızca açı farkı belirginse (> 0.08 rad) veya 300ms'den uzun süredir bakılmadıysa bak
+        const curYaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : yaw;
+        let dYaw = (yaw - curYaw) % (Math.PI * 2);
+        if (dYaw < -Math.PI) dYaw += Math.PI * 2;
+        else if (dYaw > Math.PI) dYaw -= Math.PI * 2;
+
+        const now = Date.now();
+        if (Math.abs(dYaw) > 0.08 || now - lastLookTime > 300) {
+          try {
+            await bot.look(yaw, 0, true);
+            lastLookTime = now;
+          } catch (e) {}
+        }
+
         bot.setControlState('forward', true);
         bot.setControlState('sprint', false);
 
@@ -9990,62 +10008,53 @@ async function runAutoBuilderStep(accountId) {
     const layerBlocks = unplaced.filter((b) => b.y === activeY);
 
     // 3. Aktif katmandaki bloklardan dünyada zaten var olanları hızlıca placed = true yap
-    for (const b of layerBlocks) {
-      const worldPos = new Vec3(
-        builder.origin.x + b.x,
-        builder.origin.y + b.y,
-        builder.origin.z + b.z
-      );
-      const existing = bot.blockAt(worldPos);
-      if (existing && isSamePlacedBlock(existing.name, b.name)) {
-        b.placed = true;
-        builder.placedCount++;
-        const posKey = `${worldPos.x},${worldPos.y},${worldPos.z}`;
-        builder.placedMap.set(posKey, b.name);
-        builder.failedAttemptsMap.delete(posKey);
+    // Performans koruması: Katman ilk kez açıldığında dünyayı tek sefer tara, her 250ms'de binlerce bloğu tekrar tekrar tarama!
+    if (builder._scannedWorldLayerY !== activeY) {
+      builder._scannedWorldLayerY = activeY;
+      for (const b of layerBlocks) {
+        const worldPos = new Vec3(
+          builder.origin.x + b.x,
+          builder.origin.y + b.y,
+          builder.origin.z + b.z
+        );
+        const existing = bot.blockAt(worldPos);
+        if (existing && isSamePlacedBlock(existing.name, b.name)) {
+          b.placed = true;
+          builder.placedCount++;
+          const posKey = `${worldPos.x},${worldPos.y},${worldPos.z}`;
+          builder.placedMap.set(posKey, b.name);
+          builder.failedAttemptsMap.delete(posKey);
+          if (builder._cachedPlacedMaterials) {
+            builder._cachedPlacedMaterials[b.name] = (builder._cachedPlacedMaterials[b.name] || 0) + 1;
+            builder._cachedPlacedCount = builder.placedCount;
+          }
+        }
       }
     }
 
     // Dünya kontrolünden sonra kalanlar
     const remainingInLayer = layerBlocks.filter((b) => !b.placed);
     if (remainingInLayer.length === 0) {
+      builder._scannedWorldLayerY = null;
       // Katmandaki tüm bloklar bitti, sonraki katmana geç
       scheduleNextBuilderStep(accountId, 80);
       return;
     }
 
-    // 4. Bu katmanda destek/komşu bloğu olan adayları tespit et
-    const eyePos = bot.entity.position.offset(0, 1.62, 0);
-    const supportedList = [];
+    const curBotPos = bot.entity.position;
+    const curEye = curBotPos.offset(0, 1.62, 0);
     const now = Date.now();
 
-    for (const b of remainingInLayer) {
-      const targetPos = new Vec3(
-        builder.origin.x + b.x,
-        builder.origin.y + b.y,
-        builder.origin.z + b.z
-      );
-      const refInfo = findPlaceReferenceBlock(bot, targetPos, builder);
-      if (refInfo) {
-        const face = refInfo.faceVec;
-        const faceCenter = refInfo.refBlock.position.offset(
-          0.5 + face.x * 0.5,
-          0.5 + face.y * 0.5,
-          0.5 + face.z * 0.5
-        );
-        const dist = eyePos.distanceTo(faceCenter);
-        const posKey = `${targetPos.x},${targetPos.y},${targetPos.z}`;
-        const failInfo = builder.failedAttemptsMap.get(posKey);
-        const recentlyFailed = Boolean(failInfo && (now - failInfo.lastFailTime < 2500));
-        supportedList.push({ blk: b, targetPos, clickPos: faceCenter, refInfo, dist, recentlyFailed });
-      }
-    }
+    // 4. ADAYLAR: Yalnızca botun erişim sınırındaki (|dx| <= 4.2, |dz| <= 4.2) blokları filtrele!
+    // Bu sayede katmandaki yüzlerce/binlerce blok yerine yalnızca botun ulaşabileceği 15-25 blok incelenir (CPU %98 tasarruf)
+    const nearReachBlocks = remainingInLayer.filter((b) => {
+      const wx = builder.origin.x + b.x;
+      const wz = builder.origin.z + b.z;
+      return Math.abs(wx - curBotPos.x) <= 4.2 && Math.abs(wz - curBotPos.z) <= 4.2;
+    });
 
-    // 5. Botun şu anki duruşundan uzanabileceği destekli blok adaylarını tespit et
-    const curEye = bot.entity.position.offset(0, 1.62, 0);
     const candidates = [];
-
-    for (const b of remainingInLayer) {
+    for (const b of nearReachBlocks) {
       if (b.placed) continue;
       const targetPos = new Vec3(
         builder.origin.x + b.x,
@@ -10060,7 +10069,7 @@ async function runAutoBuilderStep(accountId) {
         const clickPos = refPos.plus(deltaPos);
         const dist = curEye.distanceTo(clickPos);
         if (dist >= 0.45 && dist <= 3.90) {
-          const isBotInside = doesBotIntersectBlock(bot.entity.position, targetPos, 0.36);
+          const isBotInside = doesBotIntersectBlock(curBotPos, targetPos, 0.36);
           const posKey = `${targetPos.x},${targetPos.y},${targetPos.z}`;
           const failInfo = builder.failedAttemptsMap.get(posKey);
           const recentlyFailed = Boolean(failInfo && (now - failInfo.lastFailTime < 2500));
@@ -10303,6 +10312,10 @@ async function runAutoBuilderStep(accountId) {
           placedSuccess = true;
           builder.placedMap.set(posKey, blk.name);
           builder.failedAttemptsMap.delete(posKey);
+          if (builder._cachedPlacedMaterials) {
+            builder._cachedPlacedMaterials[blk.name] = (builder._cachedPlacedMaterials[blk.name] || 0) + 1;
+            builder._cachedPlacedCount = builder.placedCount;
+          }
           if (session.stats) {
             session.stats.blocksPlaced = (session.stats.blocksPlaced || 0) + 1;
           }
@@ -10315,6 +10328,10 @@ async function runAutoBuilderStep(accountId) {
           placedSuccess = true;
           builder.placedMap.set(posKey, blk.name);
           builder.failedAttemptsMap.delete(posKey);
+          if (builder._cachedPlacedMaterials) {
+            builder._cachedPlacedMaterials[blk.name] = (builder._cachedPlacedMaterials[blk.name] || 0) + 1;
+            builder._cachedPlacedCount = builder.placedCount;
+          }
         }
       } finally {
         if (sneakTurnedOnForPlace && !session.sneakLock && !isBotOverhangingOrNearEdge(bot, session)) {
@@ -10380,7 +10397,41 @@ async function runAutoBuilderStep(accountId) {
       }
     }
 
-    // 6. Uzanma mesafesinde supported blok yok ama katmanda başka destekli bloklar var:
+    // 6. Uzanma mesafesinde blok kalmadıysa, en yakın destekli bloklara doğru yürü:
+    const supportedList = [];
+    const nearToFarUnplaced = remainingInLayer
+      .map((b) => {
+        const wx = builder.origin.x + b.x;
+        const wz = builder.origin.z + b.z;
+        const d2 = (wx - curBotPos.x) ** 2 + (wz - curBotPos.z) ** 2;
+        return { blk: b, d2 };
+      })
+      .sort((a, b) => a.d2 - b.d2)
+      .slice(0, 15);
+
+    for (const item of nearToFarUnplaced) {
+      const b = item.blk;
+      const targetPos = new Vec3(
+        builder.origin.x + b.x,
+        builder.origin.y + b.y,
+        builder.origin.z + b.z
+      );
+      const refInfo = findPlaceReferenceBlock(bot, targetPos, builder);
+      if (refInfo) {
+        const face = refInfo.faceVec;
+        const faceCenter = refInfo.refBlock.position.offset(
+          0.5 + face.x * 0.5,
+          0.5 + face.y * 0.5,
+          0.5 + face.z * 0.5
+        );
+        const dist = curEye.distanceTo(faceCenter);
+        const posKey = `${targetPos.x},${targetPos.y},${targetPos.z}`;
+        const failInfo = builder.failedAttemptsMap.get(posKey);
+        const recentlyFailed = Boolean(failInfo && (now - failInfo.lastFailTime < 2500));
+        supportedList.push({ blk: b, targetPos, clickPos: faceCenter, refInfo, dist, recentlyFailed });
+      }
+    }
+
     if (supportedList.length > 0) {
       supportedList.sort((a, b) => {
         if (a.recentlyFailed !== b.recentlyFailed) return a.recentlyFailed ? 1 : -1;
@@ -10409,8 +10460,8 @@ async function runAutoBuilderStep(accountId) {
 
       let moved = false;
       if (builder.autoMove) {
-        // En yakın destekli bloklardan başlayarak AYNI KATMANDA rotası olan İLK bloğu bul ve ona yürü
-        for (let i = 0; i < Math.min(supportedList.length, 40); i++) {
+        // En yakın destekli bloklardan ilk 3 adaya yürüme rotası ara (CPU ve A* donmalarını önler)
+        for (let i = 0; i < Math.min(supportedList.length, 3); i++) {
           const candTarget = supportedList[i];
           const standResult = findBuilderStandingSpot(bot, candTarget.targetPos, session);
           if (standResult) {
@@ -13006,6 +13057,7 @@ const server = http.createServer(async (req, res) => {
             }
             if (s.builder.recentEmptyChests) s.builder.recentEmptyChests.clear();
             if (s.builder.lastChestFailByBlock) s.builder.lastChestFailByBlock.clear();
+            s.builder._scannedWorldLayerY = null;
             s.builder.status = 'building';
             s.builder.statusMessage = `[İNŞA] İnşa başlatıldı. Hedef başlangıç: X:${s.builder.origin.x} Y:${s.builder.origin.y} Z:${s.builder.origin.z}`;
             addLog(
