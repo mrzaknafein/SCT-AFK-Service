@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_spawner_snake_order_v52';
+const ENGINE_BUILD_ID = '20261027_spawner_instant_stop_v53';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -2601,7 +2601,24 @@ function clearSessionTimers(session) {
     clearTimeout(session.spawnerRoutineTimer);
     session.spawnerRoutineTimer = null;
   }
+  session.abortSpawnerRoutine = true;
   session.isSpawnerRoutineRunning = false;
+  session.isDepositing = false;
+  if (session.bot) {
+    try {
+      if (typeof session.bot.setControlState === 'function') {
+        session.bot.setControlState('forward', false);
+        session.bot.setControlState('back', false);
+        session.bot.setControlState('left', false);
+        session.bot.setControlState('right', false);
+        session.bot.setControlState('sprint', false);
+        session.bot.setControlState('jump', false);
+      }
+      if (session.bot.currentWindow) {
+        session.bot.closeWindow(session.bot.currentWindow);
+      }
+    } catch (_) {}
+  }
   if (session.minerChestSellTimer) {
     clearTimeout(session.minerChestSellTimer);
     session.minerChestSellTimer = null;
@@ -5696,6 +5713,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
   }
 
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
+  if (session && (session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning)) return false;
   const spotCandidates = [];
 
   for (let dx = -2; dx <= 2; dx++) {
@@ -5745,7 +5763,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
           bot.setControlState('jump', false);
         }
         while (idx < path.length && Date.now() - startTime < maxTimeoutMs) {
-          if (!session || !session.bot || session.status !== 'online') break;
+          if (!session || !session.bot || session.status !== 'online' || session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) break;
           const cPos = bot.entity.position;
           const node = path[idx];
           const nodeCenter = node.offset(0.5, 0, 0.5);
@@ -5788,6 +5806,7 @@ async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
   if (!bot || !spawnerPos) return null;
 
   const reached = await navigateNearSpawnerOrChest(bot, session, spawnerPos, 2.25);
+  if (!session || session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) return null;
   if (!reached) {
     addLog(accountId, 'SPAWNER', `⚠️ Spawner'a (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) ulaşılamadı, atlanıyor.`, chalk.yellow);
     return null;
@@ -6368,6 +6387,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
   const prevPitch = session.basePitch !== undefined && session.basePitch !== null ? session.basePitch : bot.entity.pitch;
   const hadSneakLock = Boolean(session.sneakLock);
 
+  session.abortSpawnerRoutine = false;
   session.isSpawnerRoutineRunning = true;
   session.isDepositing = true;
   session.isMiningBlock = false;
@@ -6400,7 +6420,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
     // (Elinde < 9 demir külçesi kalırsa sandığa KOYMAZ, üstünde tutar; 9'a tamamlanınca blok yapıp koyar!)
     // =========================================================================
     for (let i = 0; i < spawners.length; i++) {
-      if (!session.bot || session.status !== 'online') break;
+      if (!session.bot || session.status !== 'online' || session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) break;
       const spPos = spawners[i];
 
       const depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
@@ -6416,6 +6436,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
 
       // Envanterde (önceki spawner'dan kalanlar dahil) >= 9 demir külçesi varsa "/craft" ile sadece Demir Blok yap
       const currentIngots = countInventoryItemByName(bot, null, 'iron_ingot');
+      if (session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) break;
       if (currentIngots >= 9) {
         addLog(
           accountId,
@@ -6429,6 +6450,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
 
       // SADECE Demir Blokları (iron_block) sandığa koy! (Artan < 9 demir külçesini sandığa koyma, elinde tut)
       const blocksInInv = countInventoryItemByName(bot, null, 'iron_block');
+      if (session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) break;
       if (blocksInInv > 0) {
         const depStacks = await depositIronBlocksToNearbyChest(
           bot,
@@ -6452,6 +6474,10 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
     // 19. Spawner bittikten sonra elinde >= 9 demir külçesi kaldıysa onu da Demir Blok yapıp sandığa koy!
     // (9 demirden az kaldıysa sandığa koymaz, birazdan poppy satarken /sat hepsi ile satılabilir)
     const leftoverIngotsAfter19 = countInventoryItemByName(bot, null, 'iron_ingot');
+    if (session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) {
+      addLog(accountId, 'SPAWNER', '🛑 Spawner turu kullanıcı tarafından anında durduruldu.', chalk.magenta);
+      return false;
+    }
     if (leftoverIngotsAfter19 >= 9) {
       const extraCrafted = await craftAllIronIngotsViaChatCommand(bot, accountId);
       totalCraftedBlocks += extraCrafted;
@@ -6478,7 +6504,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
     );
 
     for (let i = 0; i < spawners.length; i++) {
-      if (!session.bot || session.status !== 'online') break;
+      if (!session.bot || session.status !== 'online' || session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) break;
       const spPos = spawners[i];
 
       const depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
@@ -6518,6 +6544,10 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
       await new Promise((r) => setTimeout(r, 400));
     }
 
+    if (session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning) {
+      addLog(accountId, 'SPAWNER', '🛑 Spawner turu kullanıcı tarafından anında durduruldu.', chalk.magenta);
+      return false;
+    }
     await navigateNearSpawnerOrChest(bot, session, firstSpawnerPos, 2.0);
 
     session.lastSpawnerRoutineTime = Date.now();
@@ -6539,7 +6569,24 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
         bot.closeWindow(bot.currentWindow);
       } catch (_) {}
     }
-    session.isSpawnerRoutineRunning = false;
+    session.abortSpawnerRoutine = true;
+  session.isSpawnerRoutineRunning = false;
+  session.isDepositing = false;
+  if (session.bot) {
+    try {
+      if (typeof session.bot.setControlState === 'function') {
+        session.bot.setControlState('forward', false);
+        session.bot.setControlState('back', false);
+        session.bot.setControlState('left', false);
+        session.bot.setControlState('right', false);
+        session.bot.setControlState('sprint', false);
+        session.bot.setControlState('jump', false);
+      }
+      if (session.bot.currentWindow) {
+        session.bot.closeWindow(session.bot.currentWindow);
+      }
+    } catch (_) {}
+  }
     session.isDepositing = false;
 
     if (hadSneakLock && session.bot && session.status === 'online') {
@@ -6607,7 +6654,24 @@ function stopSpawnerRoutineLoop(accountId) {
     clearTimeout(session.spawnerRoutineTimer);
     session.spawnerRoutineTimer = null;
   }
+  session.abortSpawnerRoutine = true;
   session.isSpawnerRoutineRunning = false;
+  session.isDepositing = false;
+  if (session.bot) {
+    try {
+      if (typeof session.bot.setControlState === 'function') {
+        session.bot.setControlState('forward', false);
+        session.bot.setControlState('back', false);
+        session.bot.setControlState('left', false);
+        session.bot.setControlState('right', false);
+        session.bot.setControlState('sprint', false);
+        session.bot.setControlState('jump', false);
+      }
+      if (session.bot.currentWindow) {
+        session.bot.closeWindow(session.bot.currentWindow);
+      }
+    } catch (_) {}
+  }
 }
 
 
@@ -11177,6 +11241,7 @@ async function builderMoveTowardsBlock(bot, session, targetWorldPos, maxDuration
   if (!bot || !bot.entity || !bot.entity.position || !targetWorldPos) return false;
   const botPos = bot.entity.position;
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
+
   const targetCenter = targetWorldPos.offset(0.5, 0.5, 0.5);
 
   let path = precomputedPath;
@@ -11226,6 +11291,7 @@ function findSafeTwoWayChestRoute(bot, session, targetBlockPos, maxNodes = 2000)
   if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return null;
   const botPos = bot.entity.position;
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
+
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
 
   // Zaten uzanma mesafesindeyse (<= 3.8m) yürümeye gerek yok
@@ -15123,7 +15189,7 @@ const server = http.createServer(async (req, res) => {
           broadcastState();
           break;
         case 'spawnerRoutineNow':
-          if (s.bot && s.bot.entity && s.status === 'online') {
+          if (s.isSpawnerRoutineRunning) { stopSpawnerRoutineLoop(accId); addLog(accId, 'SPAWNER', '🛑 Spawner turu kullanıcı tarafından durduruldu.', chalk.magenta); broadcastState(); } else if (s.bot && s.bot.entity && s.status === 'online') {
             executeSpawnerIronPoppyRoutine(accId, true);
           } else {
             addLog(accId, 'SPAWNER', 'Bot sunucuya bağlı değil!', chalk.red);
@@ -15132,6 +15198,12 @@ const server = http.createServer(async (req, res) => {
         case 'toggleAutoSpawnerRoutine':
           if (!acc.autoSpawnerRoutine) {
             acc.autoSpawnerRoutine = { enabled: false, intervalSec: 30, spawnerCount: 19 };
+          }
+          if (!acc.autoSpawnerRoutine.enabled && s.isSpawnerRoutineRunning) {
+            stopSpawnerRoutineLoop(accId);
+            addLog(accId, 'SPAWNER', '🛑 Aktif Spawner turu kullanıcı tarafından durduruldu.', chalk.magenta);
+            broadcastState();
+            break;
           }
           acc.autoSpawnerRoutine.enabled = !acc.autoSpawnerRoutine.enabled;
           saveConfig();

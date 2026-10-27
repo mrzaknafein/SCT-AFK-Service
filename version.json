@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_spawner_snake_order_v52",
-  "version": "2.2.21",
-  "releaseNotes": "Spawner 1-19 yılan (snake) koordinat sırası: önce 1'den 19'a demirleri alıp /craft ile sadece Demir Blok yapıp sandığa koyma turu, 19. Spawner'dan sonra 1. Spawner'a dönüp Poppy (/sat hepsi) satış turu ve özel koordinat sırası desteği eklendi.",
+  "buildId": "20261027_spawner_instant_stop_v53",
+  "version": "2.2.22",
+  "releaseNotes": "Spawner döngüsü açıkken Kapalı veya Durdur butonuna basıldığında botun yürüyüşünü, çalışma masasını ve sandık işlemlerini anında (<40ms) durdurma desteği eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"

@@ -2341,7 +2341,7 @@
                   <div class="auto-mode-desc">1'den 19'a sırayla demirleri /craft ile Demir Blok yapıp sandığa koyar; 19. Spawner'dan sonra 1.'ye dönüp Poppy'leri /sat hepsi yapar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner Demir Blok + Poppy Satış Turunu Hemen Başlat">Şimdi Başlat</button>
+                  <button class="btn btn-outline btn-sm" id="btnSpawnerRoutineNow" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner Demir Blok + Poppy Satış Turunu Hemen Başlat / Durdur">Şimdi Başlat</button>
                   <button class="btn btn-outline btn-sm" id="btnAutoSpawnerRoutine" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoSpawnerRoutine')">
                     <span id="badgeAutoSpawnerRoutine">Kapalı</span>
                   </button>
@@ -4952,6 +4952,11 @@
       updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
       const spawnerCfg = b.autoSpawnerRoutine || acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 19 };
       updateToggleButton('btnAutoSpawnerRoutine', spawnerCfg.enabled, '🏭 Oto Spawner: Açık', '🏭 Oto Spawner: Kapalı');
+      const btnSpNow = document.getElementById('btnSpawnerRoutineNow');
+      if (btnSpNow) {
+        btnSpNow.textContent = b.isSpawnerRoutineRunning ? '⏹ Durdur' : 'Şimdi Başlat';
+        btnSpNow.className = b.isSpawnerRoutineRunning ? 'btn btn-danger btn-sm' : 'btn btn-outline btn-sm';
+      }
       const spIntervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
       if (spIntervalEl && document.activeElement !== spIntervalEl) {
         spIntervalEl.value = spawnerCfg.intervalSec || 30;
