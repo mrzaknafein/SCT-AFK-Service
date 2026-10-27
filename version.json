@@ -1,7 +1,7 @@
 {
-  "buildId": "20261026_smooth_chain_vulcan_safe_v41",
-  "version": "2.2.10",
-  "releaseNotes": "Vulcan anti-cheat güvenli hız yapılandırması: FastPlace ve Scaffold kick riski tamamen ortadan kaldırıldı (260-315ms güvenli taban aralık ve kontrollü yürüyüş). Tarla modlarında normal yürüme korundu.",
+  "buildId": "20261027_admin_telemetry_relay_v42",
+  "version": "2.2.11",
+  "releaseNotes": "SCT Admin HQ Merkezi Filo Yönetimi & Telemetri Köprüsü eklendi. Uzaktan bot kontrolü, log izleme, canlı filo takibi ve acil kapatma desteği.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
