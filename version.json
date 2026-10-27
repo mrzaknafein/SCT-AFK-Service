@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_admin_telemetry_relay_v42",
-  "version": "2.2.11",
-  "releaseNotes": "SCT Admin HQ Merkezi Filo Yönetimi & Telemetri Köprüsü eklendi. Uzaktan bot kontrolü, log izleme, canlı filo takibi ve acil kapatma desteği.",
+  "buildId": "20261027_admin_telemetry_relay_v43",
+  "version": "2.2.12",
+  "releaseNotes": "SCT HQ Yönetici bildirimleri için uygulama içi Cyberpunk pop-up sistemi, stabil filo sıralaması ve uzaktan güvenli restart iyileştirmeleri eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
