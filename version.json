@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_dev_merge_spawner_and_farm_perf_v49",
-  "version": "2.2.18",
-  "releaseNotes": "Dev dalı birleştirildi (Merge): kheromieallah tarafından geliştirilen Otomatik 19 Spawner Demir Blok (/craft 3x3) ve Poppy (/sat hepsi) döngüsü sisteme entegre edildi; Sesli Uyarılar (5 tema & ses ayarı) ve Çapa/Ekim/Sandık/İnşa performans optimizasyonlarıyla tam uyumlu hale getirildi.",
+  "buildId": "20261027_autobuild_smooth_walk_fix_v50",
+  "version": "2.2.19",
+  "releaseNotes": "Oto-İnşa Önünde Engel Yokken Takılma ve Duruş Kilitlenmesi Düzeltildi: isSafeToStep'in hedef düğüm ötesindeki inşa edilmemiş hava bloklarına bakarak botu dondurması giderildi, precomputedPath erken çıkış hatası düzeltildi, duruş noktası ve gerçek hareket mesafesi doğrulaması entegre edildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
