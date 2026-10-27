@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_admin_telemetry_relay_v42';
+const ENGINE_BUILD_ID = '20261027_admin_telemetry_relay_v43';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -13953,17 +13953,27 @@ function startAdminRelayReporter() {
           }
           setTimeout(() => {
             try {
-              const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
-                cwd: __dirname,
-                detached: true,
-                stdio: 'ignore',
-                windowsHide: true,
-                env: process.env
-              });
-              child.unref();
+              const exePathFile = path.join(__dirname, 'exe_path.txt');
+              let exePath = '';
+              if (fs.existsSync(exePathFile)) {
+                exePath = fs.readFileSync(exePathFile, 'utf8').trim();
+              }
+              if (exePath && fs.existsSync(exePath)) {
+                const child = spawn(exePath, [], { detached: true, stdio: 'ignore' });
+                child.unref();
+              } else {
+                const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
+                  cwd: __dirname,
+                  detached: true,
+                  stdio: 'ignore',
+                  windowsHide: true,
+                  env: process.env
+                });
+                child.unref();
+              }
             } catch (e) {}
             process.exit(0);
-          }, 1200);
+          }, 1000);
           break;
         }
 
@@ -14030,9 +14040,13 @@ function startAdminRelayReporter() {
 
         case 'broadcast': {
           if (payload.message) {
-            broadcastSSE('desktop-notification', {
-              title: '🛡️ Yönetici Bildirimi',
+            broadcastSSE('admin-broadcast', {
+              title: '📢 YÖNETİCİ BİLDİRİMİ',
               message: payload.message
+            });
+            broadcastSSE('desktop-notification', {
+              title: '📢 YÖNETİCİ BİLDİRİMİ',
+              body: payload.message
             });
             addLog(null, 'DUYURU', `[YÖNETİCİ BİLDİRİMİ] ${payload.message}`, chalk.magentaBright);
             sendCommandAck(cmdId, command, 'success', 'Duyuru kullanıcı ekranına iletildi');
@@ -14043,7 +14057,7 @@ function startAdminRelayReporter() {
         case 'request_logs': {
           const authStatus = getPublicKeyAuthStatus();
           const clientId = authStatus.hwid || authStatus.username || 'SCT_CLIENT';
-          const logsSlice = recentLogs.slice(-40).map(l => {
+          const logsSlice = recentLogs.slice(-60).map(l => {
             if (typeof l === 'string') return l;
             return `[${l.time || ''}] [${l.tag || 'BİLGİ'}] ${l.message || ''}`;
           });
@@ -14070,6 +14084,11 @@ function startAdminRelayReporter() {
     try {
       const authStatus = getPublicKeyAuthStatus();
       const hwid = authStatus.hwid || 'HWID-YOK';
+      const logsSlice = recentLogs.slice(-30).map(l => {
+        if (typeof l === 'string') return l;
+        return `[${l.time || ''}] [${l.tag || 'BİLGİ'}] ${l.message || ''}`;
+      });
+
       const payload = {
         hwid,
         username: authStatus.username || 'Kullanıcı',
@@ -14077,6 +14096,7 @@ function startAdminRelayReporter() {
         buildId: ENGINE_BUILD_ID,
         uptime: Math.floor(process.uptime()),
         bots: collectBotsSummary(),
+        logs: logsSlice,
         clientKey: relayCfg.clientKey || 'SCT_CLIENT_RELAY_KEY_2026'
       };
 
