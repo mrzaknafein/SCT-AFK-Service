@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_auto_world_detect_and_smart_reach_v46",
+  "buildId": "20261027_spawner_iron_poppy_v47",
   "version": "2.2.15",
-  "releaseNotes": "Oto-İnşa (Auto-Builder): Kendiliğinden dinamik dünya/blok tespiti (durdur-başlat yapma zorunluluğu kalktı), takılma/kilitlenme koruması, genişletilmiş duruş noktaları (1.0m-3.85m) ve akıllı erişim iyileştirmesi.",
+  "releaseNotes": "19 Spawner demir külçesi toplama, /craft ile demir blok üretip sandığa aktarma ve poppy'leri /sat hepsi ile satma döngüsü eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
