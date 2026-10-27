@@ -1,5 +1,9 @@
 {
-  "version": "2.2.16",
-  "buildId": "20261027_spawner_iron_poppy_v48",
-  "description": "Spawner rutini: once poppy satisi, her spawnerdan 1 kez demir alimi, yalnizca 3x3 demir blok tarifi korumasi"
+  "buildId": "20261027_farm_till_plant_chest_perf_v48",
+  "version": "2.2.17",
+  "releaseNotes": "Oto-Çapa, Oto-Ekim ve Sandık İkmalinde Performans Güncellemesi: Ağır 50.000+ blokluk dünya taramaları ve sandık arama döngüleri akıllı önbelleğe alındı, A* yol bulucu optimize edildi (O(N) min-search/swap), akıcı sprint yürüyüşü ve sıfır gecikmeli seri çapalama/ekim entegre edildi.",
+  "files": {
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
+  }
 }
