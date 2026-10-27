@@ -3340,6 +3340,32 @@
                       </label>
                     </div>
                   </div>
+
+                  <div class="settings-card">
+                    <div class="settings-card-title">
+                      <span>🖥️ Windows Masaüstü (Toast) Bildirimleri</span>
+                      <span class="badge" style="background:#262934; color:#00f3ff;">Sistem Tepsisi</span>
+                    </div>
+                    <label class="toggle-label" style="font-size: 13.5px; font-weight: 700; color: #ffffff; margin-bottom: 6px;">
+                      <input type="checkbox" id="setDesktopNotifEnabled" />
+                      Windows Masaüstü Bildirimlerini (Toast/Balon) Etkinleştir
+                    </label>
+                    <div class="form-hint">Ekranın sağ alt köşesinde açılan Windows balon bildirimlerini denetler. Kapalı olduğunda hiçbir masaüstü bildirimi gönderilmez.</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px;">
+                      <label class="toggle-label" style="font-size: 12px; background: var(--bg-card); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <input type="checkbox" id="setDesktopNotifMention" /> 💬 İsim Geçmesi / Özel Mesaj
+                      </label>
+                      <label class="toggle-label" style="font-size: 12px; background: var(--bg-card); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <input type="checkbox" id="setDesktopNotifDisconnect" /> ⚡ Kopma / Kick
+                      </label>
+                      <label class="toggle-label" style="font-size: 12px; background: var(--bg-card); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <input type="checkbox" id="setDesktopNotifDeath" /> 💀 Bot Ölümü
+                      </label>
+                      <label class="toggle-label" style="font-size: 12px; background: var(--bg-card); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <input type="checkbox" id="setDesktopNotifCaptcha" /> 🎯 Captcha Çözümü
+                      </label>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- 6. Kategori: Discord RPC -->
@@ -7509,6 +7535,13 @@
       document.getElementById('setSoundCaptcha').checked = cfg.soundAlerts?.onCaptcha !== false;
       if (document.getElementById('setSoundNotify')) document.getElementById('setSoundNotify').checked = cfg.soundAlerts?.onNotify !== false;
 
+      const dNotif = cfg.desktopNotifications || {};
+      if (document.getElementById('setDesktopNotifEnabled')) document.getElementById('setDesktopNotifEnabled').checked = Boolean(dNotif.enabled);
+      if (document.getElementById('setDesktopNotifMention')) document.getElementById('setDesktopNotifMention').checked = Boolean(dNotif.onMention);
+      if (document.getElementById('setDesktopNotifDisconnect')) document.getElementById('setDesktopNotifDisconnect').checked = Boolean(dNotif.onDisconnect);
+      if (document.getElementById('setDesktopNotifDeath')) document.getElementById('setDesktopNotifDeath').checked = Boolean(dNotif.onDeath);
+      if (document.getElementById('setDesktopNotifCaptcha')) document.getElementById('setDesktopNotifCaptcha').checked = Boolean(dNotif.onCaptcha);
+
       document.getElementById('setDiscordRpcEnabled').checked = cfg.discordRpc?.enabled !== false;
       document.getElementById('setDiscordRpcShowServer').checked = cfg.discordRpc?.showServer !== false;
       document.getElementById('setDiscordRpcShowMode').checked = cfg.discordRpc?.showMode !== false;
@@ -7610,6 +7643,13 @@
           onMention: document.getElementById('setSoundMention').checked,
           onCaptcha: document.getElementById('setSoundCaptcha').checked,
           onNotify: document.getElementById('setSoundNotify') ? document.getElementById('setSoundNotify').checked : true
+        },
+        desktopNotifications: {
+          enabled: document.getElementById('setDesktopNotifEnabled') ? document.getElementById('setDesktopNotifEnabled').checked : false,
+          onMention: document.getElementById('setDesktopNotifMention') ? document.getElementById('setDesktopNotifMention').checked : false,
+          onDisconnect: document.getElementById('setDesktopNotifDisconnect') ? document.getElementById('setDesktopNotifDisconnect').checked : false,
+          onDeath: document.getElementById('setDesktopNotifDeath') ? document.getElementById('setDesktopNotifDeath').checked : false,
+          onCaptcha: document.getElementById('setDesktopNotifCaptcha') ? document.getElementById('setDesktopNotifCaptcha').checked : false
         },
         discordRpc: {
           enabled: document.getElementById('setDiscordRpcEnabled').checked,
