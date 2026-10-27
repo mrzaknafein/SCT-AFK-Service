@@ -2227,7 +2227,7 @@
               <span>Otomatik Çalışma Modları</span>
               <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 500;">Açmak veya kapatmak için tıklayın</span>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 4px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; margin-top: 4px;">
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
@@ -2311,8 +2311,8 @@
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
-                  <div class="auto-mode-title">Oto Çiftçi Satıcı (/çiftçi)</div>
-                  <div class="auto-mode-desc">"/çiftçi" menüsündeki depoyu periyodik olarak satar.</div>
+                  <div class="auto-mode-title">Oto Çiftçi Satıcı</div>
+                  <div class="auto-mode-desc">"/çiftçi" deposunu periyodik olarak satar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                   <button class="btn btn-outline btn-sm" onclick="sendBotAction('farmerSellNow')" title="Hemen Şimdi Sat">Şimdi Sat</button>
@@ -2324,11 +2324,11 @@
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
-                  <div class="auto-mode-title">Miner Sandık Taş Satıcı (/sat hepsi)</div>
-                  <div class="auto-mode-desc">Miner Sandık'tan sadece cobblestone'ların hepsini çekip "/sat hepsi" yazar.</div>
+                  <div class="auto-mode-title">Miner Sandık Satıcı</div>
+                  <div class="auto-mode-desc">Sandıktan cobblestone çekip "/sat hepsi" yazar.</div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('minerChestSellNow')" title="Yakındaki Miner Sandık'tan tüm cobblestone'ları çek ve /sat hepsi yap">Şimdi Çek & Sat</button>
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('minerChestSellNow')" title="Yakındaki Miner Sandık'tan tüm cobblestone'ları çek ve /sat hepsi yap">Şimdi Sat</button>
                   <button class="btn btn-outline btn-sm" id="btnAutoMinerChestSell" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoMinerChestSell')">
                     <span id="badgeAutoMinerChestSell">Kapalı</span>
                   </button>
