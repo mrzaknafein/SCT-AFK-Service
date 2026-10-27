@@ -2036,6 +2036,9 @@
           <button class="btn btn-sm btn-success" style="flex: 1; justify-content: center; font-size: 11.5px; padding: 5px 8px;" onclick="connectAll()" title="Tüm hesapları sunucuya bağlar">▶ Tümünü Başlat</button>
           <button class="btn btn-sm btn-danger" style="flex: 1; justify-content: center; font-size: 11.5px; padding: 5px 8px;" onclick="disconnectAll()" title="Tüm bağlı botları durdurur">■ Tümünü Durdur</button>
         </div>
+        <button id="btnQuickMultiBotCoop" type="button" class="btn btn-sm" style="width: 100%; justify-content: center; font-size: 11px; padding: 6px 8px; font-weight: 700; border-radius: 6px; transition: all 0.2s;" onclick="toggleMultiBotCooperationQuick()" title="3'lü bot koordinasyon modunu açıp kapatır">
+          🤝 3'lü İş Birliği: AÇIK
+        </button>
       </div>
       <div class="account-list" id="accountList"></div>
     </aside>
@@ -2338,10 +2341,10 @@
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
                   <div class="auto-mode-title">Oto Spawner Demir & Poppy</div>
-                  <div class="auto-mode-desc">1'den 19'a sırayla demirleri /craft ile Demir Blok yapıp sandığa koyar; 19. Spawner'dan sonra 1.'ye dönüp Poppy'leri /sat hepsi yapar.</div>
+                  <div class="auto-mode-desc">19 Spawner'dan önce gülleri /sat hepsi yapar, 1 kez demir çekip /craft ile sadece Demir Blok üretir.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                  <button class="btn btn-outline btn-sm" id="btnSpawnerRoutineNow" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner Demir Blok + Poppy Satış Turunu Hemen Başlat / Durdur">Şimdi Başlat</button>
+                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner Demir Blok + Poppy Satış Turunu Hemen Başlat">Şimdi Başlat</button>
                   <button class="btn btn-outline btn-sm" id="btnAutoSpawnerRoutine" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoSpawnerRoutine')">
                     <span id="badgeAutoSpawnerRoutine">Kapalı</span>
                   </button>
@@ -2446,10 +2449,6 @@
                 <div>
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Sayısı (Adet)</label>
                   <input type="number" id="ctrlSpawnerCount" min="1" max="64" step="1" value="19" class="form-control" onchange="updateSpawnerRoutineConfig()" />
-                </div>
-                <div style="grid-column: 1 / -1;">
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Koordinat Sırası (Boş bırakılırsa 19 Spawner yılan sırasıyla gezilir — Özel sıra için her satıra X, Y, Z yazın)</label>
-                  <textarea id="ctrlSpawnerCustomCoords" rows="4" class="form-control" style="font-family: monospace; font-size: 11.5px; resize: vertical;" placeholder="-14401, 100, -7188&#10;-14403, 100, -7188&#10;-14405, 100, -7188&#10;-14407, 100, -7188 ..." onchange="updateSpawnerRoutineConfig()"></textarea>
                 </div>
               </div>
             </div>
@@ -3045,6 +3044,13 @@
                   <small>Profil canlı durumu</small>
                 </div>
               </button>
+              <button type="button" class="set-nav-btn" id="setNav-coop" onclick="switchSettingsCategory('coop')">
+                <span class="set-nav-icon">🤝</span>
+                <div class="set-nav-text">
+                  <strong>3'lü Bot Koordinasyonu</strong>
+                  <small>Ortak ada inşa, çapa, ekim</small>
+                </div>
+              </button>
               <button type="button" class="set-nav-btn" id="setNav-updates" onclick="switchSettingsCategory('updates')">
                 <span class="set-nav-icon">🚀</span>
                 <div class="set-nav-text">
@@ -3541,6 +3547,80 @@
                         <label>Buton 2 URL</label>
                         <input type="text" id="setDiscordRpcBtn2Url" class="form-control" placeholder="https://..." spellcheck="false" oninput="updateRpcPreview()" />
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Çoklu Bot Koordinasyonu & İş Birliği Paneli -->
+                <div class="settings-pane" id="setPane-coop">
+                  <div class="settings-header">
+                    <h2>🤝 3'lü Bot Koordinasyon &amp; İş Birliği Sistemi</h2>
+                    <p>3 botun aynı ada/bölgede eşzamanlı olarak çakışmadan, birbirinin bloğunu koymaya veya aynı toprağı çapalamaya/ekmeye çalışmadan dinamik iş paylaşımı yapmasını sağlar.</p>
+                  </div>
+
+                  <div class="settings-card">
+                    <div class="settings-card-title">
+                      <span>Ana Koordinasyon Modu</span>
+                      <span class="badge" style="background:rgba(34, 197, 94, 0.15); color:#22c55e; border:1px solid #22c55e;">Önerilen</span>
+                    </div>
+                    <label class="toggle-label" style="font-size: 13.5px; font-weight: 700; color: #ffffff; margin-bottom: 6px;">
+                      <input type="checkbox" id="setCoopEnabled" checked />
+                      3'lü Bot Koordinasyonunu Etkinleştir (Ortak Çalışma Modu)
+                    </label>
+                    <div class="form-hint">
+                      Bu seçenek <strong>AÇIK</strong> olduğunda botlar hafıza içi rezervasyon havuzu (Shared Claims Pool) üzerinden haberleşir. Bir botun yöneldiği hedef blok diğer botlar tarafından atlanır ve botlar adanın farklı yönlerine dağılarak çalışır.<br>
+                      Bu seçenek <strong>KAPALI</strong> olduğunda tüm botlar tamamen <strong>bağımsız (bireysel/solo)</strong> modda çalışır. Sol menüdeki hızlı butondan da dilediğiniz zaman tek tıkla açıp kapatabilirsiniz.
+                    </div>
+                  </div>
+
+                  <div class="settings-card">
+                    <div class="settings-card-title">
+                      <span>İş Birliği Modülleri</span>
+                      <span class="badge" style="background:#262934; color:#00f3ff;">Hassas Ayar</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 6px;">
+                      <label class="toggle-label">
+                        <input type="checkbox" id="setCoopBuilder" checked />
+                        <div>
+                          <strong>İnşaat Koordinasyonu (Auto-Builder Sync)</strong>
+                          <div class="form-hint">Aynı bloğa birden fazla botun aynı anda blok koymasını engeller. Botlar adanın farklı uçlarına ve sınırlarına (ön cepheler) dağılarak 63x63 platformu 3 kat daha hızlı tamamlar.</div>
+                        </div>
+                      </label>
+
+                      <label class="toggle-label">
+                        <input type="checkbox" id="setCoopTill" checked />
+                        <div>
+                          <strong>Çapalama Koordinasyonu (Auto-Till Sync)</strong>
+                          <div class="form-hint">Aynı toprak bloğunun birden fazla bot tarafından çapalanmasını engeller. Her bot kendi menzilindeki toprağı alırken uzaktaki hedefleri paylaşır.</div>
+                        </div>
+                      </label>
+
+                      <label class="toggle-label">
+                        <input type="checkbox" id="setCoopPlant" checked />
+                        <div>
+                          <strong>Tohum Ekme Koordinasyonu (Auto-Plant Sync)</strong>
+                          <div class="form-hint">Aynı tarlaya birden fazla botun tohum ekmesini engeller. Botlar tarlanın farklı şeritlerine ayrılarak kesintisiz ekim yapar.</div>
+                        </div>
+                      </label>
+
+                      <label class="toggle-label">
+                        <input type="checkbox" id="setCoopChest" checked />
+                        <div>
+                          <strong>Sandık Sırası / Mutex (Shared Chest Mutex)</strong>
+                          <div class="form-hint">Birden fazla botun aynı anda aynı sandığı açmaya çalışıp sunucu pencere çakışması (window click reject) yaşamasını önler. Sandıklar sırayla kullanılır.</div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="settings-card" style="background: rgba(0, 243, 255, 0.04); border-color: rgba(0, 243, 255, 0.2);">
+                    <div class="settings-card-title">
+                      <span style="color: #00f3ff;">💡 Nasıl Çalışır &amp; Güvenlik Bilgisi</span>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8; line-height: 1.6;">
+                      • Sunucuda oyuncuların çarpışması (player collision) kapalı olduğu için botlar birbirinin içinden geçebilir ve birbirini boşluğa itemez.<br>
+                      • Statik bölge ayrımı yerine dinamik rezervasyon kullanıldığı için botlar henüz zemin oluşmamış boşluklara yürümeye çalışmaz ve <strong>asla adadan aşağı düşmez</strong>.<br>
+                      • Herhangi bir bot durdurulduğunda veya bağlantısı koptuğunda, üzerine rezerve ettiği bloklar saniyeler içinde otomatik olarak diğer botların havuzuna iade edilir.
                     </div>
                   </div>
                 </div>
@@ -4573,6 +4653,7 @@
         btnSound.textContent = soundOn ? 'Ses: Açık' : 'Ses: Kapalı';
         btnSound.className = soundOn ? 'btn btn-success' : 'btn btn-outline';
       }
+      updateMultiBotCoopButtonUI();
 
       renderServerList();
       renderAccountList();
@@ -4952,11 +5033,6 @@
       updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
       const spawnerCfg = b.autoSpawnerRoutine || acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 19 };
       updateToggleButton('btnAutoSpawnerRoutine', spawnerCfg.enabled, '🏭 Oto Spawner: Açık', '🏭 Oto Spawner: Kapalı');
-      const btnSpNow = document.getElementById('btnSpawnerRoutineNow');
-      if (btnSpNow) {
-        btnSpNow.textContent = b.isSpawnerRoutineRunning ? '⏹ Durdur' : 'Şimdi Başlat';
-        btnSpNow.className = b.isSpawnerRoutineRunning ? 'btn btn-danger btn-sm' : 'btn btn-outline btn-sm';
-      }
       const spIntervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
       if (spIntervalEl && document.activeElement !== spIntervalEl) {
         spIntervalEl.value = spawnerCfg.intervalSec || 30;
@@ -4969,10 +5045,6 @@
       const spCountEl = document.getElementById('ctrlSpawnerCount');
       if (spCountEl && document.activeElement !== spCountEl) {
         spCountEl.value = spawnerCfg.spawnerCount || 19;
-      }
-      const spCoordsEl = document.getElementById('ctrlSpawnerCustomCoords');
-      if (spCoordsEl && document.activeElement !== spCoordsEl) {
-        spCoordsEl.value = spawnerCfg.customCoords || '';
       }
       const mIntervalEl = document.getElementById('ctrlMinerChestSellInterval');
       if (mIntervalEl && document.activeElement !== mIntervalEl) {
@@ -7028,8 +7100,6 @@
     async function updateSpawnerRoutineConfig() {
       const intervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
       const countEl = document.getElementById('ctrlSpawnerCount');
-      const coordsEl = document.getElementById('ctrlSpawnerCustomCoords');
-      const customCoords = coordsEl ? coordsEl.value.trim() : '';
       const s = Math.max(10, parseInt(intervalEl ? intervalEl.value : 30, 10) || 30);
       const cnt = Math.max(1, Math.min(64, parseInt(countEl ? countEl.value : 19, 10) || 19));
       const helpEl = document.getElementById('spawnerRoutineIntervalHelp');
@@ -7039,7 +7109,7 @@
       if (!selectedAccountId) return;
       const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
       const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
-      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, customCoords, enabled: isEnabled });
+      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, enabled: isEnabled });
     }
 
     function moveBot(direction) {
@@ -7377,7 +7447,7 @@
 
     function switchSettingsCategory(catId) {
       activeSettingsCat = catId;
-      const cats = ['server', 'auth', 'antiafk', 'webhook', 'sounds', 'rpc', 'backup', 'updates'];
+      const cats = ['server', 'auth', 'antiafk', 'webhook', 'sounds', 'rpc', 'coop', 'backup', 'updates'];
       cats.forEach(c => {
         const btn = document.getElementById(`setNav-${c}`);
         const pane = document.getElementById(`setPane-${c}`);
@@ -7500,6 +7570,41 @@
       }
     }
 
+    function updateMultiBotCoopButtonUI() {
+      const btn = document.getElementById('btnQuickMultiBotCoop');
+      if (!btn) return;
+      const coopEnabled = appState.config?.multiBotCooperation?.enabled !== false;
+      if (coopEnabled) {
+        btn.innerHTML = '🤝 3\'lü İş Birliği: <span style="color:#22c55e;">AÇIK</span>';
+        btn.style.background = 'rgba(34, 197, 94, 0.12)';
+        btn.style.border = '1px solid #22c55e';
+        btn.style.color = '#86efac';
+        btn.title = "3 bot koordineli ve dinamik paylaşarak çalışıyor. Tıklayarak bireysel moda geçebilirsiniz.";
+      } else {
+        btn.innerHTML = '👤 Bireysel Mod: <span style="color:#94a3b8;">AÇIK</span>';
+        btn.style.background = 'rgba(255, 255, 255, 0.05)';
+        btn.style.border = '1px solid #475569';
+        btn.style.color = '#cbd5e1';
+        btn.title = "Botlar birbirinden bağımsız (solo) çalışıyor. Tıklayarak 3'lü iş birliği modunu açabilirsiniz.";
+      }
+    }
+
+    async function toggleMultiBotCooperationQuick() {
+      const current = appState.config?.multiBotCooperation?.enabled !== false;
+      const nextState = !current;
+      const res = await api('/api/cooperation/toggle', 'POST', { enabled: nextState });
+      if (res && res.ok) {
+        if (!appState.config) appState.config = {};
+        appState.config.multiBotCooperation = res.multiBotCooperation;
+        updateMultiBotCoopButtonUI();
+        if (nextState) {
+          showAppToast('🤝 3\'lü Bot Koordinasyon Modu AÇILDI! Botlar dinamik iş paylaşımı yapacak.', 'success');
+        } else {
+          showAppToast('👤 Bireysel Çalışma Modu AÇILDI! Botlar birbirinden bağımsız çalışacak.', 'info');
+        }
+      }
+    }
+
     function populateSettingsInputs() {
       const cfg = appState.config || {};
       const setHostEl = document.getElementById('setHost');
@@ -7556,6 +7661,13 @@
       if (document.getElementById('setDesktopNotifDisconnect')) document.getElementById('setDesktopNotifDisconnect').checked = Boolean(dNotif.onDisconnect);
       if (document.getElementById('setDesktopNotifDeath')) document.getElementById('setDesktopNotifDeath').checked = Boolean(dNotif.onDeath);
       if (document.getElementById('setDesktopNotifCaptcha')) document.getElementById('setDesktopNotifCaptcha').checked = Boolean(dNotif.onCaptcha);
+
+      const coop = cfg.multiBotCooperation || {};
+      if (document.getElementById('setCoopEnabled')) document.getElementById('setCoopEnabled').checked = coop.enabled !== false;
+      if (document.getElementById('setCoopBuilder')) document.getElementById('setCoopBuilder').checked = coop.builderSync !== false;
+      if (document.getElementById('setCoopTill')) document.getElementById('setCoopTill').checked = coop.tillSync !== false;
+      if (document.getElementById('setCoopPlant')) document.getElementById('setCoopPlant').checked = coop.plantSync !== false;
+      if (document.getElementById('setCoopChest')) document.getElementById('setCoopChest').checked = coop.chestSync !== false;
 
       document.getElementById('setDiscordRpcEnabled').checked = cfg.discordRpc?.enabled !== false;
       document.getElementById('setDiscordRpcShowServer').checked = cfg.discordRpc?.showServer !== false;
@@ -7665,6 +7777,13 @@
           onDisconnect: document.getElementById('setDesktopNotifDisconnect') ? document.getElementById('setDesktopNotifDisconnect').checked : false,
           onDeath: document.getElementById('setDesktopNotifDeath') ? document.getElementById('setDesktopNotifDeath').checked : false,
           onCaptcha: document.getElementById('setDesktopNotifCaptcha') ? document.getElementById('setDesktopNotifCaptcha').checked : false
+        },
+        multiBotCooperation: {
+          enabled: document.getElementById('setCoopEnabled') ? document.getElementById('setCoopEnabled').checked : true,
+          builderSync: document.getElementById('setCoopBuilder') ? document.getElementById('setCoopBuilder').checked : true,
+          tillSync: document.getElementById('setCoopTill') ? document.getElementById('setCoopTill').checked : true,
+          plantSync: document.getElementById('setCoopPlant') ? document.getElementById('setCoopPlant').checked : true,
+          chestSync: document.getElementById('setCoopChest') ? document.getElementById('setCoopChest').checked : true
         },
         discordRpc: {
           enabled: document.getElementById('setDiscordRpcEnabled').checked,
