@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_spawner_iron_poppy_v47",
-  "version": "2.2.15",
-  "releaseNotes": "19 Spawner demir külçesi toplama, /craft ile demir blok üretip sandığa aktarma ve poppy'leri /sat hepsi ile satma döngüsü eklendi.",
+  "buildId": "20261027_audio_presets_and_mute_fix_v47",
+  "version": "2.2.16",
+  "releaseNotes": "Masaüstü Sesli Uyarı Sistemi: Tüm sesleri kapatma ve alarmları sessize alma sorunu giderildi; 5 farklı ses teması (Cyber Synth, Soft Chime, 8-Bit Arcade, Radar Ping, Subtle Tok), ses düzeyi ayarı ve anlık test/dinleme desteği eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
