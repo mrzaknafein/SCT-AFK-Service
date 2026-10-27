@@ -3728,6 +3728,32 @@
     </div>
   </div>
 
+  <!-- Özel Yönetici Bildirimi Pop-Up Penceresi (Cyberpunk Tema) -->
+  <div class="modal-backdrop" id="adminBroadcastModal" style="z-index: 10005;">
+    <div class="modal" style="max-width: 490px; border: 1.5px solid #00f3ff; box-shadow: 0 0 30px rgba(0, 243, 255, 0.4); background: #0b111e; border-radius: 14px;">
+      <div class="modal-header" style="margin-bottom: 14px; border-bottom: 1px solid rgba(0, 243, 255, 0.25); padding-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 24px; filter: drop-shadow(0 0 6px #00f3ff);">📢</span>
+          <div>
+            <h3 id="adminBroadcastTitle" style="font-size: 16px; font-weight: 800; color: #00f3ff; letter-spacing: 0.5px; margin: 0;">YÖNETİCİ BİLDİRİMİ</h3>
+            <span style="font-size: 11px; color: #94a3b8;">SCT Admin HQ Merkezi Duyuru</span>
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline" onclick="closeAdminBroadcastModal()">✕</button>
+      </div>
+      <div style="padding: 10px 4px 20px 4px;">
+        <p id="adminBroadcastMessage" style="font-size: 14.5px; color: #f8fafc; line-height: 1.6; word-break: break-word; white-space: pre-wrap; font-weight: 500;"></p>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 18px; padding-top: 10px; border-top: 1px dashed rgba(255, 255, 255, 0.1);">
+          <span id="adminBroadcastTime" style="font-size: 11px; color: #64748b; font-family: monospace;">--:--:--</span>
+          <span style="font-size: 11px; color: #10b981; font-weight: 600;">● Doğrulanmış Sistem Mesajı</span>
+        </div>
+      </div>
+      <div class="modal-footer" style="margin-top: 0; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 14px;">
+        <button type="button" class="btn btn-primary" onclick="closeAdminBroadcastModal()" style="min-width: 120px; font-weight: bold;">Tamam, Anladım</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Özel Toast Bildirim Konteyneri -->
   <div class="app-toast-container" id="appToastContainer"></div>
 
@@ -4184,9 +4210,33 @@
             playAlertSound(payload.data.alertType || 'damage');
           } else if (payload.type === 'desktop-notification') {
             showBrowserDesktopNotification(payload.data?.title, payload.data?.body);
+            if (payload.data?.message || payload.data?.body) {
+              showAdminBroadcastModal(payload.data?.title, payload.data?.message || payload.data?.body);
+            }
+          } else if (payload.type === 'admin-broadcast') {
+            showAdminBroadcastModal(payload.data?.title, payload.data?.message);
           }
         } catch (e) {}
       };
+    }
+
+    function showAdminBroadcastModal(title, message) {
+      const modal = document.getElementById('adminBroadcastModal');
+      const tEl = document.getElementById('adminBroadcastTitle');
+      const mEl = document.getElementById('adminBroadcastMessage');
+      const timeEl = document.getElementById('adminBroadcastTime');
+
+      if (tEl) tEl.textContent = title || 'YÖNETİCİ BİLDİRİMİ';
+      if (mEl) mEl.textContent = message || '';
+      if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('tr-TR');
+
+      if (modal) modal.classList.add('open');
+      try { playAlertSound('damage'); } catch (e) {}
+    }
+
+    function closeAdminBroadcastModal() {
+      const modal = document.getElementById('adminBroadcastModal');
+      if (modal) modal.classList.remove('open');
     }
 
     function showBrowserDesktopNotification(title, body) {
