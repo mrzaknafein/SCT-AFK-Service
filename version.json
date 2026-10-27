@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_auto_world_detect_and_smart_reach_v46",
-  "version": "2.2.15",
-  "releaseNotes": "Oto-İnşa (Auto-Builder): Kendiliğinden dinamik dünya/blok tespiti (durdur-başlat yapma zorunluluğu kalktı), takılma/kilitlenme koruması, genişletilmiş duruş noktaları (1.0m-3.85m) ve akıllı erişim iyileştirmesi.",
+  "buildId": "20261027_audio_presets_and_mute_fix_v47",
+  "version": "2.2.16",
+  "releaseNotes": "Masaüstü Sesli Uyarı Sistemi: Tüm sesleri kapatma ve alarmları sessize alma sorunu giderildi; 5 farklı ses teması (Cyber Synth, Soft Chime, 8-Bit Arcade, Radar Ping, Subtle Tok), ses düzeyi ayarı ve anlık test/dinleme desteği eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
