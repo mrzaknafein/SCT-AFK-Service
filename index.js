@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_desktop_notification_fix_v51';
+const ENGINE_BUILD_ID = '20261027_spawner_snake_order_v52';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5472,8 +5472,66 @@ function countEmptyPlayerSlotsInWindow(bot, win) {
   return empty;
 }
 
-function findNearbySpawnerBlocks(bot, maxRadius = 24, maxCount = 19) {
+const DEFAULT_SPAWNER_SNAKE_COORDS = [
+  [-14401, 100, -7188],
+  [-14403, 100, -7188],
+  [-14405, 100, -7188],
+  [-14407, 100, -7188],
+  [-14407, 100, -7190],
+  [-14405, 100, -7190],
+  [-14403, 100, -7190],
+  [-14401, 100, -7190],
+  [-14399, 100, -7190],
+  [-14399, 100, -7192],
+  [-14401, 100, -7192],
+  [-14403, 100, -7192],
+  [-14405, 100, -7192],
+  [-14407, 100, -7192],
+  [-14407, 100, -7194],
+  [-14405, 100, -7194],
+  [-14403, 100, -7194],
+  [-14401, 100, -7194],
+  [-14399, 100, -7194]
+];
+
+function parseCustomSpawnerCoords(customCoordsText) {
+  if (!customCoordsText || typeof customCoordsText !== 'string') return [];
+  const coords = [];
+  const lines = customCoordsText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith('//')) continue;
+    const m = line.match(/(-?\d+)\s*[,;\s]\s*(-?\d+)\s*[,;\s]\s*(-?\d+)/);
+    if (m) {
+      coords.push(new Vec3(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)));
+    }
+  }
+  return coords;
+}
+
+function findNearbySpawnerBlocks(bot, maxRadius = 24, maxCount = 19, customCoordsText = '') {
   if (!bot || !bot.entity || !bot.entity.position) return [];
+
+  // 1. Kullanıcı özel koordinat sırası girdiyse doğrudan o sırayı kullan
+  const customList = parseCustomSpawnerCoords(customCoordsText);
+  if (customList.length > 0) {
+    return customList.slice(0, maxCount);
+  }
+
+  // 2. Bot varsayılan 19'lu spawner adasındaysa (Görseldeki kırmızı çizgi yılan sırası: 1 -> 19)
+  const matchedDefaults = [];
+  for (const [cx, cy, cz] of DEFAULT_SPAWNER_SNAKE_COORDS) {
+    const p = new Vec3(cx, cy, cz);
+    const b = bot.blockAt(p);
+    if (b && b.name && (b.name.toLowerCase() === 'spawner' || b.name.toLowerCase() === 'mob_spawner')) {
+      matchedDefaults.push(p);
+    }
+  }
+  if (matchedDefaults.length >= Math.min(maxCount, 15)) {
+    return matchedDefaults.slice(0, maxCount);
+  }
+
+  // 3. Genel Ada Taraması: Z-Satırlarına göre Yılan (S-Çizgisi / Zigzag) Sıralaması
   const startPos = bot.entity.position;
   const r = Math.ceil(maxRadius);
   const found = [];
@@ -5494,29 +5552,31 @@ function findNearbySpawnerBlocks(bot, maxRadius = 24, maxCount = 19) {
 
   if (found.length === 0) return [];
 
-  // Aynı (x, z) sütununda üst üste dizili spawner'ları aşağıdan yukarıya gruplayarak
-  // en yakın komşu (Nearest-Neighbor) sırasıyla 19 spawner'lık rota oluştur
-  const ordered = [];
-  const remaining = found.slice();
-  let curPos = startPos.clone();
+  // Z satırlarına göre grupla (büyük Z'den küçük Z'ye doğru: üst sıradan alt sıraya)
+  const rowMap = new Map();
+  for (const p of found) {
+    const zKey = p.z;
+    if (!rowMap.has(zKey)) rowMap.set(zKey, []);
+    rowMap.get(zKey).push(p);
+  }
 
-  while (remaining.length > 0 && ordered.length < maxCount) {
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const p = remaining[i];
-      // Yatayda (x, z) aynı sütunda olanlara öncelik ver ki dikey spawner kulesini tek duruşta bitirsin
-      const horizDist = Math.hypot(p.x + 0.5 - curPos.x, p.z + 0.5 - curPos.z);
-      const vertDiff = Math.abs(p.y - curPos.y) * 0.15;
-      const score = horizDist + vertDiff;
-      if (score < bestDist) {
-        bestDist = score;
-        bestIdx = i;
+  const sortedZKeys = Array.from(rowMap.keys()).sort((a, b) => b - a);
+  const ordered = [];
+
+  for (let rowIdx = 0; rowIdx < sortedZKeys.length; rowIdx++) {
+    const zKey = sortedZKeys[rowIdx];
+    const rowSpawners = rowMap.get(zKey);
+    // Çift satırlarda (0, 2...) X azalan (-14401 -> -14407), tek satırlarda (1, 3...) X artan (-14407 -> -14399)
+    if (rowIdx % 2 === 0) {
+      rowSpawners.sort((a, b) => b.x - a.x || a.y - b.y);
+    } else {
+      rowSpawners.sort((a, b) => a.x - b.x || a.y - b.y);
+    }
+    for (const sp of rowSpawners) {
+      if (ordered.length < maxCount) {
+        ordered.push(sp);
       }
     }
-    const chosen = remaining.splice(bestIdx, 1)[0];
-    ordered.push(chosen);
-    curPos = chosen.offset(0.5, 0.5, 0.5);
   }
 
   return ordered;
@@ -5547,31 +5607,111 @@ function findNearbyContainerPositions(bot, originPos, maxDist = 20) {
   return chests.map((c) => c.pos);
 }
 
-async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach = 3.95) {
+function isSpawnerCorridorWalkable(bot, pos, session) {
+  if (!isWalkablePosition(bot, pos, session)) return false;
+  const floorBlock = bot.blockAt(pos.offset(0, -1, 0));
+  if (!floorBlock || !floorBlock.name) return false;
+  const fn = floorBlock.name.toLowerCase();
+  // Spawner veya sandıkların üstüne zıplamasını engelle; sadece koridor zemininde yürüsün
+  if (fn === 'spawner' || fn === 'mob_spawner' || isFarmContainerBlockName(fn)) {
+    return false;
+  }
+  return true;
+}
+
+function findSpawnerCorridorPath(bot, startPos, goalPos, session = null, maxNodes = 2500) {
+  if (!bot || !startPos || !goalPos) return null;
+  if (startPos.x === goalPos.x && startPos.z === goalPos.z && Math.abs(startPos.y - goalPos.y) <= 1) {
+    return [];
+  }
+
+  const openSet = [{ pos: startPos, g: 0, f: startPos.distanceTo(goalPos) }];
+  const cameFrom = new Map();
+  const gScore = new Map();
+  gScore.set(startPos.toString(), 0);
+  const closedSet = new Set();
+
+  const dirs = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 }
+  ];
+
+  let nodes = 0;
+  while (openSet.length > 0 && nodes < maxNodes) {
+    nodes++;
+    openSet.sort((a, b) => a.f - b.f);
+    const cur = openSet.shift();
+    const curKey = cur.pos.toString();
+
+    if (cur.pos.x === goalPos.x && cur.pos.z === goalPos.z && Math.abs(cur.pos.y - goalPos.y) <= 1) {
+      const path = [cur.pos];
+      let k = curKey;
+      while (cameFrom.has(k)) {
+        const prev = cameFrom.get(k);
+        path.unshift(prev);
+        k = prev.toString();
+      }
+      return path.slice(1);
+    }
+
+    closedSet.add(curKey);
+
+    for (const d of dirs) {
+      const cand = new Vec3(cur.pos.x + d.dx, cur.pos.y, cur.pos.z + d.dz);
+      const candKey = cand.toString();
+      if (closedSet.has(candKey)) continue;
+      if (!isSpawnerCorridorWalkable(bot, cand, session)) continue;
+
+      const tentativeG = cur.g + 1.0;
+      const prevG = gScore.has(candKey) ? gScore.get(candKey) : Infinity;
+      if (tentativeG < prevG) {
+        cameFrom.set(candKey, cur.pos);
+        gScore.set(candKey, tentativeG);
+        openSet.push({
+          pos: cand,
+          g: tentativeG,
+          f: tentativeG + cand.distanceTo(goalPos)
+        });
+      }
+    }
+  }
+  return null;
+}
+
+async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach = 2.25) {
   if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
-  const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter);
-  if (curEyeDist <= maxReach) {
+  const botPos = bot.entity.position;
+  const curHorizDist = Math.hypot(botPos.x - targetCenter.x, botPos.z - targetCenter.z);
+  const curEyeDist = botPos.offset(0, 1.62, 0).distanceTo(targetCenter);
+
+  // Yalnızca hedef bloğun hemen bitişiğindeki koridordaysa (<= 1.75m yatay mesafe) yürümeyi atla
+  if (curHorizDist <= 1.75 && curEyeDist <= maxReach && Math.abs(botPos.y - targetBlockPos.y) <= 0.65) {
     return true;
   }
 
-  const botPos = bot.entity.position;
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
   const spotCandidates = [];
 
-  // Spawner'lar üst üste (yüksekte) olabileceği için dy: -4..1 aralığındaki zemin noktalarını tara
-  for (let dx = -3; dx <= 3; dx++) {
-    for (let dz = -3; dz <= 3; dz++) {
-      for (let dy = -4; dy <= 1; dy++) {
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      if (dx === 0 && dz === 0) continue;
+      for (let dy = 0; dy >= -2; dy--) {
         const spot = new Vec3(targetBlockPos.x + dx, targetBlockPos.y + dy, targetBlockPos.z + dz);
+        const horizToTarget = Math.hypot(spot.x + 0.5 - targetCenter.x, spot.z + 0.5 - targetCenter.z);
         const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
-        const reachDist = eyeFromSpot.distanceTo(targetCenter);
-        if (reachDist > 3.85) continue;
-        if (isWalkablePosition(bot, spot, session)) {
+        if (eyeFromSpot.distanceTo(targetCenter) > 3.1) continue;
+        if (isSpawnerCorridorWalkable(bot, spot, session)) {
+          const isCardinalAdjacent = (Math.abs(dx) + Math.abs(dz) === 1 && dy === 0) ? 0 : 1;
+          const isDiagAdjacent = (Math.abs(dx) <= 1 && Math.abs(dz) <= 1 && dy === 0) ? 0 : 1;
           spotCandidates.push({
             spot,
-            distToBot: botPos.distanceTo(spot.offset(0.5, 0, 0.5)),
-            sameLevel: spot.y === startStand.y ? 0 : 1
+            isCardinalAdjacent,
+            isDiagAdjacent,
+            horizToTarget,
+            distToBot: botPos.distanceTo(spot.offset(0.5, 0, 0.5))
           });
         }
       }
@@ -5579,36 +5719,72 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
   }
 
   spotCandidates.sort((a, b) => {
-    if (a.sameLevel !== b.sameLevel) return a.sameLevel - b.sameLevel;
+    if (a.isCardinalAdjacent !== b.isCardinalAdjacent) return a.isCardinalAdjacent - b.isCardinalAdjacent;
+    if (a.isDiagAdjacent !== b.isDiagAdjacent) return a.isDiagAdjacent - b.isDiagAdjacent;
+    if (Math.abs(a.horizToTarget - b.horizToTarget) > 0.15) return a.horizToTarget - b.horizToTarget;
     return a.distToBot - b.distToBot;
   });
 
   for (let i = 0; i < Math.min(spotCandidates.length, 10); i++) {
     const cand = spotCandidates[i];
-    const path = findBuilderPath(bot, startStand, cand.spot, session, 2000, {
-      allowStepDown: true
-    });
+    let path = findSpawnerCorridorPath(bot, startStand, cand.spot, session, 2500);
+    if (path === null) {
+      path = findBuilderPath(bot, startStand, cand.spot, session, 2000, { allowStepDown: true });
+    }
     if (path !== null) {
-      const ok = await safelyNavigateToChest(
-        bot,
-        session,
-        targetBlockPos,
-        Math.max(5000, Math.min(20000, Math.ceil((path.length + 2) * 450))),
-        path
-      );
-      if (ok || bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.25) {
+      const maxTimeoutMs = Math.max(4500, Math.min(18000, Math.ceil((path.length + 2) * 500)));
+      const startTime = Date.now();
+      let idx = 0;
+      try {
+        if (typeof bot.setControlState === 'function') {
+          bot.setControlState('sneak', false);
+          bot.setControlState('sprint', false);
+          bot.setControlState('jump', false);
+        }
+        while (idx < path.length && Date.now() - startTime < maxTimeoutMs) {
+          if (!session || !session.bot || session.status !== 'online') break;
+          const cPos = bot.entity.position;
+          const node = path[idx];
+          const nodeCenter = node.offset(0.5, 0, 0.5);
+          const distNode = Math.hypot(nodeCenter.x - cPos.x, nodeCenter.z - cPos.z);
+          if (distNode <= 0.27 && Math.abs(node.y - cPos.y) <= 0.75) {
+            idx++;
+            continue;
+          }
+          const dx = nodeCenter.x - cPos.x;
+          const dz = nodeCenter.z - cPos.z;
+          const yaw = Math.atan2(-dx, -dz);
+          await bot.look(yaw, 0, true);
+          bot.setControlState('forward', true);
+          bot.setControlState('sprint', false);
+          if (node.y > Math.round(cPos.y) && bot.entity.onGround) {
+            bot.setControlState('jump', true);
+          } else {
+            bot.setControlState('jump', false);
+          }
+          await new Promise((r) => setTimeout(r, 40));
+        }
+      } finally {
+        if (bot && typeof bot.setControlState === 'function') {
+          bot.setControlState('forward', false);
+          bot.setControlState('sprint', false);
+          bot.setControlState('jump', false);
+        }
+      }
+      await new Promise((r) => setTimeout(r, 85));
+      if (bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 3.85) {
         return true;
       }
     }
   }
 
-  return bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.25;
+  return bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 3.85;
 }
 
 async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
   if (!bot || !spawnerPos) return null;
 
-  const reached = await navigateNearSpawnerOrChest(bot, session, spawnerPos, 3.95);
+  const reached = await navigateNearSpawnerOrChest(bot, session, spawnerPos, 2.25);
   if (!reached) {
     addLog(accountId, 'SPAWNER', `⚠️ Spawner'a (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) ulaşılamadı, atlanıyor.`, chalk.yellow);
     return null;
@@ -6077,7 +6253,7 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
       break;
     }
 
-    const reached = await navigateNearSpawnerOrChest(bot, session, chestPos, 3.95);
+    const reached = await navigateNearSpawnerOrChest(bot, session, chestPos, 2.25);
     if (!reached) continue;
 
     const chestBlock = bot.blockAt(chestPos);
@@ -6172,11 +6348,11 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
   }
 
   const acc = config.accounts.find((a) => a.id === accountId);
-  const spawnerCfg = (acc && acc.autoSpawnerRoutine) || { enabled: false, intervalSec: 30, spawnerCount: 19 };
+  const spawnerCfg = (acc && acc.autoSpawnerRoutine) || { enabled: false, intervalSec: 30, spawnerCount: 19, customCoords: '' };
   const targetSpawnerCount = Math.max(1, Math.min(64, Number(spawnerCfg.spawnerCount) || 19));
   const sellCmd = (acc && acc.autoSellCommand ? acc.autoSellCommand.trim() : '') || '/sat hepsi';
 
-  const spawners = findNearbySpawnerBlocks(bot, 24, targetSpawnerCount);
+  const spawners = findNearbySpawnerBlocks(bot, 24, targetSpawnerCount, spawnerCfg.customCoords || '');
   if (spawners.length === 0) {
     if (isManual) {
       addLog(accountId, 'SPAWNER', '⚠️ 24 blok menzilde hiçbir Spawner bulunamadı!', chalk.red);
@@ -6184,7 +6360,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
     return false;
   }
 
-  const homePos = bot.entity.position.floored();
+  const firstSpawnerPos = spawners[0];
   const prevYaw = session.baseYaw !== undefined && session.baseYaw !== null ? session.baseYaw : bot.entity.yaw;
   const prevPitch = session.basePitch !== undefined && session.basePitch !== null ? session.basePitch : bot.entity.pitch;
   const hadSneakLock = Boolean(session.sneakLock);
@@ -6211,50 +6387,23 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
     addLog(
       accountId,
       'SPAWNER',
-      `🏭 Spawner Turu Başladı: ${spawners.length} spawner sırayla gezilecek (Önce güller alınıp "${sellCmd}" ile satılacak, ardından her spawner'dan 1 kez demir alınıp "/craft" ile sadece Demir Blok yapılıp sandığa konulacak)...`,
+      `🏭 Spawner Turu Başladı: 1 -> ${spawners.length} sırasıyla önce demirler alınıp "/craft" ile Demir Blok yapılıp sandığa konulacak; 19. Spawner'dan sonra 1. Spawner'a dönülüp Poppy'ler "${sellCmd}" ile satılacak...`,
       chalk.cyanBright
     );
     broadcastState();
 
-    // Her spawner'ı sırayla 1 kez işle ve hemen yandaki spawner'a geç:
-    // 1) Spawner'ı açtığında önce gülleri (poppy) envantere alıp "/sat hepsi" yaz
-    // 2) Ardından o spawner'dan 1 kere demirleri (iron_ingot) al, "/craft" ile SADECE demir blok yap, sandığa koy ve yandaki spawner'a geç!
+    // =========================================================================
+    // AŞAMA 1: 1. Spawner'dan 19. Spawner'a sırayla Demir Al -> /craft (Sadece Demir Blok) -> Sandığa Koy
+    // (Elinde < 9 demir külçesi kalırsa sandığa KOYMAZ, üstünde tutar; 9'a tamamlanınca blok yapıp koyar!)
+    // =========================================================================
     for (let i = 0; i < spawners.length; i++) {
       if (!session.bot || session.status !== 'online') break;
       const spPos = spawners[i];
 
-      // ADIM 1: Spawner deposunu aç, güller (poppy) varsa önce onları envantere alıp "/sat hepsi" yaz
-      let depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
+      const depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
       if (!depoWin) continue;
 
-      const poppyRes = await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'poppy', 0);
-      totalPoppyStacks += poppyRes.withdrawnStacks;
-
-      if (poppyRes.withdrawnStacks > 0 || countInventoryItemByName(bot, null, 'poppy') > 0) {
-        try {
-          bot.closeWindow(bot.currentWindow || depoWin);
-        } catch (_) {}
-        await new Promise((r) => setTimeout(r, 220));
-
-        try {
-          bot.chat(sellCmd);
-          session.lastAutoSellTime = Date.now();
-          session.lastSpawnerRoutineTime = Date.now();
-          addLog(
-            accountId,
-            'SPAWNER',
-            `🌹 [Spawner ${i + 1}/${spawners.length}] ${poppyRes.withdrawnStacks} yığın gül (poppy) alındı ve "${sellCmd}" ile satıldı.`,
-            chalk.magentaBright
-          );
-        } catch (_) {}
-        await new Promise((r) => setTimeout(r, 550));
-
-        // Gülleri sattıktan sonra demirleri almak için aynı spawner'ın deposunu 1 kez aç
-        depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
-        if (!depoWin) continue;
-      }
-
-      // ADIM 2: Bu spawner'dan SADECE 1 KERE demir külçelerini (iron_ingot) envantere çek
+      // Bu spawner'dan 1 kez demir külçelerini (iron_ingot) envantere al
       await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'iron_ingot', 1);
 
       try {
@@ -6262,57 +6411,117 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
       } catch (_) {}
       await new Promise((r) => setTimeout(r, 220));
 
-      // ADIM 3: Chatten "/craft" yaz ve 3x3 ızgarada SADECE Demir Blok (iron_block) üret
+      // Envanterde (önceki spawner'dan kalanlar dahil) >= 9 demir külçesi varsa "/craft" ile sadece Demir Blok yap
       const currentIngots = countInventoryItemByName(bot, null, 'iron_ingot');
       if (currentIngots >= 9) {
         addLog(
           accountId,
           'SPAWNER',
-          `🔨 [Spawner ${i + 1}/${spawners.length}] ${currentIngots} adet demir külçesi alındı, "/craft" ile sadece Demir Blok yapılıyor...`,
+          `🔨 [Spawner ${i + 1}/${spawners.length}] (${spPos.x}, ${spPos.y}, ${spPos.z}) ${currentIngots} demir külçesi "/craft" ile Demir Blok yapılıyor...`,
           chalk.cyan
         );
         const craftedNow = await craftAllIronIngotsViaChatCommand(bot, accountId);
         totalCraftedBlocks += craftedNow;
       }
 
-      // ADIM 4: Üretilen demir blokları (ve sonraki spawner'da /sat hepsi yaparken satılmaması için artan demirleri) sandığa koy, sonra yandaki spawner'a geç!
+      // SADECE Demir Blokları (iron_block) sandığa koy! (Artan < 9 demir külçesini sandığa koyma, elinde tut)
       const blocksInInv = countInventoryItemByName(bot, null, 'iron_block');
-      const remIngotsInInv = countInventoryItemByName(bot, null, 'iron_ingot');
-      if (blocksInInv > 0 || remIngotsInInv > 0) {
+      if (blocksInInv > 0) {
         const depStacks = await depositIronBlocksToNearbyChest(
           bot,
           session,
           accountId,
-          homePos,
-          true
+          spPos,
+          false
         );
         totalDepositedStacks += depStacks;
         if (depStacks > 0) {
           addLog(
             accountId,
             'SPAWNER',
-            `📦 [Spawner ${i + 1}/${spawners.length}] Demir bloklar sandığa konuldu (${depStacks} yığın). Yandaki spawner'a geçiliyor...`,
+            `📦 [Spawner ${i + 1}/${spawners.length}] ${blocksInInv} adet Demir Blok sandığa konuldu. Sıradaki spawner'a geçiliyor...`,
             chalk.green
           );
         }
       }
     }
 
-    // Son olarak çantada kalan poppy varsa "/sat hepsi" gönder ve başlangıç noktasına dön
-    if (countInventoryItemByName(bot, null, 'poppy') > 0) {
+    // 19. Spawner bittikten sonra elinde >= 9 demir külçesi kaldıysa onu da Demir Blok yapıp sandığa koy!
+    // (9 demirden az kaldıysa sandığa koymaz, birazdan poppy satarken /sat hepsi ile satılabilir)
+    const leftoverIngotsAfter19 = countInventoryItemByName(bot, null, 'iron_ingot');
+    if (leftoverIngotsAfter19 >= 9) {
+      const extraCrafted = await craftAllIronIngotsViaChatCommand(bot, accountId);
+      totalCraftedBlocks += extraCrafted;
+    }
+    if (countInventoryItemByName(bot, null, 'iron_block') > 0) {
+      const extraDep = await depositIronBlocksToNearbyChest(
+        bot,
+        session,
+        accountId,
+        spawners[spawners.length - 1],
+        false
+      );
+      totalDepositedStacks += extraDep;
+    }
+
+    // =========================================================================
+    // AŞAMA 2: 19. Spawner'dan sonra 1. Spawner'a geri dön ve sırayla Poppy'leri alıp "/sat hepsi" yaz!
+    // =========================================================================
+    addLog(
+      accountId,
+      'SPAWNER',
+      `🌹 19 Spawner demir blok işlemi tamamlandı! 1. Spawner'a (${firstSpawnerPos.x}, ${firstSpawnerPos.y}, ${firstSpawnerPos.z}) dönülüp Poppy satış turuna başlanıyor...`,
+      chalk.magentaBright
+    );
+
+    for (let i = 0; i < spawners.length; i++) {
+      if (!session.bot || session.status !== 'online') break;
+      const spPos = spawners[i];
+
+      const depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
+      if (!depoWin) continue;
+
+      const poppyRes = await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'poppy', 0);
+      totalPoppyStacks += poppyRes.withdrawnStacks;
+
+      try {
+        bot.closeWindow(bot.currentWindow || depoWin);
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 220));
+
+      if (poppyRes.withdrawnStacks > 0 || countInventoryItemByName(bot, null, 'poppy') > 0) {
+        try {
+          bot.chat(sellCmd);
+          session.lastAutoSellTime = Date.now();
+          session.lastSpawnerRoutineTime = Date.now();
+          addLog(
+            accountId,
+            'SPAWNER',
+            `💰 [Poppy ${i + 1}/${spawners.length}] (${spPos.x}, ${spPos.y}, ${spPos.z}) ${poppyRes.withdrawnStacks} yığın gül alındı ve "${sellCmd}" yazıldı.`,
+            chalk.magentaBright
+          );
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 520));
+      }
+    }
+
+    // En sonda çantada poppy veya < 9 demir kaldıysa "/sat hepsi" gönder ve 1. Spawner'ın yanına dön
+    const finalPoppies = countInventoryItemByName(bot, null, 'poppy');
+    const finalSmallIngots = countInventoryItemByName(bot, null, 'iron_ingot');
+    if (finalPoppies > 0 || (finalSmallIngots > 0 && finalSmallIngots < 9)) {
       try {
         bot.chat(sellCmd);
       } catch (_) {}
       await new Promise((r) => setTimeout(r, 400));
     }
 
-    await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
+    await navigateNearSpawnerOrChest(bot, session, firstSpawnerPos, 2.0);
 
     session.lastSpawnerRoutineTime = Date.now();
     addLog(
       accountId,
       'SPAWNER',
-      `✅ 🏭 1 Tur Tamamlandı! ${spawners.length} spawner işlendi • Üretilen Demir Blok: ${totalCraftedBlocks} • Sandığa Konulan: ${totalDepositedStacks} yığın • Satılan Poppy: ${totalPoppyStacks} yığın.`,
+      `✅ 🏭 1 Tur Tamamlandı! ${spawners.length} spawner sırayla işlendi • Üretilen Demir Blok: ${totalCraftedBlocks} • Sandığa Konulan: ${totalDepositedStacks} yığın • Satılan Poppy: ${totalPoppyStacks} yığın.`,
       chalk.greenBright
     );
     triggerSoundAlert('notify', accountId, 'Spawner Turu Tamamlandı');
@@ -14942,6 +15151,7 @@ const server = http.createServer(async (req, res) => {
           if (typeof body.enabled !== 'undefined') acc.autoSpawnerRoutine.enabled = Boolean(body.enabled);
           if (typeof body.intervalSec !== 'undefined') acc.autoSpawnerRoutine.intervalSec = Math.max(10, Number(body.intervalSec) || 30);
           if (typeof body.spawnerCount !== 'undefined') acc.autoSpawnerRoutine.spawnerCount = Math.max(1, Math.min(64, Number(body.spawnerCount) || 19));
+          if (typeof body.customCoords === 'string') acc.autoSpawnerRoutine.customCoords = body.customCoords.trim();
           saveConfig();
           if (acc.autoSpawnerRoutine.enabled) {
             startSpawnerRoutineLoop(accId);

@@ -2338,7 +2338,7 @@
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
                   <div class="auto-mode-title">Oto Spawner Demir & Poppy</div>
-                  <div class="auto-mode-desc">19 Spawner'dan önce gülleri /sat hepsi yapar, 1 kez demir çekip /craft ile sadece Demir Blok üretir.</div>
+                  <div class="auto-mode-desc">1'den 19'a sırayla demirleri /craft ile Demir Blok yapıp sandığa koyar; 19. Spawner'dan sonra 1.'ye dönüp Poppy'leri /sat hepsi yapar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
                   <button class="btn btn-outline btn-sm" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner Demir Blok + Poppy Satış Turunu Hemen Başlat">Şimdi Başlat</button>
@@ -2446,6 +2446,10 @@
                 <div>
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Sayısı (Adet)</label>
                   <input type="number" id="ctrlSpawnerCount" min="1" max="64" step="1" value="19" class="form-control" onchange="updateSpawnerRoutineConfig()" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Koordinat Sırası (Boş bırakılırsa 19 Spawner yılan sırasıyla gezilir — Özel sıra için her satıra X, Y, Z yazın)</label>
+                  <textarea id="ctrlSpawnerCustomCoords" rows="4" class="form-control" style="font-family: monospace; font-size: 11.5px; resize: vertical;" placeholder="-14401, 100, -7188&#10;-14403, 100, -7188&#10;-14405, 100, -7188&#10;-14407, 100, -7188 ..." onchange="updateSpawnerRoutineConfig()"></textarea>
                 </div>
               </div>
             </div>
@@ -4961,6 +4965,10 @@
       if (spCountEl && document.activeElement !== spCountEl) {
         spCountEl.value = spawnerCfg.spawnerCount || 19;
       }
+      const spCoordsEl = document.getElementById('ctrlSpawnerCustomCoords');
+      if (spCoordsEl && document.activeElement !== spCoordsEl) {
+        spCoordsEl.value = spawnerCfg.customCoords || '';
+      }
       const mIntervalEl = document.getElementById('ctrlMinerChestSellInterval');
       if (mIntervalEl && document.activeElement !== mIntervalEl) {
         mIntervalEl.value = minerChestCfg.intervalSec || 10;
@@ -7015,6 +7023,8 @@
     async function updateSpawnerRoutineConfig() {
       const intervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
       const countEl = document.getElementById('ctrlSpawnerCount');
+      const coordsEl = document.getElementById('ctrlSpawnerCustomCoords');
+      const customCoords = coordsEl ? coordsEl.value.trim() : '';
       const s = Math.max(10, parseInt(intervalEl ? intervalEl.value : 30, 10) || 30);
       const cnt = Math.max(1, Math.min(64, parseInt(countEl ? countEl.value : 19, 10) || 19));
       const helpEl = document.getElementById('spawnerRoutineIntervalHelp');
@@ -7024,7 +7034,7 @@
       if (!selectedAccountId) return;
       const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
       const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
-      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, enabled: isEnabled });
+      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, customCoords, enabled: isEnabled });
     }
 
     function moveBot(direction) {
