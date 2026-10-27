@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_multibot_coop_system_v52';
+const ENGINE_BUILD_ID = '20261027_multibot_coop_system_v53';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -4670,7 +4670,7 @@ function findNearestContainerBlock(bot, maxDist = 5.2) {
 // =============================================================================
 // ÇOKLU BOT İŞ BİRLİĞİ VE KOORDİNASYON HAVUZU (MULTI-BOT COOPERATION POOL)
 // =============================================================================
-// 3 botun aynı ada/bölgede eşzamanlı olarak çakışmadan, birbirinin bloğunu koymaya
+// Botların aynı ada/bölgede eşzamanlı olarak çakışmadan, birbirinin bloğunu koymaya
 // veya aynı toprağı çapalamaya/ekmeye çalışmadan dinamik iş paylaşımı yapmasını sağlar.
 const sharedBlockClaims = {
   builder: new Map(), // posKey -> { accountId, expiresAt }
