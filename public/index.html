@@ -2036,9 +2036,6 @@
           <button class="btn btn-sm btn-success" style="flex: 1; justify-content: center; font-size: 11.5px; padding: 5px 8px;" onclick="connectAll()" title="Tüm hesapları sunucuya bağlar">▶ Tümünü Başlat</button>
           <button class="btn btn-sm btn-danger" style="flex: 1; justify-content: center; font-size: 11.5px; padding: 5px 8px;" onclick="disconnectAll()" title="Tüm bağlı botları durdurur">■ Tümünü Durdur</button>
         </div>
-        <button id="btnQuickMultiBotCoop" type="button" class="btn btn-sm" style="width: 100%; justify-content: center; font-size: 11px; padding: 6px 8px; font-weight: 700; border-radius: 6px; transition: all 0.2s;" onclick="toggleMultiBotCooperationQuick()" title="3'lü bot koordinasyon modunu açıp kapatır">
-          🤝 3'lü İş Birliği: AÇIK
-        </button>
       </div>
       <div class="account-list" id="accountList"></div>
     </aside>
@@ -2905,6 +2902,7 @@
                   <button type="button" class="btn btn-danger" style="flex: 0.9;" onclick="sendBotAction('builderStop')">Sıfırla</button>
                   <button type="button" class="btn btn-outline btn-sm" id="btnBuilderRestockToggle" style="width: 100%; font-weight: 700;" onclick="toggleBuilderContinuousRestock()">📦 Yakındaki Sandıktan Malzeme Çek: AÇIK (Sürekli)</button>
                   <button type="button" class="btn btn-outline btn-sm" id="btnBuilderChainToggle" style="width: 100%; font-weight: 700;" onclick="toggleBuilderChainPipeline()">🔄 Oto-İnşa Bitince Çapala ➔ Ek: AÇIK</button>
+                  <button type="button" class="btn btn-outline btn-sm" id="btnBuilderCoopToggle" style="width: 100%; font-weight: 700;" onclick="toggleMultiBotCooperationQuick()" title="Botlar arası iş birliği modunu açıp kapatır">🤝 İş Birliği: AÇIK</button>
                 </div>
               </div>
             </div>
@@ -3047,8 +3045,8 @@
               <button type="button" class="set-nav-btn" id="setNav-coop" onclick="switchSettingsCategory('coop')">
                 <span class="set-nav-icon">🤝</span>
                 <div class="set-nav-text">
-                  <strong>3'lü Bot Koordinasyonu</strong>
-                  <small>Ortak ada inşa, çapa, ekim</small>
+                  <strong>İş Birliği &amp; Koordinasyon</strong>
+                  <small>Botlar arası ortak inşa, çapa, ekim</small>
                 </div>
               </button>
               <button type="button" class="set-nav-btn" id="setNav-updates" onclick="switchSettingsCategory('updates')">
@@ -3551,25 +3549,25 @@
                   </div>
                 </div>
 
-                <!-- Çoklu Bot Koordinasyonu & İş Birliği Paneli -->
+                <!-- Botlar Arası İş Birliği Paneli -->
                 <div class="settings-pane" id="setPane-coop">
                   <div class="settings-header">
-                    <h2>🤝 3'lü Bot Koordinasyon &amp; İş Birliği Sistemi</h2>
-                    <p>3 botun aynı ada/bölgede eşzamanlı olarak çakışmadan, birbirinin bloğunu koymaya veya aynı toprağı çapalamaya/ekmeye çalışmadan dinamik iş paylaşımı yapmasını sağlar.</p>
+                    <h2>🤝 Botlar Arası İş Birliği &amp; Koordinasyon Sistemi</h2>
+                    <p>Botların aynı ada/bölgede eşzamanlı olarak çakışmadan, birbirinin bloğunu koymaya veya aynı toprağı çapalamaya/ekmeye çalışmadan dinamik iş paylaşımı yapmasını sağlar.</p>
                   </div>
 
                   <div class="settings-card">
                     <div class="settings-card-title">
-                      <span>Ana Koordinasyon Modu</span>
+                      <span>Ana İş Birliği Modu</span>
                       <span class="badge" style="background:rgba(34, 197, 94, 0.15); color:#22c55e; border:1px solid #22c55e;">Önerilen</span>
                     </div>
                     <label class="toggle-label" style="font-size: 13.5px; font-weight: 700; color: #ffffff; margin-bottom: 6px;">
                       <input type="checkbox" id="setCoopEnabled" checked />
-                      3'lü Bot Koordinasyonunu Etkinleştir (Ortak Çalışma Modu)
+                      İş Birliği Modunu Etkinleştir (Ortak Çalışma)
                     </label>
                     <div class="form-hint">
-                      Bu seçenek <strong>AÇIK</strong> olduğunda botlar hafıza içi rezervasyon havuzu (Shared Claims Pool) üzerinden haberleşir. Bir botun yöneldiği hedef blok diğer botlar tarafından atlanır ve botlar adanın farklı yönlerine dağılarak çalışır.<br>
-                      Bu seçenek <strong>KAPALI</strong> olduğunda tüm botlar tamamen <strong>bağımsız (bireysel/solo)</strong> modda çalışır. Sol menüdeki hızlı butondan da dilediğiniz zaman tek tıkla açıp kapatabilirsiniz.
+                      Bu seçenek <strong>AÇIK</strong> olduğunda botlar dinamik rezervasyon havuzu (Shared Claims Pool) üzerinden haberleşir. Bir botun yöneldiği hedef blok diğer botlar tarafından atlanır ve botlar adanın farklı yönlerine dağılarak çalışır.<br>
+                      Bu seçenek <strong>KAPALI</strong> olduğunda tüm botlar tamamen <strong>bağımsız (bireysel/solo)</strong> modda çalışır. Oto-İnşa sekmesindeki butondan da dilediğiniz zaman tek tıkla açıp kapatabilirsiniz.
                     </div>
                   </div>
 
@@ -6336,6 +6334,8 @@
         }
       }
 
+      updateMultiBotCoopButtonUI();
+
       const chkMove = document.getElementById('builderAutoMove');
       if (chkMove) chkMove.checked = bld.autoMove !== false;
 
@@ -7571,22 +7571,34 @@
     }
 
     function updateMultiBotCoopButtonUI() {
-      const btn = document.getElementById('btnQuickMultiBotCoop');
-      if (!btn) return;
+      const btns = [
+        document.getElementById('btnBuilderCoopToggle'),
+        document.getElementById('btnQuickMultiBotCoop')
+      ].filter(Boolean);
+      if (btns.length === 0) return;
+
       const coopEnabled = appState.config?.multiBotCooperation?.enabled !== false;
-      if (coopEnabled) {
-        btn.innerHTML = '🤝 3\'lü İş Birliği: <span style="color:#22c55e;">AÇIK</span>';
-        btn.style.background = 'rgba(34, 197, 94, 0.12)';
-        btn.style.border = '1px solid #22c55e';
-        btn.style.color = '#86efac';
-        btn.title = "3 bot koordineli ve dinamik paylaşarak çalışıyor. Tıklayarak bireysel moda geçebilirsiniz.";
-      } else {
-        btn.innerHTML = '👤 Bireysel Mod: <span style="color:#94a3b8;">AÇIK</span>';
-        btn.style.background = 'rgba(255, 255, 255, 0.05)';
-        btn.style.border = '1px solid #475569';
-        btn.style.color = '#cbd5e1';
-        btn.title = "Botlar birbirinden bağımsız (solo) çalışıyor. Tıklayarak 3'lü iş birliği modunu açabilirsiniz.";
-      }
+      btns.forEach(btn => {
+        if (coopEnabled) {
+          btn.className = 'btn btn-primary btn-sm';
+          btn.style.width = '100%';
+          btn.style.fontWeight = '700';
+          btn.style.background = 'rgba(34, 197, 94, 0.18)';
+          btn.style.borderColor = '#22c55e';
+          btn.style.color = '#4ade80';
+          btn.innerHTML = '🤝 İş Birliği: AÇIK';
+          btn.title = "Botlar koordineli ve dinamik iş paylaşarak çalışıyor. Tıklayarak bireysel moda geçebilirsiniz.";
+        } else {
+          btn.className = 'btn btn-outline btn-sm';
+          btn.style.width = '100%';
+          btn.style.fontWeight = '700';
+          btn.style.background = 'rgba(239, 68, 68, 0.12)';
+          btn.style.borderColor = '#ef4444';
+          btn.style.color = '#f87171';
+          btn.innerHTML = '👤 Bireysel Mod (İş Birliği Kapalı)';
+          btn.title = "Botlar birbirinden bağımsız (solo) çalışıyor. Tıklayarak iş birliği modunu açabilirsiniz.";
+        }
+      });
     }
 
     async function toggleMultiBotCooperationQuick() {
@@ -7598,7 +7610,7 @@
         appState.config.multiBotCooperation = res.multiBotCooperation;
         updateMultiBotCoopButtonUI();
         if (nextState) {
-          showAppToast('🤝 3\'lü Bot Koordinasyon Modu AÇILDI! Botlar dinamik iş paylaşımı yapacak.', 'success');
+          showAppToast('🤝 İş Birliği Modu AÇILDI! Botlar dinamik iş paylaşımı yapacak.', 'success');
         } else {
           showAppToast('👤 Bireysel Çalışma Modu AÇILDI! Botlar birbirinden bağımsız çalışacak.', 'info');
         }
