@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_miner_chest_cobble_sell_v44",
+  "buildId": "20261027_builder_perf_turbo_v44",
   "version": "2.2.13",
-  "releaseNotes": "Miner Sandık menüsünden yalnızca cobblestone yığınlarını çekip otomatik '/sat hepsi' yapan akıllı satış modülü eklendi.",
+  "releaseNotes": "Oto-İnşa (Auto-Builder) modülündeki CPU kilitlenmeleri, katman tarama gecikmeleri, yürüyüş/adım takılmaları ve A* yol bulma optimizasyonları yapıldı (Ultra akıcı inşa modu).",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
