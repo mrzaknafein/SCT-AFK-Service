@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_builder_perf_turbo_v44",
-  "version": "2.2.13",
-  "releaseNotes": "Oto-İnşa (Auto-Builder) modülündeki CPU kilitlenmeleri, katman tarama gecikmeleri, yürüyüş/adım takılmaları ve A* yol bulma optimizasyonları yapıldı (Ultra akıcı inşa modu).",
+  "buildId": "20261027_miner_chest_and_turbo_builder_v45",
+  "version": "2.2.14",
+  "releaseNotes": "Arkadaşın yeni özelliği (Miner Sandık Cobblestone otomatik çek & /sat hepsi modülü) + Oto-İnşa (Auto-Builder) akıcı performans optimizasyonları ve UI geliştirmeleri entegre edildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
