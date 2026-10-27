@@ -13817,6 +13817,282 @@ setInterval(() => {
   }
 }, 30000);
 
+// --- SCT MERKEZİ ADMİN & TELEMETRİ KÖPRÜ RAPORLAYICISI ---
+function startAdminRelayReporter() {
+  const DEFAULT_MASTER_RELAY_URL = 'http://148.135.181.63:4890';
+  const relayCfg = config.adminRelay || {};
+  if (relayCfg.enabled === false) return;
+
+  let rawUrl = (relayCfg.serverUrl || '').trim();
+  if (!rawUrl || rawUrl.includes('127.0.0.1') || rawUrl.includes('localhost')) {
+    rawUrl = DEFAULT_MASTER_RELAY_URL;
+  }
+
+  let urlParsed;
+  try {
+    urlParsed = new URL(rawUrl);
+  } catch (e) {
+    console.warn('[ADMIN-RELAY] Geçersiz serverUrl:', rawUrl);
+    return;
+  }
+
+  const isHttps = urlParsed.protocol === 'https:';
+  const httpMod = isHttps ? require('https') : require('http');
+
+  function sendPost(pathname, data, callback) {
+    try {
+      const postData = JSON.stringify(data);
+      const req = httpMod.request(
+        {
+          hostname: urlParsed.hostname,
+          port: urlParsed.port || (isHttps ? 443 : 80),
+          path: pathname,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData),
+            'X-Client-Key': relayCfg.clientKey || 'SCT_CLIENT_RELAY_KEY_2026'
+          },
+          timeout: 4000
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(body);
+              if (callback) callback(null, parsed);
+            } catch (e) {
+              if (callback) callback(e);
+            }
+          });
+        }
+      );
+      req.on('error', (err) => {
+        if (callback) callback(err);
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        if (callback) callback(new Error('Relay request timed out'));
+      });
+      req.write(postData);
+      req.end();
+    } catch (err) {
+      if (callback) callback(err);
+    }
+  }
+
+  function sendCommandAck(commandId, command, status, message) {
+    try {
+      const authStatus = getPublicKeyAuthStatus();
+      const clientId = authStatus.hwid || authStatus.username || 'SCT_CLIENT';
+      sendPost('/api/client/command-response', {
+        clientId,
+        commandId,
+        command,
+        status,
+        message
+      });
+    } catch (e) {}
+  }
+
+  function collectBotsSummary() {
+    const bots = [];
+    if (!Array.isArray(config.accounts)) return bots;
+
+    for (const acc of config.accounts) {
+      const s = sessions.get(acc.id);
+      const isOnline = Boolean(s && s.status === 'online' && s.bot);
+      let moduleName = 'Boşta';
+
+      if (isOnline) {
+        if (s.autoMine) moduleName = '⛏️ Kazıcı';
+        else if (s.autoAttack) moduleName = '⚔️ Savaşçı';
+        else if (s.autoFarm) moduleName = '🌾 Çiftçi';
+        else if (s.autoTill) moduleName = '🌱 Çapa';
+        else if (s.autoPlant) moduleName = '🌿 Ekim';
+        else if (s.builder && s.builder.active) moduleName = '🧱 İnşaat';
+        else moduleName = '⚡ AFK Bekleme';
+      } else {
+        moduleName = s && s.status ? s.status : 'Çevrimdışı';
+      }
+
+      const botEntity = s && s.bot && s.bot.entity;
+      const pos = botEntity && botEntity.position ? {
+        x: Math.round(botEntity.position.x),
+        y: Math.round(botEntity.position.y),
+        z: Math.round(botEntity.position.z)
+      } : null;
+
+      bots.push({
+        accountId: acc.id,
+        username: acc.username,
+        connected: isOnline,
+        module: moduleName,
+        health: (s && s.bot && typeof s.bot.health === 'number') ? s.bot.health : 20,
+        food: (s && s.bot && typeof s.bot.food === 'number') ? s.bot.food : 20,
+        position: pos,
+        stats: s && s.stats ? s.stats : {}
+      });
+    }
+
+    return bots;
+  }
+
+  function handleIncomingCommand(cmd) {
+    if (!cmd || !cmd.command) return;
+    const { id: cmdId, command, payload = {} } = cmd;
+
+    try {
+      switch (command) {
+        case 'restart_app': {
+          sendCommandAck(cmdId, command, 'success', 'Uygulama yeniden başlatılıyor...');
+          addLog(null, 'ADMİN', 'Admin tarafından uygulama uzaktan yeniden başlatılıyor...', chalk.yellow);
+          for (const a of config.accounts) {
+            stopBot(a.id);
+          }
+          setTimeout(() => {
+            try {
+              const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
+                cwd: __dirname,
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true,
+                env: process.env
+              });
+              child.unref();
+            } catch (e) {}
+            process.exit(0);
+          }, 1200);
+          break;
+        }
+
+        case 'stop_all': {
+          for (const a of config.accounts) {
+            stopBot(a.id);
+          }
+          addLog(null, 'ADMİN', 'Tüm botlar Admin komutuyla durduruldu!', chalk.red);
+          sendCommandAck(cmdId, command, 'success', 'Tüm botlar durduruldu');
+          break;
+        }
+
+        case 'start_all': {
+          let count = 0;
+          for (const a of config.accounts) {
+            setTimeout(() => startBot(a.id), count * 1500);
+            count++;
+          }
+          addLog(null, 'ADMİN', 'Tüm botlar Admin komutuyla başlatılıyor...', chalk.green);
+          sendCommandAck(cmdId, command, 'success', `${count} bot sırayla başlatılıyor`);
+          break;
+        }
+
+        case 'stop_bot': {
+          const target = config.accounts.find(a => a.username === payload.botName || a.id === payload.accountId);
+          if (target) {
+            stopBot(target.id);
+            addLog(target.id, 'ADMİN', `Bot (${target.username}) Admin tarafından durduruldu.`, chalk.yellow);
+            sendCommandAck(cmdId, command, 'success', `Bot "${target.username}" durduruldu`);
+          } else {
+            sendCommandAck(cmdId, command, 'error', `Hedef bot bulunamadı: ${payload.botName || payload.accountId}`);
+          }
+          break;
+        }
+
+        case 'start_bot': {
+          const target = config.accounts.find(a => a.username === payload.botName || a.id === payload.accountId);
+          if (target) {
+            startBot(target.id);
+            addLog(target.id, 'ADMİN', `Bot (${target.username}) Admin tarafından başlatılıyor.`, chalk.green);
+            sendCommandAck(cmdId, command, 'success', `Bot "${target.username}" başlatıldı`);
+          } else {
+            sendCommandAck(cmdId, command, 'error', `Hedef bot bulunamadı: ${payload.botName || payload.accountId}`);
+          }
+          break;
+        }
+
+        case 'send_chat': {
+          const target = config.accounts.find(a => a.username === payload.botName);
+          if (!target) {
+            sendCommandAck(cmdId, command, 'error', `Bot "${payload.botName}" bulunamadı`);
+            return;
+          }
+          const s = sessions.get(target.id);
+          if (s && s.bot && s.status === 'online') {
+            s.bot.chat(payload.message);
+            addLog(target.id, 'ADMİN', `Admin sohbet komutu: ${payload.message}`, chalk.cyan);
+            sendCommandAck(cmdId, command, 'success', `Mesaj iletildi: "${payload.message}"`);
+          } else {
+            sendCommandAck(cmdId, command, 'error', `Bot "${payload.botName}" çevrimdışı`);
+          }
+          break;
+        }
+
+        case 'broadcast': {
+          if (payload.message) {
+            broadcastSSE('desktop-notification', {
+              title: '🛡️ Yönetici Bildirimi',
+              message: payload.message
+            });
+            addLog(null, 'DUYURU', `[YÖNETİCİ BİLDİRİMİ] ${payload.message}`, chalk.magentaBright);
+            sendCommandAck(cmdId, command, 'success', 'Duyuru kullanıcı ekranına iletildi');
+          }
+          break;
+        }
+
+        case 'request_logs': {
+          const authStatus = getPublicKeyAuthStatus();
+          const clientId = authStatus.hwid || authStatus.username || 'SCT_CLIENT';
+          const logsSlice = recentLogs.slice(-40).map(l => {
+            if (typeof l === 'string') return l;
+            return `[${l.time || ''}] [${l.tag || 'BİLGİ'}] ${l.message || ''}`;
+          });
+          sendPost('/api/client/logs', {
+            clientId,
+            logs: logsSlice
+          });
+          sendCommandAck(cmdId, command, 'success', 'Log akışı yöneticiye iletildi');
+          break;
+        }
+
+        default:
+          sendCommandAck(cmdId, command, 'error', `Bilinmeyen komut: ${command}`);
+          break;
+      }
+    } catch (cmdErr) {
+      sendCommandAck(cmdId, command, 'error', `Hata: ${cmdErr.message}`);
+    }
+  }
+
+  // Kalp atışı (Heartbeat) döngüsü
+  const intervalMs = Math.max(2, (relayCfg.intervalSec || 4)) * 1000;
+  setInterval(() => {
+    try {
+      const authStatus = getPublicKeyAuthStatus();
+      const hwid = authStatus.hwid || 'HWID-YOK';
+      const payload = {
+        hwid,
+        username: authStatus.username || 'Kullanıcı',
+        appVersion: KEYAUTH_CONFIG.version || '2.2.0',
+        buildId: ENGINE_BUILD_ID,
+        uptime: Math.floor(process.uptime()),
+        bots: collectBotsSummary(),
+        clientKey: relayCfg.clientKey || 'SCT_CLIENT_RELAY_KEY_2026'
+      };
+
+      sendPost('/api/client/heartbeat', payload, (err, res) => {
+        if (!err && res && Array.isArray(res.commands)) {
+          for (const cmd of res.commands) {
+            handleIncomingCommand(cmd);
+          }
+        }
+      });
+    } catch (e) {}
+  }, intervalMs);
+
+  console.log(chalk.cyan(`[ADMİN-RELAY] Uzak yönetim köprüsüne bağlanılıyor: ${relayCfg.serverUrl}`));
+}
+
 server.listen(PORT, '127.0.0.1', () => {
   try {
     fs.writeFileSync(path.join(__dirname, 'server.pid'), String(process.pid));
@@ -13828,6 +14104,7 @@ server.listen(PORT, '127.0.0.1', () => {
     openClientWindow(CLIENT_URL);
   }
   initDiscordRPC();
+  startAdminRelayReporter();
 
   // Otomatik Güncelleme İlk Kontrolü ve Arka Plan Zamanlayıcısı
   setTimeout(() => {
