@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_desktop_notification_fix_v51",
-  "version": "2.2.20",
-  "releaseNotes": "Windows Masaüstü (Toast) Bildirimleri Düzeltildi: Kullanıcı kapattığında masaüstü bildirimi gönderilmesi kesin olarak engellendi, sunucu komut/hata/giriş mesajlarının yanlışlıkla 'Adınız Geçti (Mention)' olarak tetiklenmesi önlendi, Ayarlar sekmesine bağımsız Masaüstü Bildirimleri kontrol paneli eklendi.",
+  "buildId": "20261027_multibot_coop_system_v52",
+  "version": "2.2.21",
+  "releaseNotes": "3'lü Bot Koordinasyon & İş Birliği Sistemi (Multi-Bot Coop): 3 botun aynı adada inşaat, çapalama ve ekim yaparken dinamik iş paylaşımı yapması sağlandı. Blok rezervasyon havuzu (Shared Claims) ile aynı bloğa çakışma engellendi, sandık sırası (Chest Mutex) eklendi, düşme korumalı sınır dağılımı sağlandı. Sol menüye ve Ayarlar sekmesine istenildiğinde tek tıkla Bireysel (Solo) veya 3'lü İş Birliği moduna geçiş anahtarı eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
