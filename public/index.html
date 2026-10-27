@@ -656,7 +656,7 @@
     .tag-CHAT { color: #f4f5f7; }
     .tag-BAĞLANTI, .tag-SPAWN, .tag-OTO-YEMEK { color: #ffffff; }
     .tag-OTO-GİRİŞ, .tag-OTO-KAYIT, .tag-OTO-EPOSTA, .tag-OTO-KOMUT { color: #d1d5db; }
-    .tag-ANTI-AFK, .tag-OTO-KAZIM, .tag-OTO-SALDIRI, .tag-OTO-SAĞTIK, .tag-OTO-SANDIK, .tag-MINER-SANDIK, .tag-SPAWNER, .tag-OTO-CAPTCHA { color: #ffffff; }
+    .tag-ANTI-AFK, .tag-OTO-KAZIM, .tag-OTO-SALDIRI, .tag-OTO-SAĞTIK, .tag-OTO-SANDIK, .tag-MINER-SANDIK, .tag-OTO-CAPTCHA { color: #ffffff; }
     .tag-HATA, .tag-ATILDI, .tag-ÖLÜM, .tag-UYARI { color: #f87171; }
     .tag-SEN, .tag-ENVANTER, .tag-MENÜ, .tag-HAREKET, .tag-EYLEM, .tag-PROXY { color: #e5e7eb; }
 
@@ -2335,19 +2335,6 @@
                 </div>
               </div>
 
-              <div class="auto-mode-card">
-                <div class="auto-mode-info">
-                  <div class="auto-mode-title">Oto Spawner Demir & Poppy</div>
-                  <div class="auto-mode-desc">19 Spawner'dan demirleri /craft ile blok yapıp sandığa koyar, poppy'leri satar.</div>
-                </div>
-                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner için 1 tam tur (Demir Blok + Poppy Satış) çalıştır">Şimdi 1 Tur</button>
-                  <button class="btn btn-outline btn-sm" id="btnAutoSpawnerRoutine" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoSpawnerRoutine')">
-                    <span id="badgeAutoSpawnerRoutine">Kapalı</span>
-                  </button>
-                </div>
-              </div>
-
             </div>
           </div>
 
@@ -2405,7 +2392,6 @@
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('repairHeldItemNow')">Şimdi Tamir Et</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('depositChestNow')">Sandığa Boşalt</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('minerChestSellNow')">Miner Sandık Taş Sat</button>
-              <button class="btn btn-sm btn-outline" onclick="sendBotAction('spawnerRoutineNow')">Spawner Turu Başlat</button>
               <button class="btn btn-sm btn-danger" onclick="sendBotAction('dropAll')">Çantayı Boşalt</button>
             </div>
           </div>
@@ -2438,14 +2424,6 @@
                 <div>
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Miner Sandık Satış Aralığı (Sn) <span id="minerChestSellIntervalHelp" style="color: var(--text-muted);">(10 sn)</span></label>
                   <input type="number" id="ctrlMinerChestSellInterval" min="5" max="86400" step="5" value="10" class="form-control" onchange="updateMinerChestSellInterval(this.value)" />
-                </div>
-                <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Tur Aralığı (Sn) <span id="spawnerRoutineIntervalHelp" style="color: var(--text-muted);">(30 sn)</span></label>
-                  <input type="number" id="ctrlSpawnerRoutineInterval" min="10" max="86400" step="5" value="30" class="form-control" onchange="updateSpawnerRoutineConfig()" />
-                </div>
-                <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Sayısı (Adet)</label>
-                  <input type="number" id="ctrlSpawnerCount" min="1" max="64" step="1" value="19" class="form-control" onchange="updateSpawnerRoutineConfig()" />
                 </div>
               </div>
             </div>
@@ -3267,13 +3245,54 @@
                   <div class="settings-card">
                     <div class="settings-card-title">
                       <span>Ses Sistemi Ana Anahtarı</span>
-                      <button type="button" class="btn btn-sm btn-outline" onclick="playAlertSound('damage')">Sesi Test Et</button>
+                      <button type="button" class="btn btn-sm btn-outline" onclick="testCurrentSound()">Sesi Test Et</button>
                     </div>
                     <label class="toggle-label" style="font-size: 13.5px; font-weight: 700; color: #ffffff; margin-bottom: 6px;">
                       <input type="checkbox" id="setSoundEnabled" checked />
                       Masaüstü Sesli Uyarıları Etkinleştir
                     </label>
-                    <div class="form-hint">Web Audio API ile düşük gecikmeli temiz ses sinyalleri üretilir.</div>
+                    <div class="form-hint">Web Audio API ile düşük gecikmeli temiz ses sinyalleri üretilir. Bu anahtar kapalı olduğunda hiçbir bildirim sesi çalınmaz.</div>
+                  </div>
+
+                  <div class="settings-card">
+                    <div class="settings-card-title">
+                      <span>Ses Teması ve Düzeyi</span>
+                      <span class="badge" style="background:#262934; color:#00f3ff;">Özelleştirme</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 8px;">
+                      <div>
+                        <label class="form-label" style="font-size: 12px; margin-bottom: 4px; display: block; color: #94a3b8;">Bildirim Sesi Teması:</label>
+                        <select id="setSoundTheme" class="form-input" style="font-weight: 600; color: #00f3ff;" onchange="testCurrentSound()">
+                          <option value="cyber">⚡ Cyber Synth (Modern &amp; Keskin)</option>
+                          <option value="chime">🔔 Soft Chime (Yumuşak Melodik Akor)</option>
+                          <option value="arcade">👾 8-Bit Arcade (Retro Oyun Bip)</option>
+                          <option value="radar">📡 Radar Ping (Kristal &amp; Fütüristik)</option>
+                          <option value="subtle">🪵 Subtle Tok (Tok &amp; Sessiz Gece Modu)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                          <label class="form-label" style="font-size: 12px; margin: 0; color: #94a3b8;">Ses Düzeyi:</label>
+                          <span id="soundVolumeLabel" class="badge" style="background: rgba(0, 243, 255, 0.15); color: #00f3ff; font-weight: 700;">35%</span>
+                        </div>
+                        <input type="range" id="setSoundVolume" min="5" max="100" value="35" style="width: 100%; accent-color: #00f3ff; cursor: pointer;" oninput="updateSoundVolumeLabel(this.value)" onchange="testCurrentSound()" />
+                      </div>
+                    </div>
+
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 14px; padding-top: 10px; border-top: 1px dashed rgba(255, 255, 255, 0.08);">
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 12px; color: #94a3b8;">Örnek Olay:</span>
+                        <select id="setSoundTestType" class="form-input" style="padding: 4px 8px; font-size: 12px; width: auto; min-width: 130px;">
+                          <option value="mention">💬 Mention (Sohbet)</option>
+                          <option value="damage">🩸 Hasar / Düşük Can</option>
+                          <option value="disconnect">⚡ Bağlantı Kopması</option>
+                          <option value="captcha">🎯 Captcha Çözümü</option>
+                          <option value="notify">🔔 Genel Bildirim</option>
+                        </select>
+                      </div>
+                      <button type="button" class="btn btn-sm btn-primary" onclick="testCurrentSound()" style="padding: 5px 14px;">▶ Seçili Sesi Dinle</button>
+                    </div>
                   </div>
 
                   <div class="settings-card">
@@ -3293,6 +3312,9 @@
                       </label>
                       <label class="toggle-label" style="font-size: 12.5px; background: var(--bg-card); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);">
                         <input type="checkbox" id="setSoundCaptcha" checked /> 🎯 Captcha Çözümü
+                      </label>
+                      <label class="toggle-label" style="font-size: 12.5px; background: var(--bg-card); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);">
+                        <input type="checkbox" id="setSoundNotify" checked /> 🔔 Otomasyon Bildirimleri (Tamir/Satış)
                       </label>
                     </div>
                   </div>
@@ -4250,8 +4272,9 @@
             playAlertSound(payload.data.alertType || 'damage');
           } else if (payload.type === 'desktop-notification') {
             showBrowserDesktopNotification(payload.data?.title, payload.data?.body);
-            if (payload.data?.message || payload.data?.body) {
-              showAdminBroadcastModal(payload.data?.title, payload.data?.message || payload.data?.body);
+            const notifMsg = payload.data?.message || payload.data?.body;
+            if (notifMsg && !payload.data?.silent) {
+              showAppToast(`📢 [${payload.data?.title || 'Bildirim'}] ${notifMsg}`, 'info');
             }
           } else if (payload.type === 'admin-broadcast') {
             showAdminBroadcastModal(payload.data?.title, payload.data?.message);
@@ -4271,7 +4294,7 @@
       if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('tr-TR');
 
       if (modal) modal.classList.add('open');
-      try { playAlertSound('damage'); } catch (e) {}
+      try { playAlertSound('mention'); } catch (e) {}
     }
 
     function closeAdminBroadcastModal() {
@@ -4285,39 +4308,146 @@
     }
 
     let audioCtx = null;
-    function playAlertSound(type = 'damage') {
+
+    function updateSoundVolumeLabel(val) {
+      const lbl = document.getElementById('soundVolumeLabel');
+      if (lbl) lbl.textContent = `${val}%`;
+    }
+
+    function testCurrentSound() {
+      const themeEl = document.getElementById('setSoundTheme');
+      const volEl = document.getElementById('setSoundVolume');
+      const typeEl = document.getElementById('setSoundTestType');
+      const theme = themeEl ? themeEl.value : 'cyber';
+      const vol = volEl ? Number(volEl.value) : 35;
+      const type = typeEl ? typeEl.value : 'mention';
+      playAlertSound(type, true, theme, vol);
+    }
+
+    function playToneSequence(notes, waveType, stepGap, duration, baseGain, now, attackTime = 0.008) {
+      if (!audioCtx) return;
+      notes.forEach((freq, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const startTime = now + idx * stepGap;
+        const stopTime = startTime + duration;
+
+        osc.type = waveType;
+        osc.frequency.setValueAtTime(freq, startTime);
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.linearRampToValueAtTime(baseGain, startTime + attackTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, stopTime);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(startTime);
+        osc.stop(stopTime + 0.02);
+      });
+    }
+
+    function playAlertSound(type = 'damage', forcePreview = false, overrideTheme = null, overrideVolume = null) {
       try {
+        const cfg = (typeof appState !== 'undefined' && appState?.config?.soundAlerts) || {};
+
+        // Sıkı sessize alma kontrolü: Sesler kapalıysa hiçbir bildirim sesini çalma
+        if (!forcePreview) {
+          if (cfg.enabled === false) return;
+          if (type === 'damage' && cfg.onDamage === false) return;
+          if (type === 'disconnect' && cfg.onDisconnect === false) return;
+          if (type === 'mention' && cfg.onMention === false) return;
+          if (type === 'captcha' && cfg.onCaptcha === false) return;
+          if (type === 'notify' && cfg.onNotify === false) return;
+        }
+
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
         if (!audioCtx) {
-          const Ctx = window.AudioContext || window.webkitAudioContext;
-          if (!Ctx) return;
           audioCtx = new Ctx();
         }
         if (audioCtx.state === 'suspended') {
           audioCtx.resume();
         }
-        const now = audioCtx.currentTime;
-        const notes =
-          type === 'damage'
-            ? [520, 340, 520]
-            : type === 'disconnect'
-            ? [440, 310]
-            : type === 'captcha'
-            ? [587, 784]
-            : [660, 880];
 
-        notes.forEach((freq, idx) => {
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.type = type === 'damage' ? 'sawtooth' : 'sine';
-          osc.frequency.setValueAtTime(freq, now + idx * 0.14);
-          gain.gain.setValueAtTime(0.14, now + idx * 0.14);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.12);
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.start(now + idx * 0.14);
-          osc.stop(now + idx * 0.14 + 0.13);
-        });
-      } catch (e) {}
+        const theme = overrideTheme || cfg.theme || 'cyber';
+        const volumeVal = overrideVolume !== null && overrideVolume !== undefined
+          ? overrideVolume
+          : (typeof cfg.volume === 'number' ? cfg.volume : 35);
+
+        // Normalize gain: Kullanıcı ses seviyesini kulağa hoş gelecek ölçeğe dönüştür
+        const baseGain = Math.max(0.005, Math.min(0.6, (volumeVal / 100) * 0.35));
+        const now = audioCtx.currentTime;
+
+        if (theme === 'chime') {
+          // Soft Chime (Yumuşak & Melodik Akor) - Sine wave, pürüzsüz geçiş
+          if (type === 'damage') {
+            playToneSequence([440, 415, 370], 'sine', 0.14, 0.22, baseGain, now, 0.025);
+          } else if (type === 'disconnect') {
+            playToneSequence([494, 370], 'sine', 0.16, 0.24, baseGain, now, 0.025);
+          } else if (type === 'captcha') {
+            playToneSequence([523, 659, 784, 1046], 'sine', 0.11, 0.22, baseGain, now, 0.02);
+          } else if (type === 'mention') {
+            playToneSequence([659, 784], 'sine', 0.14, 0.24, baseGain, now, 0.02);
+          } else {
+            playToneSequence([523, 659], 'sine', 0.12, 0.22, baseGain, now, 0.02);
+          }
+        } else if (theme === 'arcade') {
+          // 8-Bit Arcade (Retro Oyun Bip) - Square wave, keskin atak
+          if (type === 'damage') {
+            playToneSequence([240, 160, 90], 'square', 0.055, 0.05, baseGain * 0.85, now, 0.004);
+          } else if (type === 'disconnect') {
+            playToneSequence([440, 330, 220, 146], 'square', 0.07, 0.06, baseGain * 0.85, now, 0.004);
+          } else if (type === 'captcha') {
+            playToneSequence([659, 987, 1318], 'square', 0.065, 0.055, baseGain * 0.85, now, 0.004);
+          } else if (type === 'mention') {
+            playToneSequence([784, 1046], 'square', 0.06, 0.05, baseGain * 0.85, now, 0.004);
+          } else {
+            playToneSequence([587, 880], 'square', 0.065, 0.055, baseGain * 0.85, now, 0.004);
+          }
+        } else if (theme === 'radar') {
+          // Radar Ping (Kristal & Fütüristik) - Yüksek frekans kristal sonar
+          if (type === 'damage') {
+            playToneSequence([980, 660, 980], 'sine', 0.10, 0.12, baseGain, now, 0.008);
+          } else if (type === 'disconnect') {
+            playToneSequence([880, 330], 'sine', 0.15, 0.18, baseGain, now, 0.008);
+          } else if (type === 'captcha') {
+            playToneSequence([1174, 1396, 1760], 'sine', 0.08, 0.11, baseGain, now, 0.008);
+          } else if (type === 'mention') {
+            playToneSequence([1318, 1760], 'sine', 0.09, 0.13, baseGain, now, 0.008);
+          } else {
+            playToneSequence([1318], 'sine', 0.1, 0.22, baseGain, now, 0.008);
+          }
+        } else if (theme === 'subtle') {
+          // Subtle Tok (Tok & Sessiz Gece Modu) - Triangle wave, dikkat dağıtmayan hafif vuruş
+          if (type === 'damage') {
+            playToneSequence([180, 120], 'triangle', 0.08, 0.09, baseGain * 1.2, now, 0.012);
+          } else if (type === 'disconnect') {
+            playToneSequence([220, 130], 'triangle', 0.10, 0.11, baseGain * 1.2, now, 0.012);
+          } else if (type === 'captcha') {
+            playToneSequence([330, 440, 550], 'triangle', 0.07, 0.08, baseGain * 1.2, now, 0.012);
+          } else if (type === 'mention') {
+            playToneSequence([260, 350], 'triangle', 0.08, 0.09, baseGain * 1.2, now, 0.012);
+          } else {
+            playToneSequence([290], 'triangle', 0.09, 0.10, baseGain * 1.2, now, 0.012);
+          }
+        } else {
+          // Cyber Synth (Varsayılan - Modern & Keskin)
+          if (type === 'damage') {
+            playToneSequence([580, 380, 240], 'sawtooth', 0.09, 0.08, baseGain * 0.9, now, 0.006);
+          } else if (type === 'disconnect') {
+            playToneSequence([340, 200], 'sawtooth', 0.14, 0.12, baseGain * 0.9, now, 0.008);
+          } else if (type === 'captcha') {
+            playToneSequence([523, 659, 784, 1046], 'square', 0.07, 0.06, baseGain * 0.8, now, 0.005);
+          } else if (type === 'mention') {
+            playToneSequence([660, 880], 'square', 0.09, 0.08, baseGain * 0.8, now, 0.005);
+          } else {
+            playToneSequence([587, 880], 'square', 0.08, 0.07, baseGain * 0.8, now, 0.005);
+          }
+        }
+      } catch (e) {
+        console.warn('[Sound] Audio error:', e);
+      }
     }
 
     async function toggleQuickSound() {
@@ -4326,7 +4456,7 @@
       await api('/api/config', 'POST', {
         soundAlerts: { ...(appState.config.soundAlerts || {}), enabled: next }
       });
-      if (next) playAlertSound('mention');
+      if (next) playAlertSound('mention', true);
     }
 
     function formatDuration(ms) {
@@ -4768,21 +4898,6 @@
       updateToggleButton('btnAutoFarmerSell', farmerCfg.enabled, '💰 Oto Çiftçi Satıcı: Açık', '💰 Oto Çiftçi Satıcı: Kapalı');
       const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 10 };
       updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
-      const spawnerCfg = b.autoSpawnerRoutine || acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 19 };
-      updateToggleButton('btnAutoSpawnerRoutine', spawnerCfg.enabled, '🏭 Oto Spawner: Açık', '🏭 Oto Spawner: Kapalı');
-      const spIntervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
-      if (spIntervalEl && document.activeElement !== spIntervalEl) {
-        spIntervalEl.value = spawnerCfg.intervalSec || 30;
-        const spHelpEl = document.getElementById('spawnerRoutineIntervalHelp');
-        if (spHelpEl) {
-          const sps = spawnerCfg.intervalSec || 30;
-          spHelpEl.textContent = sps >= 60 ? `(${Math.floor(sps / 60)} dk ${sps % 60 ? (sps % 60) + ' sn' : ''})` : `(${sps} sn)`;
-        }
-      }
-      const spCountEl = document.getElementById('ctrlSpawnerCount');
-      if (spCountEl && document.activeElement !== spCountEl) {
-        spCountEl.value = spawnerCfg.spawnerCount || 19;
-      }
       const mIntervalEl = document.getElementById('ctrlMinerChestSellInterval');
       if (mIntervalEl && document.activeElement !== mIntervalEl) {
         mIntervalEl.value = minerChestCfg.intervalSec || 10;
@@ -6834,21 +6949,6 @@
       await sendBotAction('updateMinerChestSellConfig', { intervalSec: s, enabled: isEnabled });
     }
 
-    async function updateSpawnerRoutineConfig() {
-      const intervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
-      const countEl = document.getElementById('ctrlSpawnerCount');
-      const s = Math.max(10, parseInt(intervalEl ? intervalEl.value : '30', 10) || 30);
-      const cnt = Math.max(1, Math.min(64, parseInt(countEl ? countEl.value : '19', 10) || 19));
-      const helpEl = document.getElementById('spawnerRoutineIntervalHelp');
-      if (helpEl) {
-        helpEl.textContent = s >= 60 ? `(${Math.floor(s / 60)} dk ${s % 60 ? (s % 60) + ' sn' : ''})` : `(${s} sn)`;
-      }
-      if (!selectedAccountId) return;
-      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
-      const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
-      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, enabled: isEnabled });
-    }
-
     function moveBot(direction) {
       sendBotAction('moveStep', { direction, duration: 450 });
     }
@@ -7345,10 +7445,17 @@
       document.getElementById('setDiscordCaptcha').checked = cfg.discord?.notifyCaptcha !== false;
 
       document.getElementById('setSoundEnabled').checked = cfg.soundAlerts?.enabled !== false;
+      if (document.getElementById('setSoundTheme')) document.getElementById('setSoundTheme').value = cfg.soundAlerts?.theme || 'cyber';
+      if (document.getElementById('setSoundVolume')) {
+        const vol = typeof cfg.soundAlerts?.volume === 'number' ? cfg.soundAlerts.volume : 35;
+        document.getElementById('setSoundVolume').value = vol;
+        updateSoundVolumeLabel(vol);
+      }
       document.getElementById('setSoundDamage').checked = cfg.soundAlerts?.onDamage !== false;
       document.getElementById('setSoundDisconnect').checked = cfg.soundAlerts?.onDisconnect !== false;
       document.getElementById('setSoundMention').checked = cfg.soundAlerts?.onMention !== false;
       document.getElementById('setSoundCaptcha').checked = cfg.soundAlerts?.onCaptcha !== false;
+      if (document.getElementById('setSoundNotify')) document.getElementById('setSoundNotify').checked = cfg.soundAlerts?.onNotify !== false;
 
       document.getElementById('setDiscordRpcEnabled').checked = cfg.discordRpc?.enabled !== false;
       document.getElementById('setDiscordRpcShowServer').checked = cfg.discordRpc?.showServer !== false;
@@ -7444,10 +7551,13 @@
         },
         soundAlerts: {
           enabled: document.getElementById('setSoundEnabled').checked,
+          theme: document.getElementById('setSoundTheme') ? document.getElementById('setSoundTheme').value : 'cyber',
+          volume: document.getElementById('setSoundVolume') ? Number(document.getElementById('setSoundVolume').value) : 35,
           onDamage: document.getElementById('setSoundDamage').checked,
           onDisconnect: document.getElementById('setSoundDisconnect').checked,
           onMention: document.getElementById('setSoundMention').checked,
-          onCaptcha: document.getElementById('setSoundCaptcha').checked
+          onCaptcha: document.getElementById('setSoundCaptcha').checked,
+          onNotify: document.getElementById('setSoundNotify') ? document.getElementById('setSoundNotify').checked : true
         },
         discordRpc: {
           enabled: document.getElementById('setDiscordRpcEnabled').checked,
