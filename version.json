@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_farm_till_plant_chest_perf_v48",
-  "version": "2.2.17",
-  "releaseNotes": "Oto-Çapa, Oto-Ekim ve Sandık İkmalinde Performans Güncellemesi: Ağır 50.000+ blokluk dünya taramaları ve sandık arama döngüleri akıllı önbelleğe alındı, A* yol bulucu optimize edildi (O(N) min-search/swap), akıcı sprint yürüyüşü ve sıfır gecikmeli seri çapalama/ekim entegre edildi.",
+  "buildId": "20261027_dev_merge_spawner_and_farm_perf_v49",
+  "version": "2.2.18",
+  "releaseNotes": "Dev dalı birleştirildi (Merge): kheromieallah tarafından geliştirilen Otomatik 19 Spawner Demir Blok (/craft 3x3) ve Poppy (/sat hepsi) döngüsü sisteme entegre edildi; Sesli Uyarılar (5 tema & ses ayarı) ve Çapa/Ekim/Sandık/İnşa performans optimizasyonlarıyla tam uyumlu hale getirildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
