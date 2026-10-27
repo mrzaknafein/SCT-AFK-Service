@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_multibot_coop_system_v52",
-  "version": "2.2.21",
-  "releaseNotes": "3'lü Bot Koordinasyon & İş Birliği Sistemi (Multi-Bot Coop): 3 botun aynı adada inşaat, çapalama ve ekim yaparken dinamik iş paylaşımı yapması sağlandı. Blok rezervasyon havuzu (Shared Claims) ile aynı bloğa çakışma engellendi, sandık sırası (Chest Mutex) eklendi, düşme korumalı sınır dağılımı sağlandı. Sol menüye ve Ayarlar sekmesine istenildiğinde tek tıkla Bireysel (Solo) veya 3'lü İş Birliği moduna geçiş anahtarı eklendi.",
+  "buildId": "20261027_multibot_coop_system_v53",
+  "version": "2.2.22",
+  "releaseNotes": "İş Birliği & Koordinasyon Sistemi: Özellik adı 'İş Birliği' olarak sadeleştirildi. Hızlı geçiş anahtarı sol kenar çubuğundan Oto-İnşa kontrol paneline taşındı. Botların eşzamanlı ada inşası, çapalama ve ekim işlerinde tek tıkla İş Birliği veya Bireysel (Solo) mod arasında geçiş yapabilmesi sağlandı.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
