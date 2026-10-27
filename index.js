@@ -753,7 +753,10 @@ async function checkForUpdates() {
     const rawBuf = await httpFetchUrl(manifestUrl);
     const manifest = JSON.parse(rawBuf.toString('utf8'));
     const remoteBuildId = manifest.buildId || manifest.version || '';
-    const hasUpdate = Boolean(remoteBuildId && remoteBuildId !== ENGINE_BUILD_ID);
+    const curVerMatch = String(ENGINE_BUILD_ID).match(/_v(\d+)$/);
+    const remVerMatch = String(remoteBuildId).match(/_v(\d+)$/);
+    const isOlderRemote = Boolean(curVerMatch && remVerMatch && Number(remVerMatch[1]) < Number(curVerMatch[1]));
+    const hasUpdate = Boolean(remoteBuildId && remoteBuildId !== ENGINE_BUILD_ID && !isOlderRemote);
 
     updateCheckState = {
       lastChecked: Date.now(),
