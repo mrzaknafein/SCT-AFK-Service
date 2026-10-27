@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_auto_world_detect_and_smart_reach_v46';
+const ENGINE_BUILD_ID = '20261027_audio_presets_and_mute_fix_v47';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -591,12 +591,28 @@ function loadConfig() {
   if (!parsed.soundAlerts) {
     parsed.soundAlerts = {
       enabled: true,
+      theme: 'cyber',
+      volume: 35,
       onDamage: true,
       onDisconnect: true,
       onMention: true,
-      onCaptcha: true
+      onCaptcha: true,
+      onNotify: true
     };
     updated = true;
+  } else {
+    if (typeof parsed.soundAlerts.theme !== 'string') {
+      parsed.soundAlerts.theme = 'cyber';
+      updated = true;
+    }
+    if (typeof parsed.soundAlerts.volume !== 'number') {
+      parsed.soundAlerts.volume = 35;
+      updated = true;
+    }
+    if (typeof parsed.soundAlerts.onNotify === 'undefined') {
+      parsed.soundAlerts.onNotify = true;
+      updated = true;
+    }
   }
 
   if (typeof parsed.autoCaptcha === 'undefined') {
@@ -906,6 +922,7 @@ function triggerSoundAlert(alertType, accountId, message) {
   if (alertType === 'disconnect' && config.soundAlerts.onDisconnect === false) return;
   if (alertType === 'mention' && config.soundAlerts.onMention === false) return;
   if (alertType === 'captcha' && config.soundAlerts.onCaptcha === false) return;
+  if (alertType === 'notify' && config.soundAlerts.onNotify === false) return;
 
   const acc = config.accounts.find((a) => a.id === accountId);
   broadcastSSE('sound', {
