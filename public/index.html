@@ -656,7 +656,7 @@
     .tag-CHAT { color: #f4f5f7; }
     .tag-BAĞLANTI, .tag-SPAWN, .tag-OTO-YEMEK { color: #ffffff; }
     .tag-OTO-GİRİŞ, .tag-OTO-KAYIT, .tag-OTO-EPOSTA, .tag-OTO-KOMUT { color: #d1d5db; }
-    .tag-ANTI-AFK, .tag-OTO-KAZIM, .tag-OTO-SALDIRI, .tag-OTO-SAĞTIK, .tag-OTO-SANDIK, .tag-OTO-CAPTCHA { color: #ffffff; }
+    .tag-ANTI-AFK, .tag-OTO-KAZIM, .tag-OTO-SALDIRI, .tag-OTO-SAĞTIK, .tag-OTO-SANDIK, .tag-MINER-SANDIK, .tag-OTO-CAPTCHA { color: #ffffff; }
     .tag-HATA, .tag-ATILDI, .tag-ÖLÜM, .tag-UYARI { color: #f87171; }
     .tag-SEN, .tag-ENVANTER, .tag-MENÜ, .tag-HAREKET, .tag-EYLEM, .tag-PROXY { color: #e5e7eb; }
 
@@ -2227,7 +2227,7 @@
               <span>Otomatik Çalışma Modları</span>
               <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 500;">Açmak veya kapatmak için tıklayın</span>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 4px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; margin-top: 4px;">
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
@@ -2311,13 +2311,26 @@
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
-                  <div class="auto-mode-title">Oto Çiftçi Satıcı (/çiftçi)</div>
-                  <div class="auto-mode-desc">"/çiftçi" menüsündeki depoyu periyodik olarak satar.</div>
+                  <div class="auto-mode-title">Oto Çiftçi Satıcı</div>
+                  <div class="auto-mode-desc">"/çiftçi" deposunu periyodik olarak satar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                   <button class="btn btn-outline btn-sm" onclick="sendBotAction('farmerSellNow')" title="Hemen Şimdi Sat">Şimdi Sat</button>
                   <button class="btn btn-outline btn-sm" id="btnAutoFarmerSell" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoFarmerSell')">
                     <span id="badgeAutoFarmerSell">Kapalı</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="auto-mode-card">
+                <div class="auto-mode-info">
+                  <div class="auto-mode-title">Miner Sandık Satıcı</div>
+                  <div class="auto-mode-desc">Sandıktan cobblestone çekip "/sat hepsi" yazar.</div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('minerChestSellNow')" title="Yakındaki Miner Sandık'tan tüm cobblestone'ları çek ve /sat hepsi yap">Şimdi Sat</button>
+                  <button class="btn btn-outline btn-sm" id="btnAutoMinerChestSell" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoMinerChestSell')">
+                    <span id="badgeAutoMinerChestSell">Kapalı</span>
                   </button>
                 </div>
               </div>
@@ -2378,6 +2391,7 @@
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('swing')">Kol Salla</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('repairHeldItemNow')">Şimdi Tamir Et</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('depositChestNow')">Sandığa Boşalt</button>
+              <button class="btn btn-sm btn-outline" onclick="sendBotAction('minerChestSellNow')">Miner Sandık Taş Sat</button>
               <button class="btn btn-sm btn-danger" onclick="sendBotAction('dropAll')">Çantayı Boşalt</button>
             </div>
           </div>
@@ -2406,6 +2420,10 @@
                 <div>
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Çiftçi Satış Aralığı (Sn) <span id="farmerSellIntervalHelp" style="color: var(--text-muted);">(2 dk)</span></label>
                   <input type="number" id="ctrlFarmerSellInterval" min="10" max="86400" step="10" value="120" class="form-control" onchange="updateFarmerSellInterval(this.value)" />
+                </div>
+                <div>
+                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Miner Sandık Satış Aralığı (Sn) <span id="minerChestSellIntervalHelp" style="color: var(--text-muted);">(10 sn)</span></label>
+                  <input type="number" id="ctrlMinerChestSellInterval" min="5" max="86400" step="5" value="10" class="form-control" onchange="updateMinerChestSellInterval(this.value)" />
                 </div>
               </div>
             </div>
@@ -4726,6 +4744,17 @@
 
       const farmerCfg = b.autoFarmerSell || acc.autoFarmerSell || { enabled: false, intervalSec: 120 };
       updateToggleButton('btnAutoFarmerSell', farmerCfg.enabled, '💰 Oto Çiftçi Satıcı: Açık', '💰 Oto Çiftçi Satıcı: Kapalı');
+      const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 10 };
+      updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
+      const mIntervalEl = document.getElementById('ctrlMinerChestSellInterval');
+      if (mIntervalEl && document.activeElement !== mIntervalEl) {
+        mIntervalEl.value = minerChestCfg.intervalSec || 10;
+        const mHelpEl = document.getElementById('minerChestSellIntervalHelp');
+        if (mHelpEl) {
+          const ms = minerChestCfg.intervalSec || 10;
+          mHelpEl.textContent = ms >= 60 ? `(${Math.floor(ms / 60)} dk ${ms % 60 ? (ms % 60) + ' sn' : ''})` : `(${ms} sn)`;
+        }
+      }
       const fIntervalEl = document.getElementById('ctrlFarmerSellInterval');
       if (fIntervalEl && document.activeElement !== fIntervalEl) {
         fIntervalEl.value = farmerCfg.intervalSec || 120;
@@ -6754,6 +6783,18 @@
       const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
       const isEnabled = Boolean(curBot?.autoFarmerSell?.enabled);
       await sendBotAction('updateFarmerSellConfig', { intervalSec: s, enabled: isEnabled });
+    }
+
+    async function updateMinerChestSellInterval(val) {
+      const s = Math.max(5, parseInt(val, 10) || 10);
+      const helpEl = document.getElementById('minerChestSellIntervalHelp');
+      if (helpEl) {
+        helpEl.textContent = s >= 60 ? `(${Math.floor(s / 60)} dk ${s % 60 ? (s % 60) + ' sn' : ''})` : `(${s} sn)`;
+      }
+      if (!selectedAccountId) return;
+      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
+      const isEnabled = Boolean(curBot?.autoMinerChestSell?.enabled);
+      await sendBotAction('updateMinerChestSellConfig', { intervalSec: s, enabled: isEnabled });
     }
 
     function moveBot(direction) {
