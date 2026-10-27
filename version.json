@@ -1,7 +1,7 @@
 {
-  "buildId": "20261027_audio_presets_and_mute_fix_v47",
-  "version": "2.2.16",
-  "releaseNotes": "Masaüstü Sesli Uyarı Sistemi: Tüm sesleri kapatma ve alarmları sessize alma sorunu giderildi; 5 farklı ses teması (Cyber Synth, Soft Chime, 8-Bit Arcade, Radar Ping, Subtle Tok), ses düzeyi ayarı ve anlık test/dinleme desteği eklendi.",
+  "buildId": "20261027_farm_till_plant_chest_perf_v48",
+  "version": "2.2.17",
+  "releaseNotes": "Oto-Çapa, Oto-Ekim ve Sandık İkmalinde Performans Güncellemesi: Ağır 50.000+ blokluk dünya taramaları ve sandık arama döngüleri akıllı önbelleğe alındı, A* yol bulucu optimize edildi (O(N) min-search/swap), akıcı sprint yürüyüşü ve sıfır gecikmeli seri çapalama/ekim entegre edildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
