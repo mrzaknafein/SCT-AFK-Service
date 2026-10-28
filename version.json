@@ -1,7 +1,7 @@
 {
-  "buildId": "20261028_vulcan_stealth_farm_v54",
-  "version": "2.2.23",
-  "releaseNotes": "Vulcan Anti-Cheat Stealth Güncellemesi (Oto-Ekim & Oto-Çapa): Sunucu gece resetinden sonra devreye giren katı Vulcan FastPlace Type B, Scaffold Type H ve AimAssist kontrollerine karşı Oto-Ekim ve Oto-Çapalama modülleri tamamen yenilendi. 40ms içinde 3-4 blokluk paket spamleme kaldırıldı; 220ms-275ms organik insan tıklama aralığı, tam fare hassasiyeti (GCD) kuantize bakış açısı, teğet organik yüzey tıklama noktası (GhostHand koruması) ve hareket durdurma eklendi.",
+  "buildId": "20261028_spawner_all_dynamic_v55",
+  "version": "2.2.24",
+  "releaseNotes": "Dinamik Çiftlik & S-Snake Spawner Turu: 19 sınırı kaldırıldı; çiftlikteki tüm spawner blokları (25+ adet) 36 blok menzilde dinamik algılanıp S-şeklinde zigzag sıralamayla gezilir. 1. Aşama (Demir Turu): Her spawner'dan 1 kez demir alınır, /craft ile yalnızca Demir Blok yapılır (göğüslük koruması), sandığa konur, artan <9 demir envanterde saklanır. 2. Aşama (Poppy Turu): 1. Spawner'a dönülür, sırayla tüm güller alınıp /sat hepsi ile satılır. Kapatıldığında veya durdurulduğunda bot <40ms içinde anında durur.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
