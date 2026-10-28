@@ -2338,10 +2338,10 @@
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
                   <div class="auto-mode-title">Oto Spawner Demir & Poppy</div>
-                  <div class="auto-mode-desc">19 Spawner'dan önce gülleri /sat hepsi yapar, 1 kez demir çekip /craft ile sadece Demir Blok üretir.</div>
+                  <div class="auto-mode-desc">Etraftaki tüm Spawner'ları otomatik algılar; demirleri alıp /craft ile sadece Demir Blok yapar, ardından 1. Spawner'a dönüp Poppy'leri /sat hepsi yapar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                  <button class="btn btn-outline btn-sm" onclick="sendBotAction('spawnerRoutineNow')" title="19 Spawner Demir Blok + Poppy Satış Turunu Hemen Başlat">Şimdi Başlat</button>
+                  <button class="btn btn-outline btn-sm" id="btnSpawnerRoutineNow" onclick="sendBotAction('spawnerRoutineNow')" title="Spawner Demir Blok + Poppy Satış Turunu Başlat / Durdur">Şimdi Başlat</button>
                   <button class="btn btn-outline btn-sm" id="btnAutoSpawnerRoutine" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoSpawnerRoutine')">
                     <span id="badgeAutoSpawnerRoutine">Kapalı</span>
                   </button>
@@ -2405,7 +2405,7 @@
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('repairHeldItemNow')">Şimdi Tamir Et</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('depositChestNow')">Sandığa Boşalt</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('minerChestSellNow')">Miner Sandık Taş Sat</button>
-              <button class="btn btn-sm btn-outline" onclick="sendBotAction('spawnerRoutineNow')">Spawner Turu Başlat</button>
+              <button class="btn btn-sm btn-outline" id="btnQuickSpawner" onclick="sendBotAction('spawnerRoutineNow')">Spawner Turu Başlat</button>
               <button class="btn btn-sm btn-danger" onclick="sendBotAction('dropAll')">Çantayı Boşalt</button>
             </div>
           </div>
@@ -2444,8 +2444,12 @@
                   <input type="number" id="ctrlSpawnerRoutineInterval" min="10" max="86400" step="5" value="30" class="form-control" onchange="updateSpawnerRoutineConfig()" />
                 </div>
                 <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Sayısı (Adet)</label>
-                  <input type="number" id="ctrlSpawnerCount" min="1" max="64" step="1" value="19" class="form-control" onchange="updateSpawnerRoutineConfig()" />
+                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Sayısı (0 = Etraftaki Hepsi)</label>
+                  <input type="number" id="ctrlSpawnerCount" min="0" max="256" step="1" value="0" placeholder="0 = Tümü" class="form-control" onchange="updateSpawnerRoutineConfig()" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Özel Spawner Koordinatları (İsteğe Bağlı, Boşsa Etraftaki Tüm Spawnerlar Otomatik Taranır)</label>
+                  <textarea id="ctrlSpawnerCustomCoords" rows="2" class="form-control" style="font-size: 11px; font-family: monospace; resize: vertical;" placeholder="Örnek: 120 64 -350&#10;120 64 -346" onchange="updateSpawnerRoutineConfig()"></textarea>
                 </div>
               </div>
             </div>
@@ -5029,8 +5033,31 @@
       updateToggleButton('btnAutoFarmerSell', farmerCfg.enabled, '💰 Oto Çiftçi Satıcı: Açık', '💰 Oto Çiftçi Satıcı: Kapalı');
       const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 10 };
       updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
-      const spawnerCfg = b.autoSpawnerRoutine || acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 19 };
+      const spawnerCfg = b.autoSpawnerRoutine || acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' };
       updateToggleButton('btnAutoSpawnerRoutine', spawnerCfg.enabled, '🏭 Oto Spawner: Açık', '🏭 Oto Spawner: Kapalı');
+      const isRoutineRunning = Boolean(b.isSpawnerRoutineRunning);
+      const btnSpNow = document.getElementById('btnSpawnerRoutineNow');
+      if (btnSpNow) {
+        if (isRoutineRunning) {
+          btnSpNow.textContent = '⏹ Durdur';
+          btnSpNow.className = 'btn btn-danger btn-sm';
+          btnSpNow.title = 'Devam eden Spawner turunu anında durdur';
+        } else {
+          btnSpNow.textContent = 'Şimdi Başlat';
+          btnSpNow.className = 'btn btn-outline btn-sm';
+          btnSpNow.title = 'Spawner Demir Blok + Poppy Satış Turunu Başlat';
+        }
+      }
+      const btnQuickSp = document.getElementById('btnQuickSpawner');
+      if (btnQuickSp) {
+        if (isRoutineRunning) {
+          btnQuickSp.textContent = '⏹ Spawner Durdur';
+          btnQuickSp.className = 'btn btn-sm btn-danger';
+        } else {
+          btnQuickSp.textContent = 'Spawner Turu Başlat';
+          btnQuickSp.className = 'btn btn-sm btn-outline';
+        }
+      }
       const spIntervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
       if (spIntervalEl && document.activeElement !== spIntervalEl) {
         spIntervalEl.value = spawnerCfg.intervalSec || 30;
@@ -5042,7 +5069,11 @@
       }
       const spCountEl = document.getElementById('ctrlSpawnerCount');
       if (spCountEl && document.activeElement !== spCountEl) {
-        spCountEl.value = spawnerCfg.spawnerCount || 19;
+        spCountEl.value = typeof spawnerCfg.spawnerCount === 'number' ? spawnerCfg.spawnerCount : 0;
+      }
+      const spCoordsEl = document.getElementById('ctrlSpawnerCustomCoords');
+      if (spCoordsEl && document.activeElement !== spCoordsEl) {
+        spCoordsEl.value = spawnerCfg.customCoords || '';
       }
       const mIntervalEl = document.getElementById('ctrlMinerChestSellInterval');
       if (mIntervalEl && document.activeElement !== mIntervalEl) {
@@ -7100,8 +7131,11 @@
     async function updateSpawnerRoutineConfig() {
       const intervalEl = document.getElementById('ctrlSpawnerRoutineInterval');
       const countEl = document.getElementById('ctrlSpawnerCount');
+      const coordsEl = document.getElementById('ctrlSpawnerCustomCoords');
       const s = Math.max(10, parseInt(intervalEl ? intervalEl.value : 30, 10) || 30);
-      const cnt = Math.max(1, Math.min(64, parseInt(countEl ? countEl.value : 19, 10) || 19));
+      const cntRaw = parseInt(countEl ? countEl.value : 0, 10);
+      const cnt = isNaN(cntRaw) ? 0 : Math.max(0, Math.min(256, cntRaw));
+      const coords = coordsEl ? coordsEl.value : '';
       const helpEl = document.getElementById('spawnerRoutineIntervalHelp');
       if (helpEl) {
         helpEl.textContent = s >= 60 ? `(${Math.floor(s / 60)} dk ${s % 60 ? (s % 60) + ' sn' : ''})` : `(${s} sn)`;
@@ -7109,7 +7143,7 @@
       if (!selectedAccountId) return;
       const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
       const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
-      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, enabled: isEnabled });
+      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, customCoords: coords, enabled: isEnabled });
     }
 
     function moveBot(direction) {

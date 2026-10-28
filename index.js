@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261028_vulcan_stealth_farm_v54';
+const ENGINE_BUILD_ID = '20261028_spawner_all_dynamic_v55';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -534,9 +534,10 @@ function loadConfig() {
           ? {
               enabled: Boolean(acc.autoSpawnerRoutine.enabled),
               intervalSec: Math.max(10, Number(acc.autoSpawnerRoutine.intervalSec) || 30),
-              spawnerCount: Math.max(1, Math.min(64, Number(acc.autoSpawnerRoutine.spawnerCount) || 19))
+              spawnerCount: typeof acc.autoSpawnerRoutine.spawnerCount === 'number' ? Math.max(0, Math.min(256, Number(acc.autoSpawnerRoutine.spawnerCount))) : 0,
+              customCoords: typeof acc.autoSpawnerRoutine.customCoords === 'string' ? acc.autoSpawnerRoutine.customCoords : ''
             }
-          : { enabled: false, intervalSec: 30, spawnerCount: 19 },
+          : { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' },
         clientBrand: 'vanilla',
         customBrand: '',
         clientLocale: 'tr_TR',
@@ -2147,7 +2148,7 @@ function getPublicState() {
         autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 10 },
         isMinerChestSelling: false,
         lastMinerChestSellTime: 0,
-        autoSpawnerRoutine: acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 19 },
+        autoSpawnerRoutine: acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' },
         isSpawnerRoutineRunning: false,
         lastSpawnerRoutineTime: 0,
         heldItem: null,
@@ -2244,7 +2245,7 @@ function getPublicState() {
         autoMinerChestSell: acc.autoMinerChestSell || { enabled: false, intervalSec: 10 },
         isMinerChestSelling: Boolean(s.isMinerChestSelling),
         lastMinerChestSellTime: s.lastMinerChestSellTime || 0,
-        autoSpawnerRoutine: acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 19 },
+        autoSpawnerRoutine: acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' },
         isSpawnerRoutineRunning: Boolean(s.isSpawnerRoutineRunning),
         lastSpawnerRoutineTime: s.lastSpawnerRoutineTime || 0,
         health: bot && typeof bot.health === 'number' ? Math.round(bot.health) : 20,
@@ -2633,6 +2634,7 @@ function clearSessionTimers(session) {
     clearTimeout(session.spawnerRoutineTimer);
     session.spawnerRoutineTimer = null;
   }
+  session.abortSpawnerRoutine = true;
   session.isSpawnerRoutineRunning = false;
   if (session.minerChestSellTimer) {
     clearTimeout(session.minerChestSellTimer);
@@ -5631,20 +5633,135 @@ function countEmptyPlayerSlotsInWindow(bot, win) {
   return empty;
 }
 
-function findNearbySpawnerBlocks(bot, maxRadius = 24, maxCount = 19) {
+function parseCustomSpawnerCoords(customCoordsText) {
+  if (!customCoordsText || typeof customCoordsText !== 'string') return [];
+  const lines = customCoordsText.split(/[\r\n;,]+/);
+  const coords = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const nums = trimmed.match(/-?\d+(\.\d+)?/g);
+    if (nums && nums.length >= 3) {
+      coords.push(new Vec3(Math.floor(Number(nums[0])), Math.floor(Number(nums[1])), Math.floor(Number(nums[2]))));
+    }
+  }
+  return coords;
+}
+
+function sortSpawnersInSnakePattern(spawners, botPos) {
+  if (!spawners || spawners.length <= 1) return spawners || [];
+
+  const sortedByZ = spawners.slice().sort((a, b) => a.z - b.z);
+  const zRows = [];
+  for (const p of sortedByZ) {
+    let matchedRow = null;
+    for (const r of zRows) {
+      if (Math.abs(r.zAvg - p.z) <= 1.35) {
+        matchedRow = r;
+        break;
+      }
+    }
+    if (matchedRow) {
+      matchedRow.points.push(p);
+      matchedRow.zAvg = matchedRow.points.reduce((s, pt) => s + pt.z, 0) / matchedRow.points.length;
+    } else {
+      zRows.push({ zAvg: p.z, points: [p] });
+    }
+  }
+
+  const sortedByX = spawners.slice().sort((a, b) => a.x - b.x);
+  const xRows = [];
+  for (const p of sortedByX) {
+    let matchedRow = null;
+    for (const r of xRows) {
+      if (Math.abs(r.xAvg - p.x) <= 1.35) {
+        matchedRow = r;
+        break;
+      }
+    }
+    if (matchedRow) {
+      matchedRow.points.push(p);
+      matchedRow.xAvg = matchedRow.points.reduce((s, pt) => s + pt.x, 0) / matchedRow.points.length;
+    } else {
+      xRows.push({ xAvg: p.x, points: [p] });
+    }
+  }
+
+  let primaryRows = zRows;
+  let useZAsRows = true;
+  if (zRows.length === 1 && xRows.length > 1) {
+    primaryRows = xRows;
+    useZAsRows = false;
+  }
+
+  const pBot = botPos || (primaryRows[0] && primaryRows[0].points[0]) || new Vec3(0, 0, 0);
+
+  const rowStartDist = Math.hypot(
+    (useZAsRows ? primaryRows[0].points[0].x : primaryRows[0].xAvg) - pBot.x,
+    (useZAsRows ? primaryRows[0].zAvg : primaryRows[0].points[0].z) - pBot.z
+  );
+  const rowEndDist = Math.hypot(
+    (useZAsRows ? primaryRows[primaryRows.length - 1].points[0].x : primaryRows[primaryRows.length - 1].xAvg) - pBot.x,
+    (useZAsRows ? primaryRows[primaryRows.length - 1].zAvg : primaryRows[primaryRows.length - 1].points[0].z) - pBot.z
+  );
+  if (rowEndDist < rowStartDist) {
+    primaryRows.reverse();
+  }
+
+  const secondaryKey = useZAsRows ? 'x' : 'z';
+  const firstRowPoints = primaryRows[0].points.slice().sort((a, b) => a[secondaryKey] - b[secondaryKey]);
+  const minCoord = firstRowPoints[0][secondaryKey];
+  const maxCoord = firstRowPoints[firstRowPoints.length - 1][secondaryKey];
+  const startAtMin = pBot[secondaryKey] <= (minCoord + maxCoord) / 2;
+
+  let currentAscending = startAtMin;
+  const result = [];
+
+  for (let r = 0; r < primaryRows.length; r++) {
+    const rowPoints = primaryRows[r].points.slice();
+    rowPoints.sort((a, b) => {
+      const diff = a[secondaryKey] - b[secondaryKey];
+      if (Math.abs(diff) > 0.45) {
+        return currentAscending ? diff : -diff;
+      }
+      return a.y - b.y;
+    });
+
+    for (const pt of rowPoints) {
+      result.push(pt);
+    }
+    currentAscending = !currentAscending;
+  }
+
+  return result;
+}
+
+function findNearbySpawnerBlocks(bot, maxRadius = 36, maxCount = 0, customCoordsText = '') {
   if (!bot || !bot.entity || !bot.entity.position) return [];
   const startPos = bot.entity.position;
+
+  if (customCoordsText && typeof customCoordsText === 'string') {
+    const customList = parseCustomSpawnerCoords(customCoordsText);
+    if (customList.length > 0) {
+      return maxCount > 0 ? customList.slice(0, maxCount) : customList;
+    }
+  }
+
   const r = Math.ceil(maxRadius);
   const found = [];
+  const seenKey = new Set();
 
   for (let dx = -r; dx <= r; dx++) {
-    for (let dy = -4; dy <= 6; dy++) {
+    for (let dy = -6; dy <= 6; dy++) {
       for (let dz = -r; dz <= r; dz++) {
         const checkPos = startPos.offset(dx, dy, dz).floored();
+        const key = `${checkPos.x},${checkPos.y},${checkPos.z}`;
+        if (seenKey.has(key)) continue;
         const b = bot.blockAt(checkPos);
         if (!b || !b.name) continue;
         const bName = b.name.toLowerCase();
         if (bName === 'spawner' || bName === 'mob_spawner') {
+          seenKey.add(key);
           found.push(checkPos);
         }
       }
@@ -5653,42 +5770,23 @@ function findNearbySpawnerBlocks(bot, maxRadius = 24, maxCount = 19) {
 
   if (found.length === 0) return [];
 
-  // Aynı (x, z) sütununda üst üste dizili spawner'ları aşağıdan yukarıya gruplayarak
-  // en yakın komşu (Nearest-Neighbor) sırasıyla 19 spawner'lık rota oluştur
-  const ordered = [];
-  const remaining = found.slice();
-  let curPos = startPos.clone();
+  const ordered = sortSpawnersInSnakePattern(found, startPos);
 
-  while (remaining.length > 0 && ordered.length < maxCount) {
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const p = remaining[i];
-      // Yatayda (x, z) aynı sütunda olanlara öncelik ver ki dikey spawner kulesini tek duruşta bitirsin
-      const horizDist = Math.hypot(p.x + 0.5 - curPos.x, p.z + 0.5 - curPos.z);
-      const vertDiff = Math.abs(p.y - curPos.y) * 0.15;
-      const score = horizDist + vertDiff;
-      if (score < bestDist) {
-        bestDist = score;
-        bestIdx = i;
-      }
-    }
-    const chosen = remaining.splice(bestIdx, 1)[0];
-    ordered.push(chosen);
-    curPos = chosen.offset(0.5, 0.5, 0.5);
+  if (maxCount > 0 && maxCount < ordered.length) {
+    return ordered.slice(0, maxCount);
   }
 
   return ordered;
 }
 
-function findNearbyContainerPositions(bot, originPos, maxDist = 20) {
+function findNearbyContainerPositions(bot, originPos, maxDist = 28) {
   if (!bot || !bot.entity || !bot.entity.position) return [];
   const base = originPos || bot.entity.position;
   const r = Math.ceil(maxDist);
   const chests = [];
 
   for (let dx = -r; dx <= r; dx++) {
-    for (let dy = -4; dy <= 4; dy++) {
+    for (let dy = -5; dy <= 5; dy++) {
       for (let dz = -r; dz <= r; dz++) {
         const checkPos = base.offset(dx, dy, dz).floored();
         const b = bot.blockAt(checkPos);
@@ -5706,8 +5804,34 @@ function findNearbyContainerPositions(bot, originPos, maxDist = 20) {
   return chests.map((c) => c.pos);
 }
 
+function isSpawnerAbortRequested(session) {
+  return !session || session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning || session.status !== 'online' || !session.bot;
+}
+
+function isSpawnerCorridorWalkable(bot, pos, session = null) {
+  if (!bot || !pos) return false;
+  const foot = bot.blockAt(pos);
+  const head = bot.blockAt(pos.offset(0, 1, 0));
+  const floor = bot.blockAt(pos.offset(0, -1, 0));
+  if (!foot || !head || !floor) return false;
+
+  const footName = (foot.name || '').toLowerCase();
+  const headName = (head.name || '').toLowerCase();
+  const floorName = (floor.name || '').toLowerCase();
+
+  if (footName.includes('spawner') || headName.includes('spawner') || floorName.includes('spawner')) return false;
+  if (isFarmContainerBlockName(footName) || isFarmContainerBlockName(headName) || isFarmContainerBlockName(floorName)) return false;
+
+  if (!isBlockPassable(foot) || !isBlockPassable(head)) return false;
+  if (isLightingOrObstacleBlock(foot)) return false;
+
+  return isBlockWalkableFloor(floor, session);
+}
+
 async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach = 3.95) {
   if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
+  if (isSpawnerAbortRequested(session)) return false;
+
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
   const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter);
   if (curEyeDist <= maxReach) {
@@ -5718,15 +5842,14 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
   const spotCandidates = [];
 
-  // Spawner'lar üst üste (yüksekte) olabileceği için dy: -4..1 aralığındaki zemin noktalarını tara
   for (let dx = -3; dx <= 3; dx++) {
     for (let dz = -3; dz <= 3; dz++) {
-      for (let dy = -4; dy <= 1; dy++) {
+      for (let dy = -3; dy <= 1; dy++) {
         const spot = new Vec3(targetBlockPos.x + dx, targetBlockPos.y + dy, targetBlockPos.z + dz);
         const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
         const reachDist = eyeFromSpot.distanceTo(targetCenter);
-        if (reachDist > 3.85) continue;
-        if (isWalkablePosition(bot, spot, session)) {
+        if (reachDist > 3.85 || reachDist < 0.9) continue;
+        if (isSpawnerCorridorWalkable(bot, spot, session)) {
           spotCandidates.push({
             spot,
             distToBot: botPos.distanceTo(spot.offset(0.5, 0, 0.5)),
@@ -5743,6 +5866,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
   });
 
   for (let i = 0; i < Math.min(spotCandidates.length, 10); i++) {
+    if (isSpawnerAbortRequested(session)) return false;
     const cand = spotCandidates[i];
     const path = findBuilderPath(bot, startStand, cand.spot, session, 2000, {
       allowStepDown: true
@@ -5765,9 +5889,10 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
 }
 
 async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
-  if (!bot || !spawnerPos) return null;
+  if (!bot || !spawnerPos || isSpawnerAbortRequested(session)) return null;
 
   const reached = await navigateNearSpawnerOrChest(bot, session, spawnerPos, 3.95);
+  if (isSpawnerAbortRequested(session)) return null;
   if (!reached) {
     addLog(accountId, 'SPAWNER', `⚠️ Spawner'a (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) ulaşılamadı, atlanıyor.`, chalk.yellow);
     return null;
@@ -5782,6 +5907,7 @@ async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
     } catch (_) {}
     await new Promise((r) => setTimeout(r, 180));
   }
+  if (isSpawnerAbortRequested(session)) return null;
 
   if (typeof bot.setControlState === 'function') {
     bot.setControlState('sneak', false);
@@ -5801,12 +5927,12 @@ async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
   }
 
   await new Promise((r) => setTimeout(r, 80));
+  if (isSpawnerAbortRequested(session)) return null;
 
   try {
     await bot.lookAt(spawnerPos.offset(0.5, 0.5, 0.5), true);
   } catch (_) {}
 
-  // 1. Spawner'a sağ tıkla ve "SPAWNER YONETIMI" menüsünü bekle (Görsel 1-2)
   const win1Promise = waitForFarmerWindow(bot, 5500);
   try {
     await bot.activateBlock(spawnerBlock);
@@ -5817,21 +5943,27 @@ async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
   }
 
   const win1 = await win1Promise;
+  if (isSpawnerAbortRequested(session)) {
+    if (win1) try { bot.closeWindow(win1); } catch (_) {}
+    return null;
+  }
   const activeWin1 = bot.currentWindow || win1;
   if (!activeWin1) {
     addLog(accountId, 'SPAWNER', `⚠️ Spawner (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) yönetim menüsü açılmadı.`, chalk.yellow);
     return null;
   }
 
-  await new Promise((r) => setTimeout(r, 240));
+  await new Promise((r) => setTimeout(r, 220));
+  if (isSpawnerAbortRequested(session)) {
+    try { bot.closeWindow(activeWin1); } catch (_) {}
+    return null;
+  }
 
-  // Eğer doğrudan DEPO penceresi açıldıysa onu döndür
   const win1TitleNorm = normalizeTurkishText(parseWindowTitle(activeWin1) || '');
   if (win1TitleNorm.includes('depo')) {
     return activeWin1;
   }
 
-  // 2. "SPAWNER YONETIMI" menüsünde Sandık ("DEPOYU AC" - Görsel 2, Slot 10) butonunu bul
   let depoSlot = -1;
   const containerEnd1 = activeWin1.inventoryStart || Math.min(activeWin1.slots.length, 27);
   for (let i = 0; i < containerEnd1; i++) {
@@ -5860,26 +5992,30 @@ async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
     return null;
   }
 
-  // 3. Sandık ("DEPOYU AC") ikonuna tıkla ve "DEPO 1/1" penceresini bekle (Görsel 3)
   const win2Promise = waitForFarmerStorageWindow(bot, activeWin1.id, 5500);
   try {
     await withPromiseTimeout(bot.clickWindow(depoSlot, 0, 0), 1800);
   } catch (_) {}
   const win2 = await win2Promise;
-  await new Promise((r) => setTimeout(r, 260));
+  if (isSpawnerAbortRequested(session)) {
+    if (win2) try { bot.closeWindow(win2); } catch (_) {}
+    return null;
+  }
+  await new Promise((r) => setTimeout(r, 240));
 
   return bot.currentWindow || win2 || null;
 }
 
-async function withdrawTargetItemFromSpawnerDepo(bot, depoWin, targetRawName, keepEmptySlots = 0) {
+async function withdrawTargetItemFromSpawnerDepo(bot, depoWin, targetRawName, keepEmptySlots = 0, session = null) {
   let withdrawnStacks = 0;
   let moreLeftInDepo = false;
-  if (!bot || !depoWin || !Array.isArray(depoWin.slots)) {
+  if (!bot || !depoWin || !Array.isArray(depoWin.slots) || (session && isSpawnerAbortRequested(session))) {
     return { withdrawnStacks, moreLeftInDepo };
   }
 
   let safetyClicks = 0;
   while (safetyClicks < 55) {
+    if (session && isSpawnerAbortRequested(session)) break;
     const activeWin = bot.currentWindow || depoWin;
     if (!activeWin || !Array.isArray(activeWin.slots)) break;
 
@@ -5911,6 +6047,8 @@ async function withdrawTargetItemFromSpawnerDepo(bot, depoWin, targetRawName, ke
       await withPromiseTimeout(bot.clickWindow(targetSlot, 0, 1), 1800);
       await new Promise((r) => setTimeout(r, 115 + Math.floor(Math.random() * 40)));
 
+      if (session && isSpawnerAbortRequested(session)) break;
+
       const curWin = bot.currentWindow || activeWin;
       const slotItemAfter = curWin.slots[targetSlot];
       const invCountAfter = countInventoryItemByName(bot, curWin, targetRawName);
@@ -5924,6 +6062,8 @@ async function withdrawTargetItemFromSpawnerDepo(bot, depoWin, targetRawName, ke
         await withPromiseTimeout(bot.clickWindow(targetSlot, 0, 0), 1800);
         await new Promise((r) => setTimeout(r, 115 + Math.floor(Math.random() * 35)));
       }
+
+      if (session && isSpawnerAbortRequested(session)) break;
 
       const winAfterClick = bot.currentWindow || curWin;
       if (winAfterClick && winAfterClick.selectedItem) {
@@ -5961,12 +6101,8 @@ async function withdrawTargetItemFromSpawnerDepo(bot, depoWin, targetRawName, ke
   return { withdrawnStacks, moreLeftInDepo };
 }
 
-/**
- * Chatten "/craft" yazarak açılan 3x3 Çalışma Masası (Crafting Table) penceresinde
- * envanterdeki tüm iron_ingot'ları (9'arlı) iron_block'a (Demir Blok) çevirir.
- */
-async function craftAllIronIngotsViaChatCommand(bot, accountId) {
-  if (!bot || !bot.entity) return 0;
+async function craftAllIronIngotsViaChatCommand(bot, accountId, session = null) {
+  if (!bot || !bot.entity || (session && isSpawnerAbortRequested(session))) return 0;
 
   const initialIngots = countInventoryItemByName(bot, null, 'iron_ingot');
   if (initialIngots < 9) return 0;
@@ -5977,6 +6113,7 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
     } catch (_) {}
     await new Promise((r) => setTimeout(r, 180));
   }
+  if (session && isSpawnerAbortRequested(session)) return 0;
 
   const blocksBefore = countInventoryItemByName(bot, null, 'iron_block');
 
@@ -5988,6 +6125,10 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
   }
 
   const craftWin = await craftWinPromise;
+  if (session && isSpawnerAbortRequested(session)) {
+    if (craftWin) try { bot.closeWindow(craftWin); } catch (_) {}
+    return 0;
+  }
   const win = bot.currentWindow || craftWin;
   if (!win || !Array.isArray(win.slots)) {
     addLog(accountId, 'SPAWNER', '⚠️ "/craft" komutu gönderildi ancak çalışma masası penceresi açılmadı.', chalk.yellow);
@@ -5997,15 +6138,14 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
   await new Promise((r) => setTimeout(r, 250));
 
   try {
-    // 3x3 Crafting Table yapısı: Slot 0 = Çıktı (iron_block), Slot 1..9 = 3x3 Izgara, Slot 10..45 = Oyuncu Envanteri
     const invStart = typeof win.inventoryStart === 'number' ? win.inventoryStart : 10;
     const invEnd = typeof win.inventoryEnd === 'number' ? win.inventoryEnd : win.slots.length;
 
-    for (let round = 0; round < 14; round++) {
+    for (let round = 0; round < 16; round++) {
+      if (session && isSpawnerAbortRequested(session)) break;
       const curWin = bot.currentWindow || win;
       if (!curWin || !Array.isArray(curWin.slots)) break;
 
-      // Önce 1..9 ızgarasında önceki adımdan kalan demir varsa envantere geri çek
       for (let g = 1; g <= 9; g++) {
         if (curWin.slots[g]) {
           try {
@@ -6018,10 +6158,9 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
       const totalIngotsNow = countInventoryItemByName(bot, curWin, 'iron_ingot');
       if (totalIngotsNow < 9) break;
 
-      // Envanterdeki iron_ingot yuvalarını bul; eğer 9'dan az yığın varsa (ancak toplam >= 9 ise),
-      // en büyük yığınları Sağ-Tık (Yarısını Al) ile boş yuvalara veya doğrudan 1..9 ızgarasına böl!
       let splitSafety = 0;
       while (splitSafety < 12) {
+        if (session && isSpawnerAbortRequested(session)) break;
         const ingotSlots = [];
         for (let s = invStart; s < invEnd; s++) {
           if (isTargetRawItemName(curWin.slots[s], 'iron_ingot')) {
@@ -6030,7 +6169,6 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
         }
         if (ingotSlots.length >= 9) break;
 
-        // En yüksek adetli iron_ingot yuvasını bul (count >= 2 olmalı ki ikiye bölünebilsin)
         let largestSlot = -1;
         let largestCount = 1;
         for (const s of ingotSlots) {
@@ -6053,10 +6191,8 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
 
         splitSafety++;
         try {
-          // Sağ-Tık (button: 1, mode: 0) yığının yarısını imlece alır
           await withPromiseTimeout(bot.clickWindow(largestSlot, 1, 0), 1600);
           await new Promise((r) => setTimeout(r, 90));
-          // Sol-Tık (button: 0, mode: 0) boş yuvaya bırakır
           await withPromiseTimeout(bot.clickWindow(emptyInvSlot, 0, 0), 1600);
           await new Promise((r) => setTimeout(r, 90));
         } catch (_) {
@@ -6064,19 +6200,18 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
         }
       }
 
-      // 1..9 çalışma ızgarasında iron_ingot harici bir eşya varsa hemen envantere geri gönder
       for (let g = 1; g <= 9; g++) {
         const wCheck = bot.currentWindow || curWin;
         if (wCheck && wCheck.slots[g] && !isTargetRawItemName(wCheck.slots[g], 'iron_ingot')) {
           try {
             await withPromiseTimeout(bot.clickWindow(g, 0, 1), 1600);
-            await new Promise((r) => setTimeout(r, 110));
+            await new Promise((r) => setTimeout(r, 100));
           } catch (_) {}
         }
       }
 
-      // 3x3 ızgaranın (Slot 1..9) TAMAMININ eksiksiz iron_ingot ile dolmasını garanti et (en fazla 3 deneme/slot)
       for (let attempt = 0; attempt < 3; attempt++) {
+        if (session && isSpawnerAbortRequested(session)) break;
         for (let g = 1; g <= 9; g++) {
           const wNow = bot.currentWindow || curWin;
           if (!wNow) break;
@@ -6084,11 +6219,10 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
             continue;
           }
 
-          // Eğer imleçte (selectedItem) zaten iron_ingot tutuluyorsa doğrudan bu boş yuvaya (g) bırak!
           if (wNow.selectedItem && isTargetRawItemName(wNow.selectedItem, 'iron_ingot')) {
             try {
               await withPromiseTimeout(bot.clickWindow(g, 0, 0), 1600);
-              await new Promise((r) => setTimeout(r, 150));
+              await new Promise((r) => setTimeout(r, 145));
             } catch (_) {}
             continue;
           }
@@ -6106,14 +6240,13 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
 
           try {
             await withPromiseTimeout(bot.clickWindow(srcSlot, 0, 0), 1600);
-            await new Promise((r) => setTimeout(r, 145));
+            await new Promise((r) => setTimeout(r, 140));
             await withPromiseTimeout(bot.clickWindow(g, 0, 0), 1600);
-            await new Promise((r) => setTimeout(r, 145));
-            // Eğer paket gecikmesi yüzünden eşya hala imleçte kaldıysa tekrar g yuvasına bırak
+            await new Promise((r) => setTimeout(r, 140));
             const wAfter = bot.currentWindow || curWin;
             if (wAfter && wAfter.selectedItem && !wAfter.slots[g]) {
               await withPromiseTimeout(bot.clickWindow(g, 0, 0), 1600);
-              await new Promise((r) => setTimeout(r, 145));
+              await new Promise((r) => setTimeout(r, 140));
             }
           } catch (_) {
             break;
@@ -6121,7 +6254,8 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
         }
       }
 
-      // İmleçte hala eşya kaldıysa boş bir envanter yuvasına geri bırak
+      if (session && isSpawnerAbortRequested(session)) break;
+
       const wCursorCheck = bot.currentWindow || curWin;
       if (wCursorCheck && wCursorCheck.selectedItem) {
         const emptyInv = findFirstEmptyPlayerSlotInWindow(wCursorCheck);
@@ -6133,8 +6267,6 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
         }
       }
 
-      // KESİN KONTROL 1: 1..9 arasındaki 9 yuvanın TAMAMINDA iron_ingot olmak ZORUNDA!
-      // (8 yuva dolarsa demir göğüslük / zırh çıkmasını %100 engeller)
       const wVerify = bot.currentWindow || curWin;
       let allNineAreIronIngot = true;
       for (let g = 1; g <= 9; g++) {
@@ -6150,15 +6282,13 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
           if (wClean && wClean.slots[g]) {
             try {
               await withPromiseTimeout(bot.clickWindow(g, 0, 1), 1600);
-              await new Promise((r) => setTimeout(r, 100));
+              await new Promise((r) => setTimeout(r, 90));
             } catch (_) {}
           }
         }
         break;
       }
 
-      // KESİN KONTROL 2: Çıktı yuvası (Slot 0) yalnızca "iron_block" (Demir Blok) ise tıkla!
-      // Demir göğüslük (iron_chestplate) veya başka hiçbir eşyaya ASLA tıklanmaz!
       let outputIsIronBlock = false;
       for (let waitTick = 0; waitTick < 8; waitTick++) {
         await new Promise((r) => setTimeout(r, 80));
@@ -6170,13 +6300,12 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
       }
 
       if (!outputIsIronBlock) {
-        // Çıktı iron_block değilse (veya oluşmadıysa) ızgarayı boşalt ve çık
         for (let g = 1; g <= 9; g++) {
           const wClean = bot.currentWindow || curWin;
           if (wClean && wClean.slots[g]) {
             try {
               await withPromiseTimeout(bot.clickWindow(g, 0, 1), 1600);
-              await new Promise((r) => setTimeout(r, 100));
+              await new Promise((r) => setTimeout(r, 90));
             } catch (_) {}
           }
         }
@@ -6188,13 +6317,12 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
         await new Promise((r) => setTimeout(r, 190));
       } catch (_) {}
 
-      // Izgarada (1..9) arta kalan demir külçelerini envantere geri topla
       for (let g = 1; g <= 9; g++) {
         const wNow = bot.currentWindow || curWin;
         if (wNow && wNow.slots[g]) {
           try {
             await withPromiseTimeout(bot.clickWindow(g, 0, 1), 1600);
-            await new Promise((r) => setTimeout(r, 85));
+            await new Promise((r) => setTimeout(r, 80));
           } catch (_) {}
         }
       }
@@ -6206,7 +6334,7 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
         bot.closeWindow(winToClose);
       } catch (_) {}
     }
-    await new Promise((r) => setTimeout(r, 220));
+    await new Promise((r) => setTimeout(r, 200));
   }
 
   const blocksAfter = countInventoryItemByName(bot, null, 'iron_block');
@@ -6214,13 +6342,13 @@ async function craftAllIronIngotsViaChatCommand(bot, accountId) {
 }
 
 async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, depositRemainderIngots = false) {
-  if (!bot || !bot.entity) return 0;
+  if (!bot || !bot.entity || isSpawnerAbortRequested(session)) return 0;
 
   const ironBlocksCount = countInventoryItemByName(bot, null, 'iron_block');
   const remIngotsCount = depositRemainderIngots ? countInventoryItemByName(bot, null, 'iron_ingot') : 0;
   if (ironBlocksCount <= 0 && remIngotsCount <= 0) return 0;
 
-  const candidateChests = findNearbyContainerPositions(bot, homePos || bot.entity.position, 22);
+  const candidateChests = findNearbyContainerPositions(bot, homePos || bot.entity.position, 26);
   if (candidateChests.length === 0) {
     addLog(accountId, 'SPAWNER', '⚠️ Demir blokları koymak için yakında sandık bulunamadı!', chalk.red);
     return 0;
@@ -6229,6 +6357,7 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
   let totalDepositedStacks = 0;
 
   for (const chestPos of candidateChests) {
+    if (isSpawnerAbortRequested(session)) break;
     if (
       countInventoryItemByName(bot, null, 'iron_block') <= 0 &&
       (!depositRemainderIngots || countInventoryItemByName(bot, null, 'iron_ingot') <= 0)
@@ -6237,6 +6366,7 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
     }
 
     const reached = await navigateNearSpawnerOrChest(bot, session, chestPos, 3.95);
+    if (isSpawnerAbortRequested(session)) break;
     if (!reached) continue;
 
     const chestBlock = bot.blockAt(chestPos);
@@ -6259,6 +6389,7 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
       const invEnd = typeof win.inventoryEnd === 'number' ? win.inventoryEnd : win.slots.length;
 
       for (let s = invStart; s < invEnd; s++) {
+        if (isSpawnerAbortRequested(session)) break;
         const curWin = bot.currentWindow || win;
         if (!curWin) break;
         const it = curWin.slots[s];
@@ -6273,7 +6404,7 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
           await new Promise((r) => setTimeout(r, 95));
           const afterItem = (bot.currentWindow || curWin).slots[s];
           if (afterItem && afterItem.count === prevCount) {
-            break; // Bu sandık doldu, bir sonraki sandığa geç
+            break;
           }
           totalDepositedStacks++;
         } catch (_) {
@@ -6299,13 +6430,6 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
   return totalDepositedStacks;
 }
 
-/**
- * 1 Tam Spawner Turu:
- * 1) Etraftaki 19 spawner'ı sırayla açar -> Sandık ("DEPOYU AC") -> DEPO'daki tüm demirleri (iron_ingot) alır ->
- *    "/craft" yazıp demirleri demir blok (iron_block) yapar -> yanındaki sandığa koyar ve diğer spawner'dan devam eder.
- * 2) 19 spawner'ın demir blok işlemi bittikten sonra tekrar spawner depolarını açıp poppy'leri (gelincik) envanterine alır
- *    ve "/sat hepsi" yazar.
- */
 async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
   const session = getOrCreateSession(accountId);
   const bot = session.bot;
@@ -6331,14 +6455,15 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
   }
 
   const acc = config.accounts.find((a) => a.id === accountId);
-  const spawnerCfg = (acc && acc.autoSpawnerRoutine) || { enabled: false, intervalSec: 30, spawnerCount: 19 };
-  const targetSpawnerCount = Math.max(1, Math.min(64, Number(spawnerCfg.spawnerCount) || 19));
+  const spawnerCfg = (acc && acc.autoSpawnerRoutine) || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' };
+  const targetSpawnerCount = typeof spawnerCfg.spawnerCount === 'number' ? Math.max(0, Math.min(256, spawnerCfg.spawnerCount)) : 0;
+  const customCoordsText = spawnerCfg.customCoords || '';
   const sellCmd = (acc && acc.autoSellCommand ? acc.autoSellCommand.trim() : '') || '/sat hepsi';
 
-  const spawners = findNearbySpawnerBlocks(bot, 24, targetSpawnerCount);
+  const spawners = findNearbySpawnerBlocks(bot, 36, targetSpawnerCount, customCoordsText);
   if (spawners.length === 0) {
     if (isManual) {
-      addLog(accountId, 'SPAWNER', '⚠️ 24 blok menzilde hiçbir Spawner bulunamadı!', chalk.red);
+      addLog(accountId, 'SPAWNER', '⚠️ 36 blok menzilde hiçbir Spawner bulunamadı!', chalk.red);
     }
     return false;
   }
@@ -6348,6 +6473,7 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
   const prevPitch = session.basePitch !== undefined && session.basePitch !== null ? session.basePitch : bot.entity.pitch;
   const hadSneakLock = Boolean(session.sneakLock);
 
+  session.abortSpawnerRoutine = false;
   session.isSpawnerRoutineRunning = true;
   session.isDepositing = true;
   session.isMiningBlock = false;
@@ -6370,115 +6496,142 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false) {
     addLog(
       accountId,
       'SPAWNER',
-      `🏭 Spawner Turu Başladı: ${spawners.length} spawner sırayla gezilecek (Önce güller alınıp "${sellCmd}" ile satılacak, ardından her spawner'dan 1 kez demir alınıp "/craft" ile sadece Demir Blok yapılıp sandığa konulacak)...`,
+      `🏭 Spawner Turu Başladı: Toplam ${spawners.length} Spawner tespit edildi (S-Snake rotası). 1. Aşama: Her spawner'dan 1 kez demir alınıp /craft ile sadece Demir Blok yapılıp sandığa konulacak...`,
       chalk.cyanBright
     );
     broadcastState();
 
-    // Her spawner'ı sırayla 1 kez işle ve hemen yandaki spawner'a geç:
-    // 1) Spawner'ı açtığında önce gülleri (poppy) envantere alıp "/sat hepsi" yaz
-    // 2) Ardından o spawner'dan 1 kere demirleri (iron_ingot) al, "/craft" ile SADECE demir blok yap, sandığa koy ve yandaki spawner'a geç!
     for (let i = 0; i < spawners.length; i++) {
-      if (!session.bot || session.status !== 'online') break;
+      if (isSpawnerAbortRequested(session)) {
+        addLog(accountId, 'SPAWNER', '🛑 Spawner turu durduruldu.', chalk.magenta);
+        break;
+      }
       const spPos = spawners[i];
 
-      // ADIM 1: Spawner deposunu aç, güller (poppy) varsa önce onları envantere alıp "/sat hepsi" yaz
-      let depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
+      const depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
+      if (isSpawnerAbortRequested(session)) break;
       if (!depoWin) continue;
 
-      const poppyRes = await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'poppy', 0);
-      totalPoppyStacks += poppyRes.withdrawnStacks;
-
-      if (poppyRes.withdrawnStacks > 0 || countInventoryItemByName(bot, null, 'poppy') > 0) {
-        try {
-          bot.closeWindow(bot.currentWindow || depoWin);
-        } catch (_) {}
-        await new Promise((r) => setTimeout(r, 220));
-
-        try {
-          bot.chat(sellCmd);
-          session.lastAutoSellTime = Date.now();
-          session.lastSpawnerRoutineTime = Date.now();
-          addLog(
-            accountId,
-            'SPAWNER',
-            `🌹 [Spawner ${i + 1}/${spawners.length}] ${poppyRes.withdrawnStacks} yığın gül (poppy) alındı ve "${sellCmd}" ile satıldı.`,
-            chalk.magentaBright
-          );
-        } catch (_) {}
-        await new Promise((r) => setTimeout(r, 550));
-
-        // Gülleri sattıktan sonra demirleri almak için aynı spawner'ın deposunu 1 kez aç
-        depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
-        if (!depoWin) continue;
-      }
-
-      // ADIM 2: Bu spawner'dan SADECE 1 KERE demir külçelerini (iron_ingot) envantere çek
-      await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'iron_ingot', 1);
+      await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'iron_ingot', 1, session);
+      if (isSpawnerAbortRequested(session)) break;
 
       try {
         bot.closeWindow(bot.currentWindow || depoWin);
       } catch (_) {}
-      await new Promise((r) => setTimeout(r, 220));
+      await new Promise((r) => setTimeout(r, 180));
+      if (isSpawnerAbortRequested(session)) break;
 
-      // ADIM 3: Chatten "/craft" yaz ve 3x3 ızgarada SADECE Demir Blok (iron_block) üret
       const currentIngots = countInventoryItemByName(bot, null, 'iron_ingot');
       if (currentIngots >= 9) {
         addLog(
           accountId,
           'SPAWNER',
-          `🔨 [Spawner ${i + 1}/${spawners.length}] ${currentIngots} adet demir külçesi alındı, "/craft" ile sadece Demir Blok yapılıyor...`,
+          `🔨 [Spawner ${i + 1}/${spawners.length}] Demirler alındı (${currentIngots} külçe), "/craft" ile sadece Demir Blok yapılıyor...`,
           chalk.cyan
         );
-        const craftedNow = await craftAllIronIngotsViaChatCommand(bot, accountId);
+        const craftedNow = await craftAllIronIngotsViaChatCommand(bot, accountId, session);
         totalCraftedBlocks += craftedNow;
       }
+      if (isSpawnerAbortRequested(session)) break;
 
-      // ADIM 4: Üretilen demir blokları (ve sonraki spawner'da /sat hepsi yaparken satılmaması için artan demirleri) sandığa koy, sonra yandaki spawner'a geç!
       const blocksInInv = countInventoryItemByName(bot, null, 'iron_block');
-      const remIngotsInInv = countInventoryItemByName(bot, null, 'iron_ingot');
-      if (blocksInInv > 0 || remIngotsInInv > 0) {
+      if (blocksInInv > 0) {
         const depStacks = await depositIronBlocksToNearbyChest(
           bot,
           session,
           accountId,
           homePos,
-          true
+          false
         );
         totalDepositedStacks += depStacks;
-        if (depStacks > 0) {
-          addLog(
-            accountId,
-            'SPAWNER',
-            `📦 [Spawner ${i + 1}/${spawners.length}] Demir bloklar sandığa konuldu (${depStacks} yığın). Yandaki spawner'a geçiliyor...`,
-            chalk.green
-          );
+      }
+    }
+
+    if (!isSpawnerAbortRequested(session)) {
+      const remIngots = countInventoryItemByName(bot, null, 'iron_ingot');
+      if (remIngots >= 9) {
+        const lastCrafted = await craftAllIronIngotsViaChatCommand(bot, accountId, session);
+        totalCraftedBlocks += lastCrafted;
+        const lastBlocks = countInventoryItemByName(bot, null, 'iron_block');
+        if (lastBlocks > 0) {
+          const depStacks = await depositIronBlocksToNearbyChest(bot, session, accountId, homePos, false);
+          totalDepositedStacks += depStacks;
         }
       }
     }
 
-    // Son olarak çantada kalan poppy varsa "/sat hepsi" gönder ve başlangıç noktasına dön
-    if (countInventoryItemByName(bot, null, 'poppy') > 0) {
-      try {
-        bot.chat(sellCmd);
-      } catch (_) {}
-      await new Promise((r) => setTimeout(r, 400));
+    if (!isSpawnerAbortRequested(session) && spawners.length > 0) {
+      addLog(
+        accountId,
+        'SPAWNER',
+        `🌹 2. Aşama: 1. Spawner'a dönülüyor. Tüm spawner'lardaki poppy'ler (güller) toplanıp "${sellCmd}" ile satılacak...`,
+        chalk.magentaBright
+      );
+
+      for (let i = 0; i < spawners.length; i++) {
+        if (isSpawnerAbortRequested(session)) {
+          addLog(accountId, 'SPAWNER', '🛑 Spawner turu durduruldu.', chalk.magenta);
+          break;
+        }
+        const spPos = spawners[i];
+
+        const depoWin = await openSpawnerDepoWindow(bot, session, spPos, accountId);
+        if (isSpawnerAbortRequested(session)) break;
+        if (!depoWin) continue;
+
+        const poppyRes = await withdrawTargetItemFromSpawnerDepo(bot, depoWin, 'poppy', 0, session);
+        totalPoppyStacks += poppyRes.withdrawnStacks;
+
+        try {
+          bot.closeWindow(bot.currentWindow || depoWin);
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 180));
+        if (isSpawnerAbortRequested(session)) break;
+
+        const poppiesInInv = countInventoryItemByName(bot, null, 'poppy');
+        if (poppiesInInv > 0 || poppyRes.withdrawnStacks > 0) {
+          try {
+            bot.chat(sellCmd);
+            session.lastAutoSellTime = Date.now();
+            session.lastSpawnerRoutineTime = Date.now();
+            addLog(
+              accountId,
+              'SPAWNER',
+              `🌹 [Poppy ${i + 1}/${spawners.length}] Güller alındı ve "${sellCmd}" ile satıldı.`,
+              chalk.magentaBright
+            );
+          } catch (_) {}
+          await new Promise((r) => setTimeout(r, 450));
+        }
+      }
     }
 
-    await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
+    if (!isSpawnerAbortRequested(session)) {
+      if (countInventoryItemByName(bot, null, 'poppy') > 0) {
+        try {
+          bot.chat(sellCmd);
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 350));
+      }
 
-    session.lastSpawnerRoutineTime = Date.now();
-    addLog(
-      accountId,
-      'SPAWNER',
-      `✅ 🏭 1 Tur Tamamlandı! ${spawners.length} spawner işlendi • Üretilen Demir Blok: ${totalCraftedBlocks} • Sandığa Konulan: ${totalDepositedStacks} yığın • Satılan Poppy: ${totalPoppyStacks} yığın.`,
-      chalk.greenBright
-    );
-    triggerSoundAlert('notify', accountId, 'Spawner Turu Tamamlandı');
-    broadcastState();
-    return true;
+      await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
+      session.lastSpawnerRoutineTime = Date.now();
+      addLog(
+        accountId,
+        'SPAWNER',
+        `✅ 🏭 Spawner Turu Başarıyla Tamamlandı! ${spawners.length} Spawner işlendi • Üretilen Demir Blok: ${totalCraftedBlocks} • Sandığa Konulan: ${totalDepositedStacks} yığın • Satılan Poppy: ${totalPoppyStacks} yığın.`,
+        chalk.greenBright
+      );
+      triggerSoundAlert('notify', accountId, 'Spawner Turu Tamamlandı');
+      broadcastState();
+      return true;
+    }
+
+    return false;
   } catch (err) {
-    addLog(accountId, 'SPAWNER', `❌ Spawner turu sırasında hata: ${err.message}`, chalk.red);
+    if (!isSpawnerAbortRequested(session)) {
+      addLog(accountId, 'SPAWNER', `❌ Spawner turu sırasında hata: ${err.message}`, chalk.red);
+    }
     return false;
   } finally {
     if (bot.currentWindow) {
@@ -6554,8 +6707,20 @@ function stopSpawnerRoutineLoop(accountId) {
     clearTimeout(session.spawnerRoutineTimer);
     session.spawnerRoutineTimer = null;
   }
+  session.abortSpawnerRoutine = true;
   session.isSpawnerRoutineRunning = false;
+  if (session.bot) {
+    try {
+      session.bot.clearControlStates();
+    } catch (_) {}
+    if (session.bot.currentWindow) {
+      try {
+        session.bot.closeWindow(session.bot.currentWindow);
+      } catch (_) {}
+    }
+  }
 }
+
 
 
 function startAutoChestLoop(accountId) {
@@ -11494,7 +11659,7 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
 
   try {
     while (currentTargetIndex < path.length && Date.now() - startTime < maxTimeoutMs) {
-      if (!session || !session.bot || session.status !== 'online') break;
+      if (!session || !session.bot || session.status !== 'online' || session.abortSpawnerRoutine) break;
 
       const curPos = bot.entity.position;
       const curEye = curPos.offset(0, 1.62, 0);
@@ -15168,25 +15333,64 @@ const server = http.createServer(async (req, res) => {
           broadcastState();
           break;
         case 'spawnerRoutineNow':
-          if (s.bot && s.bot.entity && s.status === 'online') {
+          if (s.isSpawnerRoutineRunning) {
+            s.abortSpawnerRoutine = true;
+            s.isSpawnerRoutineRunning = false;
+            s.isDepositing = false;
+            if (s.bot) {
+              try { s.bot.clearControlStates(); } catch (_) {}
+              if (s.bot.currentWindow) {
+                try { s.bot.closeWindow(s.bot.currentWindow); } catch (_) {}
+              }
+            }
+            addLog(accId, 'SPAWNER', '🛑 Devam eden Spawner turu kullanıcı isteğiyle durduruldu.', chalk.magenta);
+            broadcastState();
+          } else if (s.bot && s.bot.entity && s.status === 'online') {
+            s.abortSpawnerRoutine = false;
             executeSpawnerIronPoppyRoutine(accId, true);
           } else {
             addLog(accId, 'SPAWNER', 'Bot sunucuya bağlı değil!', chalk.red);
           }
           break;
+        case 'stopSpawnerRoutineNow':
+          s.abortSpawnerRoutine = true;
+          s.isSpawnerRoutineRunning = false;
+          s.isDepositing = false;
+          if (s.bot) {
+            try { s.bot.clearControlStates(); } catch (_) {}
+            if (s.bot.currentWindow) {
+              try { s.bot.closeWindow(s.bot.currentWindow); } catch (_) {}
+            }
+          }
+          addLog(accId, 'SPAWNER', '🛑 Devam eden Spawner turu kullanıcı isteğiyle durduruldu.', chalk.magenta);
+          broadcastState();
+          break;
         case 'toggleAutoSpawnerRoutine':
           if (!acc.autoSpawnerRoutine) {
-            acc.autoSpawnerRoutine = { enabled: false, intervalSec: 30, spawnerCount: 19 };
+            acc.autoSpawnerRoutine = { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' };
           }
           acc.autoSpawnerRoutine.enabled = !acc.autoSpawnerRoutine.enabled;
           saveConfig();
           if (acc.autoSpawnerRoutine.enabled) {
-            addLog(accId, 'SPAWNER', `🏭 Otomatik Spawner Demir Blok & Poppy Döngüsü başlatıldı (${acc.autoSpawnerRoutine.spawnerCount} spawner, ${acc.autoSpawnerRoutine.intervalSec} sn).`, chalk.green);
+            s.abortSpawnerRoutine = false;
+            const countLabel = !acc.autoSpawnerRoutine.spawnerCount || acc.autoSpawnerRoutine.spawnerCount === 0
+              ? 'Tüm Spawnerlar (Dinamik)'
+              : `${acc.autoSpawnerRoutine.spawnerCount} spawner`;
+            addLog(accId, 'SPAWNER', `🏭 Otomatik Spawner Demir Blok & Poppy Döngüsü başlatıldı (${countLabel}, ${acc.autoSpawnerRoutine.intervalSec} sn).`, chalk.green);
             startSpawnerRoutineLoop(accId);
             if (s.bot && s.bot.entity && s.status === 'online') {
               executeSpawnerIronPoppyRoutine(accId, false);
             }
           } else {
+            s.abortSpawnerRoutine = true;
+            s.isSpawnerRoutineRunning = false;
+            s.isDepositing = false;
+            if (s.bot) {
+              try { s.bot.clearControlStates(); } catch (_) {}
+              if (s.bot.currentWindow) {
+                try { s.bot.closeWindow(s.bot.currentWindow); } catch (_) {}
+              }
+            }
             addLog(accId, 'SPAWNER', '🛑 Otomatik Spawner Döngüsü durduruldu.', chalk.magenta);
             stopSpawnerRoutineLoop(accId);
           }
@@ -15194,18 +15398,27 @@ const server = http.createServer(async (req, res) => {
           break;
         case 'updateSpawnerRoutineConfig':
           if (!acc.autoSpawnerRoutine) {
-            acc.autoSpawnerRoutine = { enabled: false, intervalSec: 30, spawnerCount: 19 };
+            acc.autoSpawnerRoutine = { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' };
           }
           if (typeof body.enabled !== 'undefined') acc.autoSpawnerRoutine.enabled = Boolean(body.enabled);
           if (typeof body.intervalSec !== 'undefined') acc.autoSpawnerRoutine.intervalSec = Math.max(10, Number(body.intervalSec) || 30);
-          if (typeof body.spawnerCount !== 'undefined') acc.autoSpawnerRoutine.spawnerCount = Math.max(1, Math.min(64, Number(body.spawnerCount) || 19));
+          if (typeof body.spawnerCount !== 'undefined') {
+            const rawCnt = Number(body.spawnerCount);
+            acc.autoSpawnerRoutine.spawnerCount = isNaN(rawCnt) ? 0 : Math.max(0, Math.min(256, rawCnt));
+          }
+          if (typeof body.customCoords === 'string') {
+            acc.autoSpawnerRoutine.customCoords = body.customCoords;
+          }
           saveConfig();
           if (acc.autoSpawnerRoutine.enabled) {
             startSpawnerRoutineLoop(accId);
           } else {
             stopSpawnerRoutineLoop(accId);
           }
-          addLog(accId, 'SPAWNER', `Spawner döngü ayarları güncellendi: ${acc.autoSpawnerRoutine.spawnerCount} spawner, her ${acc.autoSpawnerRoutine.intervalSec} saniyede bir.`, chalk.cyan);
+          const spDesc = !acc.autoSpawnerRoutine.spawnerCount || acc.autoSpawnerRoutine.spawnerCount === 0
+            ? 'Tüm Spawnerlar (Otomatik)'
+            : `${acc.autoSpawnerRoutine.spawnerCount} spawner`;
+          addLog(accId, 'SPAWNER', `Spawner döngü ayarları güncellendi: ${spDesc}, her ${acc.autoSpawnerRoutine.intervalSec} saniyede bir.`, chalk.cyan);
           broadcastState();
           break;
         case 'depositChestNow':
