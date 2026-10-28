@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261027_multibot_coop_system_v53';
+const ENGINE_BUILD_ID = '20261028_vulcan_stealth_farm_v54';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -6591,6 +6591,131 @@ function wrapAngleRad(angle) {
   return a;
 }
 
+/**
+ * Vanilla Minecraft BlockHitResult uyumlu yüzey tıklama koordinatı (cursorX, cursorY, cursorZ).
+ * - Tıklanan yüzeyin normal ekseninde (face !== 0) koordinat KESİNLİKLE 0.0 veya 1.0 olmalıdır
+ *   (0.96 / 0.04 gönderilmesi Vulcan Scaffold Type L / BadPackets InvalidCursor sebebidir!).
+ * - Diğer iki teğet eksende (face === 0) ise her blokta tam 0.5 gönderilmesi Vulcan Scaffold Type K
+ *   tarafından yakalanır; bu yüzden merkez etrafında [0.36 .. 0.64] aralığında (0.5 olmayan)
+ *   insani mikro varyasyon üretilir.
+ */
+function randomFaceTangentOffset() {
+  const sign = Math.random() < 0.5 ? -1 : 1;
+  const mag = 0.03 + Math.random() * 0.11; // 0.03 .. 0.14 (asla 0.0 olmaz)
+  return Number((0.5 + sign * mag).toFixed(4));
+}
+
+function computeStealthFaceDelta(faceVec) {
+  const dx = faceVec.x !== 0 ? (0.5 + faceVec.x * 0.5) : randomFaceTangentOffset();
+  const dy = faceVec.y !== 0 ? (0.5 + faceVec.y * 0.5) : randomFaceTangentOffset();
+  const dz = faceVec.z !== 0 ? (0.5 + faceVec.z * 0.5) : randomFaceTangentOffset();
+  return new Vec3(dx, dy, dz);
+}
+
+/**
+ * Mineflayer'ın physicsTick döngüsüyle tam senkronize bekleme.
+ * Windows'un 15.6ms zamanlayıcı çözünürlüğü nedeniyle sabit setTimeout(..., 45) çağrıları
+ * çoğu zaman tickPhysics -> updatePosition çalışmadan önce tetiklenir ve sunucuya look paketi
+ * gitmeden block_place paketi gönderilmesine (Vulcan Raytrace/Rotation kick) yol açar.
+ */
+function waitOnePhysicsTick(bot, maxWaitMs = 95) {
+  return new Promise((resolve) => {
+    if (!bot || typeof bot.once !== 'function') {
+      return setTimeout(resolve, 55);
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        bot.removeListener('physicsTick', onTick);
+      } catch (e) {}
+      // emit('physicsTick') hemen ardından senkron olarak çalışan updatePosition(now)'un
+      // look/position_look paketini sokete yazmasını garanti altına almak için 12ms bekle
+      setTimeout(resolve, 12);
+    };
+    const onTick = () => finish();
+    const timer = setTimeout(finish, maxWaitMs);
+    bot.once('physicsTick', onTick);
+  });
+}
+
+/**
+ * Mineflayer'ın physics.js içindeki iki kritik hatayı (force=false modunda pitch'in
+ * lookingTask tarafından yoksayılması + 8.594°/tick sabit hızla GCD bozulması ve
+ * force=true modunda physicsTick beklenmeden paket gönderilmesi) tamamen çözen
+ * Vulcan GCD & Raytrace uyumlu bakış fonksiyonu.
+ */
+async function lookAtBlockFaceStealth(bot, clickPos, overrideEyeHeight = null) {
+  if (!bot || !bot.entity || !bot.entity.position || !clickPos) return;
+
+  const isSneaking = Boolean(bot.getControlState && bot.getControlState('sneak'));
+  const eyeHeight = overrideEyeHeight !== null
+    ? overrideEyeHeight
+    : (isSneaking ? 1.27 : (bot.entity.eyeHeight || 1.62));
+  const eyePos = bot.entity.position.offset(0, eyeHeight, 0);
+
+  const delta = clickPos.minus(eyePos);
+  const targetYaw = Math.atan2(-delta.x, -delta.z);
+  const groundDistance = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+  const targetPitch = Math.atan2(delta.y, groundDistance);
+
+  // Vanilla %100 fare hassasiyeti GCD adımı (0.15 derece)
+  const sensitivity = (0.15 * Math.PI) / 180;
+  const halfPi = Math.PI / 2;
+
+  const curYaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : targetYaw;
+  const curPitch = typeof bot.entity.pitch === 'number' ? bot.entity.pitch : targetPitch;
+
+  let dYaw = (targetYaw - curYaw) % (Math.PI * 2);
+  if (dYaw < -Math.PI) dYaw += Math.PI * 2;
+  else if (dYaw > Math.PI) dYaw -= Math.PI * 2;
+  const dPitch = targetPitch - curPitch;
+
+  const totalAngle = Math.hypot(dYaw, dPitch);
+
+  // Büyük dönüşlerde (> 28 derece) tek tick'te 90-180 derece snap atmamak için
+  // 2 tick'lik GCD-kuantize insani ivmeli (ease-out) dönüş uygula
+  if (totalAngle > 0.49 && typeof bot.look === 'function') {
+    const ratio = 0.58 + Math.random() * 0.10; // ~%63 ilk adım
+    const stepYawChange = Math.round((dYaw * ratio) / sensitivity) * sensitivity;
+    const stepPitchChange = Math.round((dPitch * ratio) / sensitivity) * sensitivity;
+    const midYaw = curYaw + stepYawChange;
+    const midPitch = Math.max(-halfPi, Math.min(halfPi, curPitch + stepPitchChange));
+    try {
+      await bot.look(midYaw, midPitch, true);
+    } catch (e) {}
+    await waitOnePhysicsTick(bot, 85);
+  }
+
+  // Son adım: Tam hedef yüzey noktasına GCD-kuantize kilitlen ve physicsTick'te paketin gönderilmesini bekle
+  const nowYaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : curYaw;
+  const nowPitch = typeof bot.entity.pitch === 'number' ? bot.entity.pitch : curPitch;
+  let remYaw = (targetYaw - nowYaw) % (Math.PI * 2);
+  if (remYaw < -Math.PI) remYaw += Math.PI * 2;
+  else if (remYaw > Math.PI) remYaw -= Math.PI * 2;
+  const remPitch = targetPitch - nowPitch;
+
+  const finalYawChange = Math.round(remYaw / sensitivity) * sensitivity;
+  const finalPitchChange = Math.round(remPitch / sensitivity) * sensitivity;
+  const finalYaw = nowYaw + finalYawChange;
+  const finalPitch = Math.max(-halfPi, Math.min(halfPi, nowPitch + finalPitchChange));
+
+  if (typeof bot.look === 'function') {
+    try {
+      await bot.look(finalYaw, finalPitch, true);
+    } catch (e) {}
+  } else if (typeof bot.lookAt === 'function') {
+    try {
+      await bot.lookAt(clickPos, true);
+    } catch (e) {}
+  }
+
+  // Sunucuya look / position_look paketinin kesin olarak gönderildiğinden emin ol
+  await waitOnePhysicsTick(bot, 95);
+}
+
 function smoothHumanLook(bot, targetYaw, targetPitch = 0.3, maxTurn = 1.15) {
   if (!bot || !bot.entity) return 0;
   const curYaw = bot.entity.yaw;
@@ -8603,12 +8728,32 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
   if (!bot.heldItem || !HOE_NAMES.includes(bot.heldItem.name.toLowerCase())) {
     try {
       await bot.equip(hoe, 'hand');
-      await waitOnePhysicsTick(bot, 35);
+      await waitOnePhysicsTick(bot, 50);
     } catch (e) {}
   }
 
   const posKey = `${targetBlock.position.x},${targetBlock.position.y},${targetBlock.position.z}`;
   if (!session.tillAttemptCounts) session.tillAttemptCounts = new Map();
+
+  // 1. Vulcan Koruma: Yürüme/koşma tuşlarını durdur
+  const wasMoving = Boolean(
+    bot.getControlState &&
+    (bot.getControlState('forward') ||
+      bot.getControlState('back') ||
+      bot.getControlState('left') ||
+      bot.getControlState('right') ||
+      bot.getControlState('jump') ||
+      bot.getControlState('sprint'))
+  );
+  bot.setControlState('forward', false);
+  bot.setControlState('back', false);
+  bot.setControlState('left', false);
+  bot.setControlState('right', false);
+  bot.setControlState('jump', false);
+  bot.setControlState('sprint', false);
+  if (wasMoving) {
+    await waitOnePhysicsTick(bot, 75);
+  }
 
   // Üstteki ot/çiçek varsa önce kır
   const above = bot.blockAt(targetBlock.position.offset(0, 1, 0));
@@ -8630,36 +8775,36 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
         face: face,
         sequence: seq
       });
-      await waitOnePhysicsTick(bot, 35);
+      await waitOnePhysicsTick(bot, 50);
     } catch (e) {}
   }
 
-  const eyePos = bot.entity.position.offset(0, 1.62, 0);
-  const topCenter = targetBlock.position.offset(0.5, 1.0, 0.5);
-  const dx = topCenter.x - eyePos.x;
-  const dy = topCenter.y - eyePos.y;
-  const dz = topCenter.z - eyePos.z;
-  const horizDist = Math.hypot(dx, dz);
-  const targetYaw = Math.atan2(-dx, -dz);
-  const targetPitch = Math.atan2(dy, horizDist);
+  // 2. Vulcan Kusursuz GCD & Raytrace Bakış:
+  const topFaceVec = new Vec3(0, 1, 0);
+  const deltaPos = computeStealthFaceDelta(topFaceVec);
+  const clickPos = targetBlock.position.plus(deltaPos);
+  await lookAtBlockFaceStealth(bot, clickPos);
 
-  try {
-    await bot.look(targetYaw, targetPitch, true);
-  } catch (e) {
-    smoothHumanLook(bot, targetYaw, targetPitch);
-  }
-
+  // 3. Vulcan FastPlace / GhostHand Koruma:
   try {
     if (typeof bot._genericPlace === 'function') {
-      await bot._genericPlace(targetBlock, new Vec3(0, 1, 0), { swingArm: 'right', forceLook: 'ignore' });
+      await bot._genericPlace(targetBlock, topFaceVec, {
+        swingArm: false,
+        forceLook: 'ignore',
+        delta: deltaPos
+      });
     } else if (typeof bot._placeBlockWithOptions === 'function') {
-      await bot._placeBlockWithOptions(targetBlock, new Vec3(0, 1, 0), { swingArm: 'right', forceLook: 'ignore' });
+      await bot._placeBlockWithOptions(targetBlock, topFaceVec, {
+        swingArm: false,
+        forceLook: 'ignore',
+        delta: deltaPos
+      });
     } else if (typeof bot.activateBlock === 'function') {
-      await bot.activateBlock(targetBlock, new Vec3(0, 1, 0));
+      await bot.activateBlock(targetBlock, topFaceVec);
     } else {
       bot.activateItem();
-      bot.swingArm('right');
     }
+    bot.swingArm('right');
   } catch (err) {
     try {
       bot.swingArm('right');
@@ -8667,7 +8812,7 @@ async function tillDirtBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  await waitOnePhysicsTick(bot, 40);
+  await waitOnePhysicsTick(bot, 65);
 
   const updatedBlock = bot.blockAt(targetBlock.position);
   const updatedName = updatedBlock && updatedBlock.name ? updatedBlock.name.toLowerCase() : '';
@@ -8922,19 +9067,24 @@ function startAutoTillLoop(accountId) {
       bot.setControlState('jump', false);
       bot.setControlState('sprint', false);
 
-      const batch = immediateBlocks.slice(0, 3);
-      for (const block of batch) {
-        if (!session.autoTill || session.tillLoopId !== thisLoopId || session.status !== 'online') break;
-        const curB = bot.blockAt(block.position);
-        if (curB && canBlockBeTilled(bot, curB)) {
-          const pKey = `${curB.position.x},${curB.position.y},${curB.position.z}`;
-          claimBlock('till', pKey, accountId, 8000);
-          await tillDirtBlock(bot, session, curB, accountId);
-          releaseBlockClaim('till', pKey, accountId);
-        }
+      // VULCAN FASTPLACE KORUMASI:
+      // Asla tek adımda 3-4 blok çapalama! En yakın 1 bloğu seç, organik insansı aralıkla (220ms - 275ms) çapala.
+      immediateBlocks.sort((a, b) => {
+        return myPos.distanceTo(a.position) - myPos.distanceTo(b.position);
+      });
+
+      const targetBlock = immediateBlocks[0];
+      const curB = bot.blockAt(targetBlock.position);
+      if (curB && canBlockBeTilled(bot, curB)) {
+        const pKey = `${curB.position.x},${curB.position.y},${curB.position.z}`;
+        claimBlock('till', pKey, accountId, 8000);
+        await tillDirtBlock(bot, session, curB, accountId);
+        releaseBlockClaim('till', pKey, accountId);
       }
 
-      session.tillTimer = setTimeout(step, 40);
+      const baseDelay = 220;
+      const jitter = Math.floor(Math.random() * 55);
+      session.tillTimer = setTimeout(step, baseDelay + jitter);
       return;
     }
 
@@ -8996,7 +9146,7 @@ function startAutoTillLoop(accountId) {
         1.0
       );
       if (navRes === 'reached') {
-        nextDelay = 35;
+        nextDelay = 65;
       } else if (navRes === 'unreachable') {
         const bKey = `${targetDirt.position.x},${targetDirt.position.y},${targetDirt.position.z}`;
         if (!session.tillBlacklist) session.tillBlacklist = new Set();
@@ -9163,36 +9313,58 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
   if (!bot.heldItem || !PLANTABLE_SEED_NAMES.includes(bot.heldItem.name.toLowerCase())) {
     try {
       await bot.equip(seed, 'hand');
-      await waitOnePhysicsTick(bot, 35);
+      await waitOnePhysicsTick(bot, 50);
     } catch (e) {}
   }
 
-  const eyePos = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
-  const topFaceCenter = targetBlock.position.offset(0.5, 0.9375, 0.5);
-  const dx = topFaceCenter.x - eyePos.x;
-  const dy = topFaceCenter.y - eyePos.y;
-  const dz = topFaceCenter.z - eyePos.z;
-  const targetYaw = Math.atan2(-dx, -dz);
-  const groundDist = Math.hypot(dx, dz);
-  const targetPitch = Math.atan2(dy, groundDist);
-
-  try {
-    await bot.look(targetYaw, targetPitch, true);
-  } catch (e) {
-    smoothHumanLook(bot, targetYaw, 0.45);
+  // 1. Vulcan Koruma: Yürüme/koşma tuşlarını durdur
+  const wasMoving = Boolean(
+    bot.getControlState &&
+    (bot.getControlState('forward') ||
+      bot.getControlState('back') ||
+      bot.getControlState('left') ||
+      bot.getControlState('right') ||
+      bot.getControlState('jump') ||
+      bot.getControlState('sprint'))
+  );
+  bot.setControlState('forward', false);
+  bot.setControlState('back', false);
+  bot.setControlState('left', false);
+  bot.setControlState('right', false);
+  bot.setControlState('jump', false);
+  bot.setControlState('sprint', false);
+  if (wasMoving) {
+    await waitOnePhysicsTick(bot, 75);
   }
 
+  // 2. Vulcan Kusursuz GCD & Raytrace Bakış:
+  // Farmland üst yüzeyi 0.9375 yüksekliğindedir
+  const topFaceVec = new Vec3(0, 1, 0);
+  const deltaPos = computeStealthFaceDelta(topFaceVec);
+  deltaPos.y = 0.9375;
+  const clickPos = targetBlock.position.plus(deltaPos);
+  await lookAtBlockFaceStealth(bot, clickPos);
+
+  // 3. Vulcan FastPlace / GhostHand Koruma:
   try {
-    if (typeof bot.activateBlock === 'function') {
-      await bot.activateBlock(targetBlock, new Vec3(0, 1, 0));
-    } else if (typeof bot._genericPlace === 'function') {
-      await bot._genericPlace(targetBlock, new Vec3(0, 1, 0), { swingArm: 'right', forceLook: 'ignore' });
+    if (typeof bot._genericPlace === 'function') {
+      await bot._genericPlace(targetBlock, topFaceVec, {
+        swingArm: false,
+        forceLook: 'ignore',
+        delta: deltaPos
+      });
     } else if (typeof bot._placeBlockWithOptions === 'function') {
-      await bot._placeBlockWithOptions(targetBlock, new Vec3(0, 1, 0), { swingArm: 'right', forceLook: 'ignore' });
+      await bot._placeBlockWithOptions(targetBlock, topFaceVec, {
+        swingArm: false,
+        forceLook: 'ignore',
+        delta: deltaPos
+      });
+    } else if (typeof bot.activateBlock === 'function') {
+      await bot.activateBlock(targetBlock, topFaceVec);
     } else {
       bot.activateItem();
-      bot.swingArm('right');
     }
+    bot.swingArm('right');
   } catch (err) {
     try {
       bot.swingArm('right');
@@ -9200,7 +9372,7 @@ async function plantFarmlandBlock(bot, session, targetBlock, accountId) {
     } catch (e) {}
   }
 
-  await waitOnePhysicsTick(bot, 40);
+  await waitOnePhysicsTick(bot, 65);
 
   const posKey = `${targetBlock.position.x},${targetBlock.position.y},${targetBlock.position.z}`;
   const aboveNow = bot.blockAt(targetBlock.position.offset(0, 1, 0));
@@ -9426,19 +9598,24 @@ function startAutoPlantLoop(accountId) {
       bot.setControlState('jump', false);
       bot.setControlState('sprint', false);
 
-      const batch = immediateBlocks.slice(0, 4);
-      for (const block of batch) {
-        if (!session.autoPlant || session.plantLoopId !== thisLoopId || session.status !== 'online') break;
-        const curB = bot.blockAt(block.position);
-        if (curB && isPlantableFarmland(bot, curB)) {
-          const pKey = `${curB.position.x},${curB.position.y},${curB.position.z}`;
-          claimBlock('plant', pKey, accountId, 8000);
-          await plantFarmlandBlock(bot, session, curB, accountId);
-          releaseBlockClaim('plant', pKey, accountId);
-        }
+      // VULCAN FASTPLACE KORUMASI:
+      // Asla tek adımda 3-4 blok ekme! En yakın 1 bloğu seç, organik insansı aralıkla (220ms - 275ms) ek.
+      immediateBlocks.sort((a, b) => {
+        return myPos.distanceTo(a.position) - myPos.distanceTo(b.position);
+      });
+
+      const targetBlock = immediateBlocks[0];
+      const curB = bot.blockAt(targetBlock.position);
+      if (curB && isPlantableFarmland(bot, curB)) {
+        const pKey = `${curB.position.x},${curB.position.y},${curB.position.z}`;
+        claimBlock('plant', pKey, accountId, 8000);
+        await plantFarmlandBlock(bot, session, curB, accountId);
+        releaseBlockClaim('plant', pKey, accountId);
       }
 
-      session.plantTimer = setTimeout(step, 40);
+      const baseDelay = 220;
+      const jitter = Math.floor(Math.random() * 55);
+      session.plantTimer = setTimeout(step, baseDelay + jitter);
       return;
     }
 
@@ -11696,130 +11873,7 @@ function isSolidReferenceBlock(refBlock) {
   return true;
 }
 
-/**
- * Vanilla Minecraft BlockHitResult uyumlu yüzey tıklama koordinatı (cursorX, cursorY, cursorZ).
- * - Tıklanan yüzeyin normal ekseninde (face !== 0) koordinat KESİNLİKLE 0.0 veya 1.0 olmalıdır
- *   (0.96 / 0.04 gönderilmesi Vulcan Scaffold Type L / BadPackets InvalidCursor sebebidir!).
- * - Diğer iki teğet eksende (face === 0) ise her blokta tam 0.5 gönderilmesi Vulcan Scaffold Type K
- *   tarafından yakalanır; bu yüzden merkez etrafında [0.36 .. 0.64] aralığında (0.5 olmayan)
- *   insani mikro varyasyon üretilir.
- */
-function randomFaceTangentOffset() {
-  const sign = Math.random() < 0.5 ? -1 : 1;
-  const mag = 0.03 + Math.random() * 0.11; // 0.03 .. 0.14 (asla 0.0 olmaz)
-  return Number((0.5 + sign * mag).toFixed(4));
-}
-
-function computeStealthFaceDelta(faceVec) {
-  const dx = faceVec.x !== 0 ? (0.5 + faceVec.x * 0.5) : randomFaceTangentOffset();
-  const dy = faceVec.y !== 0 ? (0.5 + faceVec.y * 0.5) : randomFaceTangentOffset();
-  const dz = faceVec.z !== 0 ? (0.5 + faceVec.z * 0.5) : randomFaceTangentOffset();
-  return new Vec3(dx, dy, dz);
-}
-
-/**
- * Mineflayer'ın physicsTick döngüsüyle tam senkronize bekleme.
- * Windows'un 15.6ms zamanlayıcı çözünürlüğü nedeniyle sabit setTimeout(..., 45) çağrıları
- * çoğu zaman tickPhysics -> updatePosition çalışmadan önce tetiklenir ve sunucuya look paketi
- * gitmeden block_place paketi gönderilmesine (Vulcan Raytrace/Rotation kick) yol açar.
- */
-function waitOnePhysicsTick(bot, maxWaitMs = 95) {
-  return new Promise((resolve) => {
-    if (!bot || typeof bot.once !== 'function') {
-      return setTimeout(resolve, 55);
-    }
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      try {
-        bot.removeListener('physicsTick', onTick);
-      } catch (e) {}
-      // emit('physicsTick') hemen ardından senkron olarak çalışan updatePosition(now)'un
-      // look/position_look paketini sokete yazmasını garanti altına almak için 12ms bekle
-      setTimeout(resolve, 12);
-    };
-    const onTick = () => finish();
-    const timer = setTimeout(finish, maxWaitMs);
-    bot.once('physicsTick', onTick);
-  });
-}
-
-/**
- * Mineflayer'ın physics.js içindeki iki kritik hatayı (force=false modunda pitch'in
- * lookingTask tarafından yoksayılması + 8.594°/tick sabit hızla GCD bozulması ve
- * force=true modunda physicsTick beklenmeden paket gönderilmesi) tamamen çözen
- * Vulcan GCD & Raytrace uyumlu bakış fonksiyonu.
- */
-async function lookAtBlockFaceStealth(bot, clickPos, overrideEyeHeight = null) {
-  if (!bot || !bot.entity || !bot.entity.position || !clickPos) return;
-
-  const isSneaking = Boolean(bot.getControlState && bot.getControlState('sneak'));
-  const eyeHeight = overrideEyeHeight !== null
-    ? overrideEyeHeight
-    : (isSneaking ? 1.27 : (bot.entity.eyeHeight || 1.62));
-  const eyePos = bot.entity.position.offset(0, eyeHeight, 0);
-
-  const delta = clickPos.minus(eyePos);
-  const targetYaw = Math.atan2(-delta.x, -delta.z);
-  const groundDistance = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
-  const targetPitch = Math.atan2(delta.y, groundDistance);
-
-  // Vanilla %100 fare hassasiyeti GCD adımı (0.15 derece)
-  const sensitivity = (0.15 * Math.PI) / 180;
-  const halfPi = Math.PI / 2;
-
-  const curYaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : targetYaw;
-  const curPitch = typeof bot.entity.pitch === 'number' ? bot.entity.pitch : targetPitch;
-
-  let dYaw = (targetYaw - curYaw) % (Math.PI * 2);
-  if (dYaw < -Math.PI) dYaw += Math.PI * 2;
-  else if (dYaw > Math.PI) dYaw -= Math.PI * 2;
-  const dPitch = targetPitch - curPitch;
-
-  const totalAngle = Math.hypot(dYaw, dPitch);
-
-  // Büyük dönüşlerde (> 28 derece) tek tick'te 90-180 derece snap atmamak için
-  // 2 tick'lik GCD-kuantize insani ivmeli (ease-out) dönüş uygula
-  if (totalAngle > 0.49 && typeof bot.look === 'function') {
-    const ratio = 0.58 + Math.random() * 0.10; // ~%63 ilk adım
-    const stepYawChange = Math.round((dYaw * ratio) / sensitivity) * sensitivity;
-    const stepPitchChange = Math.round((dPitch * ratio) / sensitivity) * sensitivity;
-    const midYaw = curYaw + stepYawChange;
-    const midPitch = Math.max(-halfPi, Math.min(halfPi, curPitch + stepPitchChange));
-    try {
-      await bot.look(midYaw, midPitch, true);
-    } catch (e) {}
-    await waitOnePhysicsTick(bot, 85);
-  }
-
-  // Son adım: Tam hedef yüzey noktasına GCD-kuantize kilitlen ve physicsTick'te paketin gönderilmesini bekle
-  const nowYaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : curYaw;
-  const nowPitch = typeof bot.entity.pitch === 'number' ? bot.entity.pitch : curPitch;
-  let remYaw = (targetYaw - nowYaw) % (Math.PI * 2);
-  if (remYaw < -Math.PI) remYaw += Math.PI * 2;
-  else if (remYaw > Math.PI) remYaw -= Math.PI * 2;
-  const remPitch = targetPitch - nowPitch;
-
-  const finalYawChange = Math.round(remYaw / sensitivity) * sensitivity;
-  const finalPitchChange = Math.round(remPitch / sensitivity) * sensitivity;
-  const finalYaw = nowYaw + finalYawChange;
-  const finalPitch = Math.max(-halfPi, Math.min(halfPi, nowPitch + finalPitchChange));
-
-  if (typeof bot.look === 'function') {
-    try {
-      await bot.look(finalYaw, finalPitch, true);
-    } catch (e) {}
-  } else if (typeof bot.lookAt === 'function') {
-    try {
-      await bot.lookAt(clickPos, true);
-    } catch (e) {}
-  }
-
-  // Sunucuya look / position_look paketinin kesin olarak gönderildiğinden emin ol
-  await waitOnePhysicsTick(bot, 95);
-}
+// [Stealth Look & Physics Helpers Moved Up]
 
 function findPlaceReferenceBlock(bot, targetPos, builder = null) {
   if (!bot || !targetPos) return null;
