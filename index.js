@@ -4703,10 +4703,7 @@ const sharedBlockClaims = {
   builder: new Map(), // posKey -> { accountId, expiresAt }
   till: new Map(),    // posKey -> { accountId, expiresAt }
   plant: new Map(),   // posKey -> { accountId, expiresAt }
-  chest: {
-    busyUntil: 0,
-    currentAccountId: null
-  }
+  chest: new Map()    // posKey -> { accountId, expiresAt } (Her sandık konumu bağımsız kilitlenir!)
 };
 
 function isMultiBotCoopActive(taskType) {
@@ -4766,9 +4763,10 @@ function clearAllClaimsForAccount(accountId) {
       }
     }
   }
-  if (sharedBlockClaims.chest.currentAccountId === accountId) {
-    sharedBlockClaims.chest.busyUntil = 0;
-    sharedBlockClaims.chest.currentAccountId = null;
+  for (const [posKey, claim] of sharedBlockClaims.chest.entries()) {
+    if (claim.accountId === accountId) {
+      sharedBlockClaims.chest.delete(posKey);
+    }
   }
 }
 
@@ -4776,18 +4774,40 @@ function clearAllClaims() {
   sharedBlockClaims.builder.clear();
   sharedBlockClaims.till.clear();
   sharedBlockClaims.plant.clear();
-  sharedBlockClaims.chest.busyUntil = 0;
-  sharedBlockClaims.chest.currentAccountId = null;
+  sharedBlockClaims.chest.clear();
 }
 
-async function acquireSharedChestAccess(accountId, waitTimeoutMs = 5000) {
-  if (!isMultiBotCoopActive('chest')) return true;
+async function acquireSharedChestAccess(chestBlock, accountId, waitTimeoutMs = 5000) {
+  if (!isMultiBotCoopActive('chest') || !chestBlock || !chestBlock.position) return true;
+  const p = chestBlock.position;
+  const posKey = `${p.x},${p.y},${p.z}`;
   const start = Date.now();
+
   while (Date.now() - start < waitTimeoutMs) {
     const now = Date.now();
-    if (sharedBlockClaims.chest.busyUntil <= now || sharedBlockClaims.chest.currentAccountId === accountId) {
-      sharedBlockClaims.chest.currentAccountId = accountId;
-      sharedBlockClaims.chest.busyUntil = now + 12000;
+    let isLockedByOther = false;
+    for (const [key, claim] of sharedBlockClaims.chest.entries()) {
+      if (claim.expiresAt <= now) {
+        sharedBlockClaims.chest.delete(key);
+        continue;
+      }
+      if (claim.accountId !== accountId) {
+        const [cx, cy, cz] = key.split(',').map(Number);
+        const dist = Math.hypot(p.x - cx, p.y - cy, p.z - cz);
+        // Sadece tam aynı sandık bloğu veya çift sandık bitişiği (<= 1.5m) kilit sayılır!
+        // Farklı yerlerdeki veya farklı adalardaki sandıklar ASLA birbirini engellemez!
+        if (dist <= 1.5) {
+          isLockedByOther = true;
+          break;
+        }
+      }
+    }
+
+    if (!isLockedByOther) {
+      sharedBlockClaims.chest.set(posKey, {
+        accountId,
+        expiresAt: now + 12000
+      });
       return true;
     }
     await new Promise((r) => setTimeout(r, 180 + Math.floor(Math.random() * 100)));
@@ -4795,11 +4815,19 @@ async function acquireSharedChestAccess(accountId, waitTimeoutMs = 5000) {
   return false;
 }
 
-function releaseSharedChestAccess(accountId) {
-  if (!accountId || sharedBlockClaims.chest.currentAccountId === accountId) {
-    sharedBlockClaims.chest.busyUntil = 0;
-    sharedBlockClaims.chest.currentAccountId = null;
+function releaseSharedChestAccess(chestBlock, accountId) {
+  if (!chestBlock || !chestBlock.position) {
+    if (accountId) {
+      for (const [posKey, claim] of sharedBlockClaims.chest.entries()) {
+        if (claim.accountId === accountId) {
+          sharedBlockClaims.chest.delete(posKey);
+        }
+      }
+    }
+    return;
   }
+  const posKey = `${chestBlock.position.x},${chestBlock.position.y},${chestBlock.position.z}`;
+  sharedBlockClaims.chest.delete(posKey);
 }
 
 /**
@@ -4811,9 +4839,9 @@ async function safelyOpenContainer(bot, chestBlock, session, timeoutMs = 5000) {
   if (!bot || !chestBlock) throw new Error('Geçersiz bot veya sandık hedefi');
 
   const accountId = session ? (session.accountId || (config.accounts.find(a => a.username === bot.username)?.id)) : null;
-  const lockAcquired = await acquireSharedChestAccess(accountId, 5500);
+  const lockAcquired = await acquireSharedChestAccess(chestBlock, accountId, 5500);
   if (!lockAcquired) {
-    throw new Error('Sandık şu an başka bir bot tarafından kullanılıyor (kilitli)');
+    throw new Error(`Sandık (${chestBlock.position.x}, ${chestBlock.position.y}, ${chestBlock.position.z}) şu an başka bir bot tarafından kullanılıyor (kilitli)`);
   }
 
   const hadSneakLock = session ? Boolean(session.sneakLock) : false;
@@ -4856,12 +4884,12 @@ async function safelyOpenContainer(bot, chestBlock, session, timeoutMs = 5000) {
     ]);
     if (container && typeof container.once === 'function') {
       container.once('close', () => {
-        releaseSharedChestAccess(accountId);
+        releaseSharedChestAccess(chestBlock, accountId);
       });
     }
     return { container, hadSneakLock };
   } catch (openErr) {
-    releaseSharedChestAccess(accountId);
+    releaseSharedChestAccess(chestBlock, accountId);
     throw openErr;
   }
 }
@@ -6869,8 +6897,25 @@ async function openChestAtPosition(bot, session, chestPos, accountId) {
     return null;
   }
 
-  // 3. Yaklaştıktan sonra bloğu doğrula
+  // 3. Yaklaştıktan sonra bloğu doğrula (ve etrafındaki +/-1 bloğu tara)
   targetBlock = bot.blockAt(resolvedPos);
+  if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const b = bot.blockAt(resolvedPos.offset(dx, dy, dz));
+          if (b && isFarmContainerBlockName(b.name)) {
+            targetBlock = b;
+            resolvedPos = b.position;
+            break;
+          }
+        }
+        if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
+      }
+      if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
+    }
+  }
+
   if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
     if (accountId) {
       addLog(accountId, 'FENER', `⚠️ Koordinatta (${resolvedPos.x}, ${resolvedPos.y}, ${resolvedPos.z}) sandık/fıçı tespit edilemedi (Blok: ${targetBlock ? targetBlock.name : 'yok'}).`, chalk.yellow);
@@ -8141,7 +8186,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     if (curPumpkins + curCarved < batchSize) {
       const neededPumpkins = batchSize - (curPumpkins + curCarved);
       addLog(accountId, 'FENER', `📦 Balkabağı sandığından ${neededPumpkins} adet balkabağı çekiliyor...`, chalk.cyan);
-      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', neededPumpkins, cfg.pumpkinChest);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', neededPumpkins, cfg.pumpkinChest, cfg);
     }
     if (isJackOLanternAbortRequested(session)) return false;
 
@@ -8150,25 +8195,37 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     const totalReadyPumpkins = curPumpkins + curCarved;
     if (totalReadyPumpkins <= 0) {
       addLog(accountId, 'FENER', '⚠️ Envanterde veya sandıkta hiç balkabağı bulunamadı! Fener üretimi için balkabağı temin edilemedi.', chalk.yellowBright);
-      return false;
+      await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
+      session.lastJackOLanternTime = Date.now();
+      return true;
     }
 
     let curTorches = countInventoryItemByName(bot, null, 'torch');
     if (curTorches < totalReadyPumpkins) {
       const neededTorches = totalReadyPumpkins - curTorches;
       addLog(accountId, 'FENER', `🔥 Meşale sandığından ${neededTorches} adet meşale çekiliyor...`, chalk.cyan);
-      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'torch', neededTorches, cfg.torchChest);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'torch', neededTorches, cfg.torchChest, cfg);
     }
     if (isJackOLanternAbortRequested(session)) return false;
 
     curTorches = countInventoryItemByName(bot, null, 'torch');
-    if (curTorches <= 0 && curCarved > 0) {
-      addLog(accountId, 'FENER', '⚠️ Envanterde veya sandıkta meşale bulunamadı! Meşale olmadan fener birleştirilemez.', chalk.yellowBright);
+
+    // MEŞALE & BALKABAĞI SENKRONİZASYONU:
+    // Asla meşale sayısından fazla balkabağı oyulmaz! 
+    // Eğer meşale eksikse sadece meşale kadar balkabağı oyulur, geri kalanı ham balkabağı olarak korunur!
+    const maxCraftable = Math.min(totalReadyPumpkins, curTorches);
+    if (maxCraftable <= 0) {
+      addLog(accountId, 'FENER', `⚠️ Meşale bulunamadı (0 meşale)! ${curPumpkins} adet balkabağının heba olmaması için oyma yapılmıyor, meşale bekleniyor.`, chalk.yellowBright);
+      await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
+      session.lastJackOLanternTime = Date.now();
+      return true;
     }
 
+    // Kaç adet ham balkabağı oyulmalı? (Carved pumpkin zaten oyulmuş durumda)
+    const pumpkinsToCarve = Math.max(0, Math.min(curPumpkins, maxCraftable - curCarved));
+
     // 3. AŞAMA: Oyma Noktasına Git & Balkabaklarını Oy
-    curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
-    if (curPumpkins > 0) {
+    if (pumpkinsToCarve > 0) {
       const carveSpot = resolveCarveSpot(bot, cfg.carveSpot);
       
       // Güvenli oyma mesafesi ayarla (Vulcan safe: 1.6 - 2.5m arası, bloğun üstünde ASLA durmamalı)
@@ -8182,8 +8239,8 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
       // Sprint durumunu sıfırla (Vulcan kuralı)
       try { bot.setControlState('sprint', false); } catch (_) {}
 
-      addLog(accountId, 'FENER', `✂️ ${curPumpkins} adet balkabağı oyuluyor...`, chalk.greenBright);
-      await carvePumpkinsAtSpot(bot, session, accountId, carveSpot, curPumpkins, cfg);
+      addLog(accountId, 'FENER', `✂️ ${pumpkinsToCarve} adet balkabağı oyuluyor (Meşale uyumlu: ${curTorches} meşale mevcut)...`, chalk.greenBright);
+      await carvePumpkinsAtSpot(bot, session, accountId, carveSpot, pumpkinsToCarve, cfg);
     }
     if (isJackOLanternAbortRequested(session)) return false;
 
