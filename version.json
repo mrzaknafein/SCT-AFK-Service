@@ -1,7 +1,7 @@
 {
-  "buildId": "20261029_jack_seed_sell_fix_v61",
-  "version": "2.2.30",
-  "releaseNotes": "Balkabağı Feneri: Oyma sırasında envanter tohumlarla dolduğunda oymayı durdurup tohumları /sat hepsi ile satma koruması eklendi. Satış öncesi envanterdeki balkabakları sandığa emanet bırakılarak balkabağı satılmaması garantilendi, satış sonrası balkabakları geri alınıp yerdeki oyulmuş balkabakları vakumlanarak oyma işlemine kesintisiz devam edilmesi sağlandı.",
+  "buildId": "20261029_jack_vulcan_safe_v62",
+  "version": "2.2.31",
+  "releaseNotes": "Balkabağı Feneri: Vulcan Anti-Cheat [Unfair Advantage] kick düzeltmesi. Oyma sırasında bloğun içine basarak blok koyma hatası giderildi (mesafe her zaman 1.6-2.5m aralığında tutulur, vakumlama sonrası güvenli mesafeye geri çekilinir). lookAtBlockFaceStealth parametreleri düzeltilerek zemin yüzeyine ve balkabağına GCD uyumlu stealth bakış sağlandı, forceLook ignore edilerek raytrace ve rotasyon ihlalleri engellendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
