@@ -2493,8 +2493,8 @@
                       <input type="text" id="ctrlJackStickChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
-                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Fener Sandığı (X Y Z)</label>
-                      <input type="text" id="ctrlJackOutputChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Fener Sandığı (X Y Z - Fenerlerin Konulacağı Sandık)</label>
+                      <input type="text" id="ctrlJackOutputChest" placeholder="Örn: 100 65 200 (Zorunlu)" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Oyma Noktası (X Y Z)</label>
@@ -5888,6 +5888,9 @@
 
     function selectAccount(id) {
       if (selectedAccountId === id) return;
+      if (document.activeElement && typeof document.activeElement.blur === 'function') {
+        document.activeElement.blur();
+      }
       selectedAccountId = id;
       renderAll(true);
       if (activeTabName === 'map') {
