@@ -1,7 +1,7 @@
 {
-  "buildId": "20261029_jack_o_lantern_crafter_v56",
-  "version": "2.2.25",
-  "releaseNotes": "Oto Balkabağı Feneri (Jack o' Lantern Maker): Sandıktan ham balkabaklarını (pumpkin) alıp yere koyan, makasla (shears) oyup carved_pumpkin ve tohum düşüren, diğer sandıktan meşaleleri (torch) çekip /craft menüsünde otomatik Jack o' Lantern fenerine dönüştüren ve hedef sandığa istifleyen tam otomasyon modülü eklendi. Özel sandık & oyma koordinatı desteği, otomatik sandık tarama ve anında durdurma koruması içerir.",
+  "buildId": "20261029_jack_shears_craft_v57",
+  "version": "2.2.26",
+  "releaseNotes": "Oto Balkabağı Feneri (Jack o' Lantern): Makas kırıldığında veya tükendiğinde sandıktan demir külçesi (iron_ingot) alıp /craft arayüzünde 2 demiri çapraz yerleştirerek otomatik yeni makas (shears) üretme desteği eklendi. Özel demir sandığı koordinatı (ironChest) ve otomatik sandık tarama eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
