@@ -1,7 +1,7 @@
 {
-  "buildId": "20261029_jack_coords_sync_v58",
-  "version": "2.2.27",
-  "releaseNotes": "Balkabağı Feneri (Jack o' Lantern) koordinat giriş alanlarında (balkabağı sandığı, meşale sandığı, demir sandığı, fener sandığı ve oyma noktası) koordinatların silinme sorunu giderildi; anlık yerel optimistik senkronizasyon ve window fonksiyon bağlamaları düzeltildi.",
+  "buildId": "20261029_jack_chest_nav_v59",
+  "version": "2.2.28",
+  "releaseNotes": "Balkabağı Feneri (Jack o' Lantern): Sandıklara ve oyma noktasına gidiş yol bulma kontrolü düzeltildi (isSpawnerAbortRequested yerine isNavigationAbortRequested eklendi). Sandık koordinatlarında +/- 1 blok otomatik sandık yakalama (snap) ve detaylı durum loglaması eklendi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
