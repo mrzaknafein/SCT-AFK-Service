@@ -6898,7 +6898,7 @@ function closeChestContainerSafely(bot, container) {
   }
 }
 
-async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemName, targetCount, specificChestCoordStr) {
+async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemName, targetCount, specificChestCoordStr, cfg = {}) {
   if (isJackOLanternAbortRequested(session)) return 0;
   let totalWithdrawn = 0;
 
@@ -6908,10 +6908,10 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
   if (specificPos) {
     candidatePositions.push(specificPos);
     addLog(accountId, 'FENER', `📍 Belirtilen sandık koordinatına gidiliyor (${itemName}): ${specificPos.x} ${specificPos.y} ${specificPos.z}`, chalk.cyan);
-  }
-  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
-  for (const p of nearbyChests) {
-    if (!specificPos || p.distanceTo(specificPos) > 1.2) {
+  } else {
+    // Sadece koordinat belirtilmemişse etraftaki sandıkları tara
+    const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
+    for (const p of nearbyChests) {
       candidatePositions.push(p);
     }
   }
@@ -6925,7 +6925,13 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
     if (isJackOLanternAbortRequested(session)) break;
     if (totalWithdrawn >= targetCount) break;
 
-    const chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+    // Çoklu bot senkronizasyonu: Sandık başka bir bot tarafından kullanılıyorsa 2 kez dene
+    let chestWin = null;
+    for (let tryOpen = 0; tryOpen < 2; tryOpen++) {
+      chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+      if (chestWin) break;
+      await new Promise((r) => setTimeout(r, 450 + Math.floor(Math.random() * 200)));
+    }
     if (!chestWin) continue;
 
     const containerEnd = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : (chestWin.slots.length > 63 ? 54 : 27);
@@ -6954,22 +6960,40 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
   return totalWithdrawn;
 }
 
-async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName, specificChestCoordStr) {
+async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName, specificChestCoordStr, cfg = {}) {
   if (isJackOLanternAbortRequested(session)) return 0;
   let totalDeposited = 0;
 
   const specificPos = parseCoordString(specificChestCoordStr);
   const candidatePositions = [];
 
+  // Tanımlı diğer rol sandıklarının koordinatları
+  const ironPos = parseCoordString(cfg.ironChest);
+  const stickPos = parseCoordString(cfg.stickChest);
+  const pumpkinPos = parseCoordString(cfg.pumpkinChest);
+  const torchPos = parseCoordString(cfg.torchChest);
+
+  // KESİN KURAL 1: Kullanıcı bu işlem için bir sandık belirttiyse SADECE o sandık kullanılır!
+  // Dolu olsa veya açılamasa bile ASLA başka sandıklara (demir, çubuk vb.) aktarım yapılmaz!
   if (specificPos) {
     candidatePositions.push(specificPos);
     addLog(accountId, 'FENER', `📍 Belirtilen sandık koordinatına gidiliyor (${itemName} aktarımı): ${specificPos.x} ${specificPos.y} ${specificPos.z}`, chalk.cyan);
-  }
-  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
-  for (const p of nearbyChests) {
-    if (!specificPos || p.distanceTo(specificPos) > 1.2) {
+  } else {
+    // Koordinat belirtilmemişse etraftaki sandıkları tara ama rol sandıklarını (demir, çubuk, balkabağı, meşale) KESİNLİKLE HARİÇ TUT!
+    addLog(accountId, 'FENER', `⚠️ "${itemName}" için hedef sandık koordinatı belirtilmemiş! Uygun sandık aranıyor (demir/çubuk/meşale/balkabağı sandıkları hariç)...`, chalk.yellow);
+    const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
+    for (const p of nearbyChests) {
+      if (ironPos && p.distanceTo(ironPos) <= 1.2 && itemName !== 'iron_ingot') continue;
+      if (stickPos && p.distanceTo(stickPos) <= 1.2 && itemName !== 'stick') continue;
+      if (pumpkinPos && p.distanceTo(pumpkinPos) <= 1.2 && itemName !== 'pumpkin') continue;
+      if (torchPos && p.distanceTo(torchPos) <= 1.2 && itemName !== 'torch') continue;
       candidatePositions.push(p);
     }
+  }
+
+  if (candidatePositions.length === 0) {
+    addLog(accountId, 'FENER', `⚠️ "${itemName}" aktarımı için uygun sandık bulunamadı! Diğer sandıkların (demir, çubuk, vb.) kirlenmemesi için eşyalar envanterde güvenle tutuluyor.`, chalk.yellowBright);
+    return 0;
   }
 
   for (const cPos of candidatePositions) {
@@ -6977,13 +7001,68 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
     const invCount = countInventoryItemByName(bot, null, itemName);
     if (invCount <= 0) break;
 
-    const chestWin = await openChestAtPosition(bot, session, cPos, accountId);
-    if (!chestWin) continue;
+    // Çoklu bot senkronizasyonu: Sandık başka bir bot tarafından açıksa 2 kez kısa aralıkla dene
+    let chestWin = null;
+    for (let tryOpen = 0; tryOpen < 2; tryOpen++) {
+      chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+      if (chestWin) break;
+      await new Promise((r) => setTimeout(r, 450 + Math.floor(Math.random() * 200)));
+    }
+    if (!chestWin) {
+      if (specificPos) {
+        addLog(accountId, 'FENER', `⚠️ Belirtilen sandık (${cPos.x}, ${cPos.y}, ${cPos.z}) açılamadı veya başka bot tarafından kullanılıyor. Eşyalar diğer sandıklara KESİNLİKLE konulmaz.`, chalk.yellow);
+      }
+      continue;
+    }
 
-    const invStart = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : (chestWin.slots.length > 63 ? 54 : 27);
+    const containerEnd = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : (chestWin.slots.length > 63 ? 54 : 27);
+    const invStart = containerEnd;
     const invEnd = typeof chestWin.inventoryEnd === 'number' ? chestWin.inventoryEnd : chestWin.slots.length;
-    let depositedInThisChest = 0;
 
+    // KESİN KURAL 2: Sandık içeriğini denetle!
+    // Eğer sandıkta demir, çubuk, meşale veya ham balkabağı varsa ve biz fener koymaya çalışıyorsak KESİNLİKLE İŞLEM YAPMA!
+    const chestItems = chestWin.slots.slice(0, containerEnd).filter(Boolean);
+    const hasIron = chestItems.some((it) => it.name === 'iron_ingot' || it.name.includes('iron'));
+    const hasSticks = chestItems.some((it) => it.name === 'stick' || it.name.includes('stick'));
+    const hasTorches = chestItems.some((it) => isTargetJackItem(it, 'torch'));
+    const hasRawPumpkins = chestItems.some((it) => isTargetJackItem(it, 'pumpkin'));
+
+    let isConflicting = false;
+    if (itemName === 'jack_o_lantern') {
+      if (hasIron || hasSticks || hasTorches || hasRawPumpkins) {
+        isConflicting = true;
+        addLog(accountId, 'FENER', `🛑 Sandıkta (${cPos.x}, ${cPos.y}, ${cPos.z}) demir/çubuk/meşale/balkabağı bulundu! Fenerler bu sandığa KESİNLİKLE aktarılmaz. Sandık kapatılıyor.`, chalk.redBright);
+      }
+    } else if (itemName === 'pumpkin') {
+      if (hasIron || hasSticks || hasTorches) {
+        isConflicting = true;
+        addLog(accountId, 'FENER', `🛑 Sandıkta (${cPos.x}, ${cPos.y}, ${cPos.z}) demir/çubuk/meşale bulundu! Balkabakları bu sandığa KESİNLİKLE aktarılmaz.`, chalk.redBright);
+      }
+    } else if (itemName === 'carved_pumpkin') {
+      if (hasIron || hasSticks || hasTorches) {
+        isConflicting = true;
+        addLog(accountId, 'FENER', `🛑 Sandıkta (${cPos.x}, ${cPos.y}, ${cPos.z}) demir/çubuk/meşale bulundu! Oyulmuş balkabakları bu sandığa KESİNLİKLE aktarılmaz.`, chalk.redBright);
+      }
+    }
+
+    if (isConflicting) {
+      closeChestContainerSafely(bot, chestWin);
+      await new Promise((r) => setTimeout(r, 200));
+      continue;
+    }
+
+    // Sandık kapasite kontrolü: Boş slot var mı ya da istiflenebilir mi?
+    const emptyChestSlots = chestWin.slots.slice(0, containerEnd).filter((s) => !s).length;
+    const canStackInChest = chestItems.some((s) => isTargetJackItem(s, itemName) && s.count < 64);
+    if (emptyChestSlots === 0 && !canStackInChest) {
+      addLog(accountId, 'FENER', `⚠️ Sandık (${cPos.x}, ${cPos.y}, ${cPos.z}) tamamen dolu! Eşyalar envanterde bekletilecek, başka sandıklara aktarılmaz.`, chalk.yellow);
+      closeChestContainerSafely(bot, chestWin);
+      await new Promise((r) => setTimeout(r, 200));
+      if (specificPos) break;
+      continue;
+    }
+
+    let depositedInThisChest = 0;
     for (let s = invStart; s < invEnd; s++) {
       if (isJackOLanternAbortRequested(session)) break;
       const slotItem = chestWin.slots[s];
@@ -7002,6 +7081,9 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
     if (depositedInThisChest > 0) {
       addLog(accountId, 'FENER', `📥 Sandığa (${cPos.x}, ${cPos.y}, ${cPos.z}) ${depositedInThisChest} adet "${itemName}" aktarıldı.`, chalk.green);
     }
+
+    // Belirtilen özel sandıksa işlem bitti, başka sandığa gitme
+    if (specificPos) break;
   }
 
   return totalDeposited;
@@ -7525,10 +7607,10 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
     addLog(accountId, 'FENER', `🛡️ /sat hepsi öncesi eldeki ${pumpkins} balkabağı ve ${carved} oyulmuş balkabağı sandığa aktarılıyor (satılmaması için)...`, chalk.yellow);
 
     if (pumpkins > 0) {
-      stashedPumpkins = await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', cfg.pumpkinChest || cfg.outputChest);
+      stashedPumpkins = await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', cfg.pumpkinChest, cfg);
     }
     if (carved > 0) {
-      stashedCarved = await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', cfg.outputChest || cfg.pumpkinChest);
+      stashedCarved = await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', cfg.outputChest || cfg.pumpkinChest, cfg);
     }
 
     if (isJackOLanternAbortRequested(session)) return false;
@@ -8121,7 +8203,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     const lanterns = countInventoryItemByName(bot, null, 'jack_o_lantern');
     if (lanterns > 0) {
       addLog(accountId, 'FENER', `📥 ${lanterns} adet Balkabağı Feneri sandığa aktarılıyor...`, chalk.cyanBright);
-      await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'jack_o_lantern', cfg.outputChest);
+      await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'jack_o_lantern', cfg.outputChest, cfg);
     }
 
     // Dikkat: Kullanıcı isteği gereği balkabağı tohumları fener/balkabağı sandığına konmaz, envanterde biriktirilir.
