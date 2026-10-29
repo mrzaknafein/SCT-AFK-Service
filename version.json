@@ -1,7 +1,7 @@
 {
-  "buildId": "20261029_jack_axe_stick_seeds_v60",
-  "version": "2.2.29",
-  "releaseNotes": "Balkabağı Feneri (Jack o' Lantern): Çubuk sandığı (stickChest) eklendi. Demir sandığından demir ve çubuk sandığından çubuk çekilerek /craft ile demir balta üretimi sağlandı. Balkabağı tohumları fener sandığına konmayıp envanterde biriktirilir ve envanter dolduğunda (envanterde balkabağı olmaması şartıyla) /sat hepsi çalıştırılarak satılır.",
+  "buildId": "20261029_jack_seed_sell_fix_v61",
+  "version": "2.2.30",
+  "releaseNotes": "Balkabağı Feneri: Oyma sırasında envanter tohumlarla dolduğunda oymayı durdurup tohumları /sat hepsi ile satma koruması eklendi. Satış öncesi envanterdeki balkabakları sandığa emanet bırakılarak balkabağı satılmaması garantilendi, satış sonrası balkabakları geri alınıp yerdeki oyulmuş balkabakları vakumlanarak oyma işlemine kesintisiz devam edilmesi sağlandı.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
