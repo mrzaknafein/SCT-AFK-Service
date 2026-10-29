@@ -2348,6 +2348,19 @@
                 </div>
               </div>
 
+              <div class="auto-mode-card">
+                <div class="auto-mode-info">
+                  <div class="auto-mode-title">🎃 Oto Balkabağı Feneri (Jack o' Lantern)</div>
+                  <div class="auto-mode-desc">Balkabağı sandığından çeker, yere koyup makasla oyar, meşaleyle /craft'ta birleştirip fener yapar ve sandığa boşaltır.</div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                  <button class="btn btn-outline btn-sm" id="btnJackOLanternNow" onclick="sendBotAction('jackOLanternNow')" title="Balkabağı Feneri Üretimini Başlat / Durdur">Şimdi Başlat</button>
+                  <button class="btn btn-outline btn-sm" id="btnAutoJackOLantern" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoJackOLantern')">
+                    <span id="badgeAutoJackOLantern">Kapalı</span>
+                  </button>
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -2406,6 +2419,7 @@
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('depositChestNow')">Sandığa Boşalt</button>
               <button class="btn btn-sm btn-outline" onclick="sendBotAction('minerChestSellNow')">Miner Sandık Taş Sat</button>
               <button class="btn btn-sm btn-outline" id="btnQuickSpawner" onclick="sendBotAction('spawnerRoutineNow')">Spawner Turu Başlat</button>
+              <button class="btn btn-sm btn-outline" id="btnQuickJackOLantern" onclick="sendBotAction('jackOLanternNow')">🎃 Fener Üret</button>
               <button class="btn btn-sm btn-danger" onclick="sendBotAction('dropAll')">Çantayı Boşalt</button>
             </div>
           </div>
@@ -2450,6 +2464,38 @@
                 <div style="grid-column: 1 / -1;">
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Özel Spawner Koordinatları (İsteğe Bağlı, Boşsa Etraftaki Tüm Spawnerlar Otomatik Taranır)</label>
                   <textarea id="ctrlSpawnerCustomCoords" rows="2" class="form-control" style="font-size: 11px; font-family: monospace; resize: vertical;" placeholder="Örnek: 120 64 -350&#10;120 64 -346" onchange="updateSpawnerRoutineConfig()"></textarea>
+                </div>
+                <div style="grid-column: 1 / -1; margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--border);">
+                  <div style="font-size: 12px; font-weight: 700; color: #ffb86c; margin-bottom: 8px;">🎃 Balkabağı Feneri (Jack o' Lantern) Ayarları</div>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Parti Boyutu (Adet)</label>
+                      <input type="number" id="ctrlJackBatchSize" min="1" max="64" step="1" value="32" class="form-control" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Döngü Aralığı (Sn)</label>
+                      <input type="number" id="ctrlJackInterval" min="5" max="86400" step="5" value="20" class="form-control" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Balkabağı Sandığı (X Y Z)</label>
+                      <input type="text" id="ctrlJackPumpkinChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Meşale Sandığı (X Y Z)</label>
+                      <input type="text" id="ctrlJackTorchChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Fener Sandığı (X Y Z)</label>
+                      <input type="text" id="ctrlJackOutputChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Oyma Noktası (X Y Z)</label>
+                      <div style="display: flex; gap: 4px;">
+                        <input type="text" id="ctrlJackCarveSpot" placeholder="Boşsa Botun Önü" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                        <button class="btn btn-outline btn-sm" onclick="setCarveSpotToBotFront()" title="Botun baktığı ön bloğu ayarla" style="padding: 0 8px; flex-shrink: 0;">📍 Önüm</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -7140,6 +7186,47 @@
       if (helpEl) {
         helpEl.textContent = s >= 60 ? `(${Math.floor(s / 60)} dk ${s % 60 ? (s % 60) + ' sn' : ''})` : `(${s} sn)`;
       }
+
+    async function updateJackOLanternConfig() {
+      if (!selectedAccountId) return;
+      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
+      const isEnabled = Boolean(curBot?.autoJackOLantern?.enabled);
+      const batchEl = document.getElementById('ctrlJackBatchSize');
+      const intEl = document.getElementById('ctrlJackInterval');
+      const pChestEl = document.getElementById('ctrlJackPumpkinChest');
+      const tChestEl = document.getElementById('ctrlJackTorchChest');
+      const oChestEl = document.getElementById('ctrlJackOutputChest');
+      const cSpotEl = document.getElementById('ctrlJackCarveSpot');
+      await sendBotAction('updateJackOLanternConfig', {
+        enabled: isEnabled,
+        batchSize: Math.max(1, Math.min(64, parseInt(batchEl?.value || 32, 10))),
+        intervalSec: Math.max(5, parseInt(intEl?.value || 20, 10)),
+        pumpkinChest: pChestEl?.value || '',
+        torchChest: tChestEl?.value || '',
+        outputChest: oChestEl?.value || '',
+        carveSpot: cSpotEl?.value || ''
+      });
+    }
+
+    function setCarveSpotToBotFront() {
+      if (!selectedAccountId || !appState.bots) return;
+      const bot = appState.bots[selectedAccountId];
+      if (!bot || !bot.position) {
+        showToast('Bot konumu alınamadı!', 'error');
+        return;
+      }
+      const yaw = typeof bot.yaw === 'number' ? bot.yaw : 0;
+      const dx = -Math.round(Math.sin(yaw));
+      const dz = -Math.round(Math.cos(yaw));
+      const fx = Math.floor(bot.position.x) + (dx === 0 && dz === 0 ? 1 : dx);
+      const fy = Math.floor(bot.position.y);
+      const fz = Math.floor(bot.position.z) + dz;
+      const spotStr = `${fx} ${fy} ${fz}`;
+      const cSpotEl = document.getElementById('ctrlJackCarveSpot');
+      if (cSpotEl) cSpotEl.value = spotStr;
+      updateJackOLanternConfig();
+      showToast(`Oyma noktası botun önüne ayarlandı: ${spotStr}`, 'success');
+    }
       if (!selectedAccountId) return;
       const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
       const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
