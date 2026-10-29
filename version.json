@@ -1,7 +1,7 @@
 {
-  "buildId": "20261030_jack_pos_lock_sync_v65",
-  "version": "2.2.34",
-  "releaseNotes": "Balkabağı Feneri: Bağımsız sandık kilidi (posKey) ve meşale-balkabağı senkronizasyonu. Çoklu botlarda sandıkların birbirini yanlışlıkla kilitlemesi (global kilit) kaldırıldı; artık sandıklar koordinat bazlı (<=1.5m bitişik sandık) kilitlenir ve uzak sandıklar birbirini asla etkilemez. Balkabaklarının fenere dönüştürülmeden sandığa atılması engellendi: mevcut meşale sayısı kadar balkabağı oyulur, meşale yoksa balkabakları oyulmadan korunur. openChestAtPosition yaklaşıldıktan sonra +/-1 blok taramasıyla sandığı kesin tespit eder.",
+  "buildId": "20261030_jack_chest_withdraw_fix_v66",
+  "version": "2.2.35",
+  "releaseNotes": "Balkabağı Feneri ve Sandık Çekim Düzeltmesi (v66): Sandıklardan eşya çekilememe sorunu tamamen giderildi (3 kademeli çekim: Shift-click, container.withdraw ve doğrudan aktarım). Sandık yaklaşım kontrolleri iyileştirilerek bitişik bloktaki sandıkların erişilemez sayılması önlendi. Konteyner tespitine minecraft: ön ek temizliği ve +/-2 blok tarama eklendi. Otomatik güncellemede CDN önbellek uyuşmazlığına karşı doğrudan GitHub API raw yedek indirmesi sağlandı. Vulcan anticheat için blok kazma raytrace uyumu güçlendirildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
