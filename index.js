@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261029_jack_shears_craft_v57';
+const ENGINE_BUILD_ID = '20261029_jack_coords_sync_v58';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -517,13 +517,14 @@ function loadConfig() {
         updated = true;
       }
       return {
-        autoEat: true,
-        autoTool: true,
-        panicDisconnect: false,
-        panicHealth: 6,
-        autoCommandEnabled: false,
-        autoCommandIntervalSec: 180,
-        autoCommandText: '/sell all',
+        ...acc,
+        autoEat: typeof acc.autoEat === 'boolean' ? acc.autoEat : true,
+        autoTool: typeof acc.autoTool === 'boolean' ? acc.autoTool : true,
+        panicDisconnect: Boolean(acc.panicDisconnect),
+        panicHealth: typeof acc.panicHealth === 'number' ? acc.panicHealth : 6,
+        autoCommandEnabled: Boolean(acc.autoCommandEnabled),
+        autoCommandIntervalSec: typeof acc.autoCommandIntervalSec === 'number' ? acc.autoCommandIntervalSec : 180,
+        autoCommandText: acc.autoCommandText || '/sell all',
         autoFarmerSell: acc.autoFarmerSell && typeof acc.autoFarmerSell === 'object'
           ? { enabled: Boolean(acc.autoFarmerSell.enabled), intervalSec: Math.max(5, Number(acc.autoFarmerSell.intervalSec) || 120) }
           : { enabled: false, intervalSec: 120 },
@@ -550,13 +551,12 @@ function loadConfig() {
               carveSpot: typeof acc.autoJackOLantern.carveSpot === 'string' ? acc.autoJackOLantern.carveSpot : ''
             }
           : { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', ironChest: '', carveSpot: '' },
-        clientBrand: 'vanilla',
-        customBrand: '',
-        clientLocale: 'tr_TR',
-        viewDistance: 10,
-        mainHand: 'right',
-        hwid: acc.hwid || generateHwidString(acc.username || acc.id),
-        ...acc
+        clientBrand: acc.clientBrand || 'vanilla',
+        customBrand: acc.customBrand || '',
+        clientLocale: acc.clientLocale || 'tr_TR',
+        viewDistance: typeof acc.viewDistance === 'number' ? acc.viewDistance : 10,
+        mainHand: acc.mainHand || 'right',
+        hwid: acc.hwid || generateHwidString(acc.username || acc.id)
       };
     });
   }
@@ -16329,9 +16329,10 @@ const server = http.createServer(async (req, res) => {
           break;
         case 'toggleAutoJackOLantern':
           if (!acc.autoJackOLantern) {
-            acc.autoJackOLantern = { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', carveSpot: '' };
+            acc.autoJackOLantern = { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', ironChest: '', carveSpot: '' };
           }
           acc.autoJackOLantern.enabled = !acc.autoJackOLantern.enabled;
+          s.autoJackOLantern = acc.autoJackOLantern;
           saveConfig();
           if (acc.autoJackOLantern.enabled) {
             s.abortJackOLantern = false;
@@ -16367,6 +16368,7 @@ const server = http.createServer(async (req, res) => {
           if (typeof body.outputChest === 'string') acc.autoJackOLantern.outputChest = body.outputChest;
           if (typeof body.ironChest === 'string') acc.autoJackOLantern.ironChest = body.ironChest;
           if (typeof body.carveSpot === 'string') acc.autoJackOLantern.carveSpot = body.carveSpot;
+          s.autoJackOLantern = acc.autoJackOLantern;
           saveConfig();
           if (acc.autoJackOLantern.enabled) {
             startJackOLanternLoop(accId);
