@@ -1,7 +1,7 @@
 {
-  "buildId": "20261028_spawner_all_dynamic_v55",
-  "version": "2.2.24",
-  "releaseNotes": "Dinamik Çiftlik & S-Snake Spawner Turu: 19 sınırı kaldırıldı; çiftlikteki tüm spawner blokları (25+ adet) 36 blok menzilde dinamik algılanıp S-şeklinde zigzag sıralamayla gezilir. 1. Aşama (Demir Turu): Her spawner'dan 1 kez demir alınır, /craft ile yalnızca Demir Blok yapılır (göğüslük koruması), sandığa konur, artan <9 demir envanterde saklanır. 2. Aşama (Poppy Turu): 1. Spawner'a dönülür, sırayla tüm güller alınıp /sat hepsi ile satılır. Kapatıldığında veya durdurulduğunda bot <40ms içinde anında durur.",
+  "buildId": "20261029_jack_o_lantern_crafter_v56",
+  "version": "2.2.25",
+  "releaseNotes": "Oto Balkabağı Feneri (Jack o' Lantern Maker): Sandıktan ham balkabaklarını (pumpkin) alıp yere koyan, makasla (shears) oyup carved_pumpkin ve tohum düşüren, diğer sandıktan meşaleleri (torch) çekip /craft menüsünde otomatik Jack o' Lantern fenerine dönüştüren ve hedef sandığa istifleyen tam otomasyon modülü eklendi. Özel sandık & oyma koordinatı desteği, otomatik sandık tarama ve anında durdurma koruması içerir.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
