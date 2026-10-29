@@ -2485,6 +2485,10 @@
                       <input type="text" id="ctrlJackTorchChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Demir Sandığı (X Y Z - Makas İçin)</label>
+                      <input type="text" id="ctrlJackIronChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Fener Sandığı (X Y Z)</label>
                       <input type="text" id="ctrlJackOutputChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
                     </div>
@@ -5075,6 +5079,60 @@
       updateToggleButton('btnAutoChainTillPlant', isChainTillPlantOn, '🔄 İnşa➔Çapa➔Ek: Açık', '🔄 İnşa➔Çapa➔Ek: Kapalı');
       updateToggleButton('btnSneakLock', b.sneakLock, 'Eğilme Kilidi (Shift): Açık', 'Eğilme Kilidi (Shift): Kapalı');
 
+      const jackCfg = b.autoJackOLantern || acc.autoJackOLantern || { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', ironChest: '', carveSpot: '' };
+      updateToggleButton('btnAutoJackOLantern', jackCfg.enabled, '🎃 Fener Üretici: Açık', '🎃 Fener Üretici: Kapalı');
+      const isJackRunning = Boolean(b.isJackOLanternRunning);
+      const btnJackNow = document.getElementById('btnJackOLanternNow');
+      if (btnJackNow) {
+        if (isJackRunning) {
+          btnJackNow.textContent = '⏹ Durdur';
+          btnJackNow.className = 'btn btn-danger btn-sm';
+          btnJackNow.title = 'Devam eden Balkabağı Feneri üretimini durdur';
+        } else {
+          btnJackNow.textContent = 'Şimdi Başlat';
+          btnJackNow.className = 'btn btn-outline btn-sm';
+          btnJackNow.title = 'Balkabağı Feneri üretim döngüsünü başlat';
+        }
+      }
+      const btnQuickJack = document.getElementById('btnQuickJackOLantern');
+      if (btnQuickJack) {
+        if (isJackRunning) {
+          btnQuickJack.textContent = '⏹ Fener Durdur';
+          btnQuickJack.className = 'btn btn-sm btn-danger';
+        } else {
+          btnQuickJack.textContent = '🎃 Fener Üret';
+          btnQuickJack.className = 'btn btn-sm btn-outline';
+        }
+      }
+      const jBatchEl = document.getElementById('ctrlJackBatchSize');
+      if (jBatchEl && document.activeElement !== jBatchEl) {
+        jBatchEl.value = jackCfg.batchSize || 32;
+      }
+      const jIntervalEl = document.getElementById('ctrlJackInterval');
+      if (jIntervalEl && document.activeElement !== jIntervalEl) {
+        jIntervalEl.value = jackCfg.intervalSec || 20;
+      }
+      const jPumpkinChestEl = document.getElementById('ctrlJackPumpkinChest');
+      if (jPumpkinChestEl && document.activeElement !== jPumpkinChestEl) {
+        jPumpkinChestEl.value = jackCfg.pumpkinChest || '';
+      }
+      const jTorchChestEl = document.getElementById('ctrlJackTorchChest');
+      if (jTorchChestEl && document.activeElement !== jTorchChestEl) {
+        jTorchChestEl.value = jackCfg.torchChest || '';
+      }
+      const jIronChestEl = document.getElementById('ctrlJackIronChest');
+      if (jIronChestEl && document.activeElement !== jIronChestEl) {
+        jIronChestEl.value = jackCfg.ironChest || '';
+      }
+      const jOutputChestEl = document.getElementById('ctrlJackOutputChest');
+      if (jOutputChestEl && document.activeElement !== jOutputChestEl) {
+        jOutputChestEl.value = jackCfg.outputChest || '';
+      }
+      const jCarveSpotEl = document.getElementById('ctrlJackCarveSpot');
+      if (jCarveSpotEl && document.activeElement !== jCarveSpotEl) {
+        jCarveSpotEl.value = jackCfg.carveSpot || '';
+      }
+
       const farmerCfg = b.autoFarmerSell || acc.autoFarmerSell || { enabled: false, intervalSec: 120 };
       updateToggleButton('btnAutoFarmerSell', farmerCfg.enabled, '💰 Oto Çiftçi Satıcı: Açık', '💰 Oto Çiftçi Satıcı: Kapalı');
       const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 10 };
@@ -7195,16 +7253,18 @@
       const intEl = document.getElementById('ctrlJackInterval');
       const pChestEl = document.getElementById('ctrlJackPumpkinChest');
       const tChestEl = document.getElementById('ctrlJackTorchChest');
+      const ironChestEl = document.getElementById('ctrlJackIronChest');
       const oChestEl = document.getElementById('ctrlJackOutputChest');
       const cSpotEl = document.getElementById('ctrlJackCarveSpot');
       await sendBotAction('updateJackOLanternConfig', {
         enabled: isEnabled,
         batchSize: Math.max(1, Math.min(64, parseInt(batchEl?.value || 32, 10))),
         intervalSec: Math.max(5, parseInt(intEl?.value || 20, 10)),
-        pumpkinChest: pChestEl?.value || '',
-        torchChest: tChestEl?.value || '',
-        outputChest: oChestEl?.value || '',
-        carveSpot: cSpotEl?.value || ''
+        pumpkinChest: (pChestEl?.value || '').trim(),
+        torchChest: (tChestEl?.value || '').trim(),
+        ironChest: (ironChestEl?.value || '').trim(),
+        outputChest: (oChestEl?.value || '').trim(),
+        carveSpot: (cSpotEl?.value || '').trim()
       });
     }
 
