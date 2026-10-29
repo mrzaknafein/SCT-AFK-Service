@@ -5866,7 +5866,9 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
 
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
   const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter);
-  if (curEyeDist <= maxReach) {
+  const curHorizDist = Math.hypot(bot.entity.position.x - targetCenter.x, bot.entity.position.z - targetCenter.z);
+  // Eğer bot zaten istenen menzildeyse VE bloğun tam üstünde/içinde durmuyorsa (en az 1.25m yatay mesafe)
+  if (curEyeDist <= maxReach && curHorizDist >= 1.25) {
     return true;
   }
 
@@ -5876,6 +5878,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
 
   for (let dx = -3; dx <= 3; dx++) {
     for (let dz = -3; dz <= 3; dz++) {
+      if (dx === 0 && dz === 0) continue; // ASLA hedef bloğun tam tepesinde veya içinde durma!
       for (let dy = -3; dy <= 1; dy++) {
         const spot = new Vec3(targetBlockPos.x + dx, targetBlockPos.y + dy, targetBlockPos.z + dz);
         const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
@@ -6778,13 +6781,25 @@ function resolveCarveSpot(bot, customCarveSpotStr) {
         return parsed.offset(0, 1, 0);
       }
     }
+    // GÜVENLİK KORUMASI: Eğer kullanıcı koordinatı tam olarak botun durduğu bloğa denk geliyorsa, botun 1 blok önüne kaydır!
+    if (bot && bot.entity && bot.entity.position) {
+      const botFloor = bot.entity.position.floored();
+      if (parsed.x === botFloor.x && parsed.z === botFloor.z) {
+        const yaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : 0;
+        let dx = -Math.round(Math.sin(yaw));
+        let dz = -Math.round(Math.cos(yaw));
+        if (dx === 0 && dz === 0) dx = 1;
+        return parsed.offset(dx, 0, dz);
+      }
+    }
     return parsed;
   }
   const yaw = bot && bot.entity && typeof bot.entity.yaw === 'number' ? bot.entity.yaw : 0;
-  const dx = -Math.round(Math.sin(yaw));
-  const dz = -Math.round(Math.cos(yaw));
-  const botFloor = bot.entity.position.floored();
-  return botFloor.offset(dx === 0 && dz === 0 ? 1 : dx, 0, dz);
+  let dx = -Math.round(Math.sin(yaw));
+  let dz = -Math.round(Math.cos(yaw));
+  if (dx === 0 && dz === 0) dx = 1;
+  const botFloor = bot.entity && bot.entity.position ? bot.entity.position.floored() : new Vec3(0, 0, 0);
+  return botFloor.offset(dx, 0, dz);
 }
 
 function isTargetJackItem(item, targetName) {
@@ -7560,8 +7575,67 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
   }
 }
 
+async function ensureBotPositionedForCarving(bot, session, carveSpot, accountId) {
+  if (!bot || !bot.entity || !bot.entity.position || !carveSpot) return false;
+  const carveCenter = carveSpot.offset(0.5, 0.5, 0.5);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const botPos = bot.entity.position;
+    const curHorizDist = Math.hypot(botPos.x - carveCenter.x, botPos.z - carveCenter.z);
+    const curEyeDist = botPos.offset(0, 1.62, 0).distanceTo(carveCenter);
+
+    // Güvenli menzil: Yatayda en az 1.35m (blok dışı) VE göz mesafesi 1.5m - 2.7m arası (Vulcan safe)
+    if (curHorizDist >= 1.35 && curEyeDist >= 1.5 && curEyeDist <= 2.7) {
+      try { bot.setControlState('sprint', false); } catch (_) {}
+      return true;
+    }
+
+    if (curHorizDist < 1.35) {
+      addLog(accountId, 'FENER', `⚠️ Bot oyma bloğuna çok yakın veya üstünde (yatay: ${curHorizDist.toFixed(2)}m)! Güvenli mesafeye (2.0m) çekiliyor...`, chalk.yellow);
+    }
+
+    // 2.0m hedefiyle güvenli navigasyon yap (dx===0 && dz===0 engeli sayesinde asla bloğun üstüne gitmez)
+    await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
+    try { bot.setControlState('sprint', false); } catch (_) {}
+    await new Promise((r) => setTimeout(r, 140));
+
+    // Kontrol et: Eğer hala bloğun içindeyse/üstündeyse (yatay < 1.25m), çevredeki boş bir zemin bloğuna adım attır
+    const checkPos = bot.entity.position;
+    const checkHoriz = Math.hypot(checkPos.x - carveCenter.x, checkPos.z - carveCenter.z);
+    if (checkHoriz < 1.25) {
+      const offsets = [
+        [2, 0], [-2, 0], [0, 2], [0, -2],
+        [1, 1], [-1, -1], [1, -1], [-1, 1]
+      ];
+      for (const [ox, oz] of offsets) {
+        const candidatePos = new Vec3(carveSpot.x + ox, carveSpot.y, carveSpot.z + oz);
+        const floorCandidate = candidatePos.offset(0, -1, 0);
+        const bFloor = bot.blockAt(floorCandidate);
+        const bCand = bot.blockAt(candidatePos);
+        const bHead = bot.blockAt(candidatePos.offset(0, 1, 0));
+        if (
+          bFloor && bFloor.name !== 'air' && !bFloor.name.includes('air') &&
+          (!bCand || bCand.name === 'air' || bCand.name.includes('air')) &&
+          (!bHead || bHead.name === 'air' || bHead.name.includes('air'))
+        ) {
+          await navigateNearSpawnerOrChest(bot, session, candidatePos, 0.8);
+          try { bot.setControlState('sprint', false); } catch (_) {}
+          break;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 160));
+    }
+  }
+
+  const finalPos = bot.entity.position;
+  const finalHoriz = Math.hypot(finalPos.x - carveCenter.x, finalPos.z - carveCenter.z);
+  try { bot.setControlState('sprint', false); } catch (_) {}
+  return finalHoriz >= 1.25;
+}
+
 async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount, cfg = {}) {
   let carvedSoFar = 0;
+  let consecutivePlaceFails = 0;
   const carveCenter = carveSpot.offset(0.5, 0.5, 0.5);
 
   for (let i = 0; i < maxCount; i++) {
@@ -7606,14 +7680,12 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     }
 
     // 2. VULCAN GÜVENLİĞİ: Oyma noktasına olan mesafeyi her zaman 1.6 - 2.6m arasında tut!
-    // Asla bloğun içinde veya 1.45m'den yakın durulmamalı (Self-intersection / Scaffold kick koruması).
-    const distToSpot = bot.entity.position.distanceTo(carveCenter);
-    if (distToSpot > 2.8 || distToSpot < 1.5) {
-      await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
-      try { bot.setControlState('sprint', false); } catch (_) {}
-      await new Promise((r) => setTimeout(r, 120));
+    // Asla bloğun içinde veya 1.35m'den yakın durulmamalı (Self-intersection / Scaffold kick koruması).
+    const isSafePos = await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
+    if (!isSafePos) {
+      addLog(accountId, 'FENER', '⚠️ Bot oyma noktasına güvenli mesafede konumlandırılamadı (blok üstünde kalındı), oyma durduruldu.', chalk.red);
+      break;
     }
-    try { bot.setControlState('sprint', false); } catch (_) {}
 
     // Önceden kalan blok varsa temizle
     const existing = bot.blockAt(carveSpot);
@@ -7634,10 +7706,7 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
         let axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
         if (!axe) {
           await ensureAxeAvailable(bot, session, accountId, cfg);
-          const dNow = bot.entity.position.distanceTo(carveCenter);
-          if (dNow > 2.8 || dNow < 1.5) {
-            await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
-          }
+          await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
           axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
         }
         if (axe) try { await bot.equip(axe, 'hand'); } catch (_) {}
@@ -7675,8 +7744,17 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       } else {
         await bot.placeBlock(floorBlock, new Vec3(0, 1, 0));
       }
+      consecutivePlaceFails = 0;
     } catch (placeErr) {
-      await new Promise((r) => setTimeout(r, 220));
+      consecutivePlaceFails++;
+      addLog(accountId, 'FENER', `⚠️ Blok koyulamadı (${consecutivePlaceFails}/3): ${placeErr.message}`, chalk.yellow);
+      if (consecutivePlaceFails >= 3) {
+        addLog(accountId, 'FENER', '❌ Ardışık 3 kez blok koyma başarısız oldu! Vulcan kick koruması gereği oyma döngüsü güvenle sonlandırıldı.', chalk.redBright);
+        break;
+      }
+      // Pozisyonu düzelt ve kısa bekle
+      await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
+      await new Promise((r) => setTimeout(r, 350));
       continue;
     }
     // Vulcan FastPlace gecikmesi (>=280ms)
@@ -7719,10 +7797,7 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       let axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
       if (!axe) {
         await ensureAxeAvailable(bot, session, accountId, cfg);
-        const dNow = bot.entity.position.distanceTo(carveCenter);
-        if (dNow > 2.8 || dNow < 1.5) {
-          await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
-        }
+        await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
         axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
       }
       if (axe) {
@@ -7771,11 +7846,13 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     }
   }
 
-  // Döngü sonunda yerdeki son oyulmuş balkabağı veya tohumları toplamak için bir kere yaklaş
+  // Döngü sonunda yerdeki son oyulmuş balkabağı veya tohumları toplamak için bir kere yaklaş ve hemen 2.0m'ye geri çekil!
   if (!isJackOLanternAbortRequested(session)) {
     await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 200));
+    await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
     try { bot.setControlState('sprint', false); } catch (_) {}
+    await new Promise((r) => setTimeout(r, 150));
   }
   return carvedSoFar;
 }
@@ -8011,12 +8088,12 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
     if (curPumpkins > 0) {
       const carveSpot = resolveCarveSpot(bot, cfg.carveSpot);
-      const centerSpot = carveSpot.offset(0.5, 0.5, 0.5);
-      const distToSpot = bot.entity.position.distanceTo(centerSpot);
       
-      // Güvenli oyma mesafesi ayarla (Vulcan safe: 1.6 - 2.5m arası, bloğun üstünde durmamalı)
-      if (distToSpot > 3.2 || distToSpot < 1.15) {
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
+      // Güvenli oyma mesafesi ayarla (Vulcan safe: 1.6 - 2.5m arası, bloğun üstünde ASLA durmamalı)
+      const isPosSafe = await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
+      if (!isPosSafe) {
+        addLog(accountId, 'FENER', '⚠️ Bot oyma noktasına güvenli mesafede konumlandırılamadı (blok üstünde kalındı), bu tur atlanıyor.', chalk.red);
+        return false;
       }
       if (isJackOLanternAbortRequested(session)) return false;
 
@@ -8025,13 +8102,6 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
 
       addLog(accountId, 'FENER', `✂️ ${curPumpkins} adet balkabağı oyuluyor...`, chalk.greenBright);
       await carvePumpkinsAtSpot(bot, session, accountId, carveSpot, curPumpkins, cfg);
-
-      // Yere dökülen carved_pumpkin ve tohumları vakumlamak için oyma noktasına adım at
-      if (!isJackOLanternAbortRequested(session)) {
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
-        try { bot.setControlState('sprint', false); } catch (_) {}
-        await new Promise((r) => setTimeout(r, 300));
-      }
     }
     if (isJackOLanternAbortRequested(session)) return false;
 
