@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261028_spawner_all_dynamic_v55';
+const ENGINE_BUILD_ID = '20261029_jack_o_lantern_crafter_v56';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -538,6 +538,17 @@ function loadConfig() {
               customCoords: typeof acc.autoSpawnerRoutine.customCoords === 'string' ? acc.autoSpawnerRoutine.customCoords : ''
             }
           : { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' },
+        autoJackOLantern: acc.autoJackOLantern && typeof acc.autoJackOLantern === 'object'
+          ? {
+              enabled: Boolean(acc.autoJackOLantern.enabled),
+              intervalSec: Math.max(5, Number(acc.autoJackOLantern.intervalSec) || 20),
+              batchSize: Math.max(1, Math.min(64, Number(acc.autoJackOLantern.batchSize) || 32)),
+              pumpkinChest: typeof acc.autoJackOLantern.pumpkinChest === 'string' ? acc.autoJackOLantern.pumpkinChest : '',
+              torchChest: typeof acc.autoJackOLantern.torchChest === 'string' ? acc.autoJackOLantern.torchChest : '',
+              outputChest: typeof acc.autoJackOLantern.outputChest === 'string' ? acc.autoJackOLantern.outputChest : '',
+              carveSpot: typeof acc.autoJackOLantern.carveSpot === 'string' ? acc.autoJackOLantern.carveSpot : ''
+            }
+          : { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', carveSpot: '' },
         clientBrand: 'vanilla',
         customBrand: '',
         clientLocale: 'tr_TR',
@@ -2151,6 +2162,9 @@ function getPublicState() {
         autoSpawnerRoutine: acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' },
         isSpawnerRoutineRunning: false,
         lastSpawnerRoutineTime: 0,
+        autoJackOLantern: acc.autoJackOLantern || { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', carveSpot: '' },
+        isJackOLanternRunning: false,
+        lastJackOLanternTime: 0,
         heldItem: null,
         inventory: [],
         openWindow: null,
@@ -2248,6 +2262,9 @@ function getPublicState() {
         autoSpawnerRoutine: acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' },
         isSpawnerRoutineRunning: Boolean(s.isSpawnerRoutineRunning),
         lastSpawnerRoutineTime: s.lastSpawnerRoutineTime || 0,
+        autoJackOLantern: acc.autoJackOLantern || { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', carveSpot: '' },
+        isJackOLanternRunning: Boolean(s.isJackOLanternRunning),
+        lastJackOLanternTime: s.lastJackOLanternTime || 0,
         health: bot && typeof bot.health === 'number' ? Math.round(bot.health) : 20,
         food: bot && typeof bot.food === 'number' ? Math.round(bot.food) : 20,
         version: bot && bot.version ? bot.version : null,
@@ -2636,6 +2653,12 @@ function clearSessionTimers(session) {
   }
   session.abortSpawnerRoutine = true;
   session.isSpawnerRoutineRunning = false;
+  if (session.jackOLanternTimer) {
+    clearTimeout(session.jackOLanternTimer);
+    session.jackOLanternTimer = null;
+  }
+  session.abortJackOLantern = true;
+  session.isJackOLanternRunning = false;
   if (session.minerChestSellTimer) {
     clearTimeout(session.minerChestSellTimer);
     session.minerChestSellTimer = null;
@@ -6720,6 +6743,593 @@ function stopSpawnerRoutineLoop(accountId) {
     }
   }
 }
+
+// --- 5.3.3. OTOMATİK BALKABAĞI FENERİ (JACK O' LANTERN) SİSTEMİ ---
+function isJackOLanternAbortRequested(session) {
+  return !session || session.abortJackOLantern || !session.isJackOLanternRunning || session.status !== 'online' || !session.bot;
+}
+
+function parseCoordString(coordStr) {
+  if (!coordStr || typeof coordStr !== 'string') return null;
+  const nums = coordStr.trim().match(/-?\d+(\.\d+)?/g);
+  if (nums && nums.length >= 3) {
+    return new Vec3(Math.floor(Number(nums[0])), Math.floor(Number(nums[1])), Math.floor(Number(nums[2])));
+  }
+  return null;
+}
+
+function resolveCarveSpot(bot, customCarveSpotStr) {
+  const parsed = parseCoordString(customCarveSpotStr);
+  if (parsed) return parsed;
+  const yaw = bot && bot.entity && typeof bot.entity.yaw === 'number' ? bot.entity.yaw : 0;
+  const dx = -Math.round(Math.sin(yaw));
+  const dz = -Math.round(Math.cos(yaw));
+  const botFloor = bot.entity.position.floored();
+  return botFloor.offset(dx === 0 && dz === 0 ? 1 : dx, 0, dz);
+}
+
+function isTargetJackItem(item, targetName) {
+  if (!item || !item.name) return false;
+  const n = item.name.toLowerCase();
+  const t = targetName.toLowerCase();
+  if (t === 'pumpkin') {
+    return n === 'pumpkin' || n === 'minecraft:pumpkin';
+  }
+  if (t === 'carved_pumpkin') {
+    return n === 'carved_pumpkin' || n === 'minecraft:carved_pumpkin';
+  }
+  if (t === 'torch') {
+    return n === 'torch' || n === 'minecraft:torch';
+  }
+  if (t === 'jack_o_lantern') {
+    return n === 'jack_o_lantern' || n === 'minecraft:jack_o_lantern';
+  }
+  if (t === 'shears') {
+    return n.includes('shears');
+  }
+  if (t === 'pumpkin_seeds') {
+    return n.includes('pumpkin_seeds') || n.includes('pumpkin_seed');
+  }
+  return n === t || n.endsWith(':' + t);
+}
+
+async function openChestAtPosition(bot, session, chestPos, accountId) {
+  if (!bot || !chestPos || isJackOLanternAbortRequested(session)) return null;
+  const reached = await navigateNearSpawnerOrChest(bot, session, chestPos, 3.85);
+  if (!reached || isJackOLanternAbortRequested(session)) return null;
+
+  const chestBlock = bot.blockAt(chestPos);
+  if (!chestBlock) return null;
+
+  try {
+    const res = await safelyOpenContainer(bot, chestBlock, session, 4500);
+    return res && res.container ? res.container : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function closeChestContainerSafely(bot, container) {
+  if (container) {
+    try {
+      bot.closeWindow(container);
+    } catch (_) {}
+  }
+}
+
+async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemName, targetCount, specificChestCoordStr) {
+  if (isJackOLanternAbortRequested(session)) return 0;
+  let totalWithdrawn = 0;
+
+  const specificPos = parseCoordString(specificChestCoordStr);
+  const candidatePositions = [];
+
+  if (specificPos) {
+    candidatePositions.push(specificPos);
+  } else {
+    const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 18);
+    candidatePositions.push(...nearbyChests);
+  }
+
+  for (const cPos of candidatePositions) {
+    if (isJackOLanternAbortRequested(session)) break;
+    if (totalWithdrawn >= targetCount) break;
+
+    const chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+    if (!chestWin) continue;
+
+    const containerEnd = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : Math.min(chestWin.slots.length, 27);
+    for (let s = 0; s < containerEnd; s++) {
+      if (isJackOLanternAbortRequested(session)) break;
+      const slotItem = chestWin.slots[s];
+      if (isTargetJackItem(slotItem, itemName)) {
+        const countInSlot = slotItem.count;
+        await withPromiseTimeout(bot.clickWindow(s, 0, 1), 1600);
+        await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 40)));
+        totalWithdrawn += countInSlot;
+        if (totalWithdrawn >= targetCount) break;
+      }
+    }
+
+    closeChestContainerSafely(bot, chestWin);
+    await new Promise((r) => setTimeout(r, 180));
+  }
+
+  return totalWithdrawn;
+}
+
+async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName, specificChestCoordStr) {
+  if (isJackOLanternAbortRequested(session)) return 0;
+  let totalDeposited = 0;
+
+  const specificPos = parseCoordString(specificChestCoordStr);
+  const candidatePositions = [];
+
+  if (specificPos) {
+    candidatePositions.push(specificPos);
+  } else {
+    const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 18);
+    candidatePositions.push(...nearbyChests);
+  }
+
+  for (const cPos of candidatePositions) {
+    if (isJackOLanternAbortRequested(session)) break;
+    const invCount = countInventoryItemByName(bot, null, itemName);
+    if (invCount <= 0) break;
+
+    const chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+    if (!chestWin) continue;
+
+    const invStart = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : 27;
+    const invEnd = typeof chestWin.inventoryEnd === 'number' ? chestWin.inventoryEnd : chestWin.slots.length;
+
+    for (let s = invStart; s < invEnd; s++) {
+      if (isJackOLanternAbortRequested(session)) break;
+      const slotItem = chestWin.slots[s];
+      if (isTargetJackItem(slotItem, itemName)) {
+        const countInSlot = slotItem.count;
+        await withPromiseTimeout(bot.clickWindow(s, 0, 1), 1600);
+        await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 40)));
+        totalDeposited += countInSlot;
+      }
+    }
+
+    closeChestContainerSafely(bot, chestWin);
+    await new Promise((r) => setTimeout(r, 180));
+  }
+
+  return totalDeposited;
+}
+
+async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount) {
+  let carvedSoFar = 0;
+  for (let i = 0; i < maxCount; i++) {
+    if (isJackOLanternAbortRequested(session)) break;
+
+    const pumpkinItem = bot.inventory.items().find((it) => isTargetJackItem(it, 'pumpkin'));
+    if (!pumpkinItem) break;
+
+    const shearsItem = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
+    if (!shearsItem) {
+      addLog(accountId, 'FENER', '⚠️ Makas (shears) tükendi veya bulunamadı!', chalk.yellow);
+      break;
+    }
+
+    // Önceden kalan blok varsa temizle
+    const existing = bot.blockAt(carveSpot);
+    if (existing && existing.name !== 'air' && !existing.name.includes('air')) {
+      if (isTargetJackItem(existing, 'pumpkin')) {
+        try {
+          await bot.equip(shearsItem, 'hand');
+          await new Promise((r) => setTimeout(r, 100));
+          await bot.activateBlock(existing);
+          await new Promise((r) => setTimeout(r, 180));
+        } catch (_) {}
+      }
+      const bToDig = bot.blockAt(carveSpot);
+      if (bToDig && bToDig.name !== 'air' && !bToDig.name.includes('air')) {
+        const axe = bot.inventory.items().find((it) => it.name.includes('_axe'));
+        if (axe) try { await bot.equip(axe, 'hand'); } catch (_) {}
+        try { await bot.dig(bToDig); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 180));
+      }
+    }
+
+    const floorBlock = bot.blockAt(carveSpot.offset(0, -1, 0));
+    if (!floorBlock || floorBlock.name === 'air' || floorBlock.name.includes('air')) {
+      addLog(accountId, 'FENER', `❌ Oyma noktasının altında zemin bloğu yok: [${carveSpot.x}, ${carveSpot.y - 1}, ${carveSpot.z}]`, chalk.red);
+      break;
+    }
+
+    // Balkabağını eline al
+    try {
+      await bot.equip(pumpkinItem, 'hand');
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Vulcan-Safe stealth açı ile yerleştir (>=260ms)
+    try {
+      await lookAtBlockFaceStealth(bot, session, floorBlock, new Vec3(0, 1, 0));
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 80));
+
+    try {
+      await bot.placeBlock(floorBlock, new Vec3(0, 1, 0));
+    } catch (placeErr) {
+      await new Promise((r) => setTimeout(r, 200));
+      continue;
+    }
+    await new Promise((r) => setTimeout(r, 260 + Math.floor(Math.random() * 45)));
+
+    // Makası eline al
+    try {
+      await bot.equip(shearsItem, 'hand');
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 110));
+
+    const placedPumpkin = bot.blockAt(carveSpot);
+    if (!placedPumpkin || placedPumpkin.name === 'air') continue;
+
+    try {
+      await lookAtBlockFaceStealth(bot, session, placedPumpkin, new Vec3(0, 0, 1));
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 60));
+
+    try {
+      await bot.activateBlock(placedPumpkin);
+    } catch (_) {}
+
+    // carved_pumpkin dönüşümünü bekle
+    let carvedBlock = null;
+    for (let t = 0; t < 8; t++) {
+      await new Promise((r) => setTimeout(r, 80));
+      const b = bot.blockAt(carveSpot);
+      if (b && (isTargetJackItem(b, 'carved_pumpkin') || b.name.includes('carved'))) {
+        carvedBlock = b;
+        break;
+      }
+    }
+
+    // Oyulmuş balkabağını kaz/kır
+    const blockToMine = carvedBlock || bot.blockAt(carveSpot);
+    if (blockToMine && blockToMine.name !== 'air' && !blockToMine.name.includes('air')) {
+      const axe = bot.inventory.items().find((it) => it.name.includes('_axe'));
+      if (axe) try { await bot.equip(axe, 'hand'); } catch (_) {}
+      try { await bot.dig(blockToMine); } catch (_) {}
+      await new Promise((r) => setTimeout(r, 160));
+    }
+
+    carvedSoFar++;
+    if (carvedSoFar % 8 === 0 || carvedSoFar === 1) {
+      addLog(accountId, 'FENER', `✂️ Balkabağı oyuldu (${carvedSoFar}/${maxCount})...`, chalk.cyan);
+    }
+  }
+  return carvedSoFar;
+}
+
+async function craftJackOLanternsViaChatCommand(bot, accountId, session = null) {
+  if (!bot || !bot.entity || (session && isJackOLanternAbortRequested(session))) return 0;
+
+  const carvedBefore = countInventoryItemByName(bot, null, 'carved_pumpkin');
+  const torchesBefore = countInventoryItemByName(bot, null, 'torch');
+  if (carvedBefore <= 0 || torchesBefore <= 0) return 0;
+
+  const lanternsBefore = countInventoryItemByName(bot, null, 'jack_o_lantern');
+
+  if (bot.currentWindow) {
+    try { bot.closeWindow(bot.currentWindow); } catch (_) {}
+    await new Promise((r) => setTimeout(r, 180));
+  }
+  if (session && isJackOLanternAbortRequested(session)) return 0;
+
+  const craftWinPromise = waitForFarmerWindow(bot, 5500);
+  try {
+    bot.chat('/craft');
+  } catch (e) {
+    return 0;
+  }
+
+  const craftWin = await craftWinPromise;
+  if (session && isJackOLanternAbortRequested(session)) {
+    if (craftWin) try { bot.closeWindow(craftWin); } catch (_) {}
+    return 0;
+  }
+  const win = bot.currentWindow || craftWin;
+  if (!win || !Array.isArray(win.slots)) {
+    addLog(accountId, 'FENER', '⚠️ "/craft" penceresi açılamadı!', chalk.yellow);
+    return 0;
+  }
+
+  await new Promise((r) => setTimeout(r, 240));
+
+  try {
+    const invStart = typeof win.inventoryStart === 'number' ? win.inventoryStart : 10;
+    const invEnd = typeof win.inventoryEnd === 'number' ? win.inventoryEnd : win.slots.length;
+
+    // 1..9 ızgarasındaki kalıntıları envantere temizle
+    for (let g = 1; g <= 9; g++) {
+      if (win.slots[g]) {
+        try {
+          await withPromiseTimeout(bot.clickWindow(g, 0, 1), 1600);
+          await new Promise((r) => setTimeout(r, 75));
+        } catch (_) {}
+      }
+    }
+
+    // Carved pumpkin yuvasını bul
+    let carvedSlot = -1;
+    for (let s = invStart; s < invEnd; s++) {
+      if (isTargetJackItem(win.slots[s], 'carved_pumpkin')) {
+        carvedSlot = s;
+        break;
+      }
+    }
+
+    // Torch yuvasını bul
+    let torchSlot = -1;
+    for (let s = invStart; s < invEnd; s++) {
+      if (isTargetJackItem(win.slots[s], 'torch')) {
+        torchSlot = s;
+        break;
+      }
+    }
+
+    if (carvedSlot !== -1 && torchSlot !== -1) {
+      // Carved pumpkin'i Slot 1'e yerleştir
+      await withPromiseTimeout(bot.clickWindow(carvedSlot, 0, 0), 1600);
+      await new Promise((r) => setTimeout(r, 120));
+      await withPromiseTimeout(bot.clickWindow(1, 0, 0), 1600);
+      await new Promise((r) => setTimeout(r, 120));
+
+      // Torch'u Slot 4'e yerleştir (veya shapeless Slot 2)
+      await withPromiseTimeout(bot.clickWindow(torchSlot, 0, 0), 1600);
+      await new Promise((r) => setTimeout(r, 120));
+      await withPromiseTimeout(bot.clickWindow(4, 0, 0), 1600);
+      await new Promise((r) => setTimeout(r, 160));
+
+      // Çıktıyı bekle
+      let outputReady = false;
+      for (let waitTick = 0; waitTick < 8; waitTick++) {
+        await new Promise((r) => setTimeout(r, 80));
+        const curW = bot.currentWindow || win;
+        const outItem = curW && curW.slots[0];
+        if (outItem && isTargetJackItem(outItem, 'jack_o_lantern')) {
+          outputReady = true;
+          break;
+        }
+      }
+
+      // Eğer Slot 1 + Slot 4 üretmediyse Slot 2'ye aktarmayı dene (Shapeless kontrolü)
+      if (!outputReady) {
+        try {
+          await withPromiseTimeout(bot.clickWindow(4, 0, 0), 1600);
+          await new Promise((r) => setTimeout(r, 90));
+          await withPromiseTimeout(bot.clickWindow(2, 0, 0), 1600);
+          await new Promise((r) => setTimeout(r, 160));
+        } catch (_) {}
+      }
+
+      // Slot 0'dan Jack o' Lantern'ı al (Shift-click)
+      for (let pull = 0; pull < 6; pull++) {
+        const curW = bot.currentWindow || win;
+        if (!curW || !curW.slots[0] || !isTargetJackItem(curW.slots[0], 'jack_o_lantern')) break;
+        try {
+          await withPromiseTimeout(bot.clickWindow(0, 0, 1), 1600);
+          await new Promise((r) => setTimeout(r, 140));
+        } catch (_) {
+          break;
+        }
+      }
+    }
+
+    // Izgarada arta kalan eşyaları envantere geri topla
+    for (let g = 1; g <= 9; g++) {
+      const wNow = bot.currentWindow || win;
+      if (wNow && wNow.slots[g]) {
+        try {
+          await withPromiseTimeout(bot.clickWindow(g, 0, 1), 1600);
+          await new Promise((r) => setTimeout(r, 75));
+        } catch (_) {}
+      }
+    }
+
+    // İmleçte kalan eşyayı bırak
+    const curW = bot.currentWindow || win;
+    if (curW && curW.selectedItem) {
+      const emptySlot = findFirstEmptyPlayerSlotInWindow(curW);
+      if (emptySlot !== -1) {
+        try {
+          await withPromiseTimeout(bot.clickWindow(emptySlot, 0, 0), 1600);
+          await new Promise((r) => setTimeout(r, 90));
+        } catch (_) {}
+      }
+    }
+
+    try {
+      bot.closeWindow(bot.currentWindow || win);
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 190));
+  } catch (err) {
+    try { bot.closeWindow(bot.currentWindow || win); } catch (_) {}
+  }
+
+  const lanternsAfter = countInventoryItemByName(bot, null, 'jack_o_lantern');
+  return Math.max(0, lanternsAfter - lanternsBefore);
+}
+
+async function executeJackOLanternRoutine(accountId, isManual = false) {
+  const session = getOrCreateSession(accountId);
+  const bot = session.bot;
+  if (!bot || !bot.entity || session.status !== 'online') {
+    if (isManual) addLog(accountId, 'FENER', 'Bot çevrimdışı, fener döngüsü başlatılamadı!', chalk.red);
+    return false;
+  }
+  if (session.isJackOLanternRunning) {
+    if (isManual) addLog(accountId, 'FENER', 'Fener döngüsü zaten çalışıyor!', chalk.yellow);
+    return false;
+  }
+
+  const acc = config.accounts.find((a) => a.id === accountId);
+  const cfg = (acc && acc.autoJackOLantern) || { enabled: false, intervalSec: 20, batchSize: 32 };
+  const batchSize = Math.max(1, Math.min(64, Number(cfg.batchSize) || 32));
+
+  const homePos = bot.entity.position.clone();
+  session.abortJackOLantern = false;
+  session.isJackOLanternRunning = true;
+  broadcastState();
+
+  try {
+    addLog(accountId, 'FENER', `🎃 Balkabağı Feneri (Jack o' Lantern) döngüsü başlatıldı (Parti: ${batchSize} adet)...`, chalk.yellowBright);
+
+    // 1. KONTROL: Makas (shears) kontrolü
+    let shears = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
+    if (!shears) {
+      addLog(accountId, 'FENER', '⚠️ Envanterde makas bulunamadı! Sandıklardan makas aranıyor...', chalk.yellow);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'shears', 1, cfg.pumpkinChest);
+      shears = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
+      if (!shears) {
+        addLog(accountId, 'FENER', '❌ Etrafta veya envanterde makas (shears) bulunamadı! Döngü durduruluyor.', chalk.redBright);
+        return false;
+      }
+    }
+    if (isJackOLanternAbortRequested(session)) return false;
+
+    // 2. AŞAMA: Balkabağı (pumpkin) ve Meşale (torch) çekimi
+    let curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
+    let curCarved = countInventoryItemByName(bot, null, 'carved_pumpkin');
+
+    if (curPumpkins + curCarved < batchSize) {
+      const neededPumpkins = batchSize - (curPumpkins + curCarved);
+      addLog(accountId, 'FENER', `📦 Balkabağı sandığından ${neededPumpkins} adet balkabağı çekiliyor...`, chalk.cyan);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', neededPumpkins, cfg.pumpkinChest);
+    }
+    if (isJackOLanternAbortRequested(session)) return false;
+
+    curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
+    curCarved = countInventoryItemByName(bot, null, 'carved_pumpkin');
+    const totalReadyPumpkins = curPumpkins + curCarved;
+
+    let curTorches = countInventoryItemByName(bot, null, 'torch');
+    if (curTorches < totalReadyPumpkins) {
+      const neededTorches = totalReadyPumpkins - curTorches;
+      addLog(accountId, 'FENER', `🔥 Meşale sandığından ${neededTorches} adet meşale çekiliyor...`, chalk.cyan);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'torch', neededTorches, cfg.torchChest);
+    }
+    if (isJackOLanternAbortRequested(session)) return false;
+
+    // 3. AŞAMA: Oyma Noktasına Git & Balkabaklarını Oy
+    curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
+    if (curPumpkins > 0) {
+      const carveSpot = resolveCarveSpot(bot, cfg.carveSpot);
+      const distToSpot = bot.entity.position.distanceTo(carveSpot.offset(0.5, 0.5, 0.5));
+      if (distToSpot > 3.3) {
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.5);
+      }
+      if (isJackOLanternAbortRequested(session)) return false;
+
+      addLog(accountId, 'FENER', `✂️ ${curPumpkins} adet balkabağı oyuluyor...`, chalk.greenBright);
+      await carvePumpkinsAtSpot(bot, session, accountId, carveSpot, curPumpkins);
+    }
+    if (isJackOLanternAbortRequested(session)) return false;
+
+    // 4. AŞAMA: /craft ile Jack o' Lantern Üretimi
+    curCarved = countInventoryItemByName(bot, null, 'carved_pumpkin');
+    curTorches = countInventoryItemByName(bot, null, 'torch');
+    const canCraft = Math.min(curCarved, curTorches);
+
+    if (canCraft > 0) {
+      addLog(accountId, 'FENER', `🔨 /craft ile ${canCraft} adet Balkabağı Feneri üretiliyor...`, chalk.yellowBright);
+      const crafted = await craftJackOLanternsViaChatCommand(bot, accountId, session);
+      addLog(accountId, 'FENER', `✨ ${crafted} adet Balkabağı Feneri (Jack o' Lantern) üretildi!`, chalk.greenBright);
+    }
+    if (isJackOLanternAbortRequested(session)) return false;
+
+    // 5. AŞAMA: Fener Sandığına Boşaltma (Deposit)
+    const lanterns = countInventoryItemByName(bot, null, 'jack_o_lantern');
+    if (lanterns > 0) {
+      addLog(accountId, 'FENER', `📥 ${lanterns} adet Balkabağı Feneri sandığa aktarılıyor...`, chalk.cyanBright);
+      await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'jack_o_lantern', cfg.outputChest);
+    }
+
+    // Balkabağı tohumlarını boşalt
+    const seeds = countInventoryItemByName(bot, null, 'pumpkin_seeds');
+    if (seeds > 0) {
+      await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin_seeds', cfg.outputChest || cfg.pumpkinChest);
+    }
+
+    // Başlangıç konumuna geri dön
+    await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
+
+    session.lastJackOLanternTime = Date.now();
+    addLog(accountId, 'FENER', '✅ Balkabağı Feneri döngüsü başarıyla tamamlandı.', chalk.green);
+    triggerSoundAlert('notify', accountId, 'Balkabağı Feneri Döngüsü Tamamlandı');
+    broadcastState();
+    return true;
+  } catch (err) {
+    if (!isJackOLanternAbortRequested(session)) {
+      addLog(accountId, 'FENER', `❌ Fener döngüsünde hata: ${err.message}`, chalk.red);
+    }
+    return false;
+  } finally {
+    session.isJackOLanternRunning = false;
+    broadcastState();
+  }
+}
+
+function startJackOLanternLoop(accountId) {
+  const session = getOrCreateSession(accountId);
+  if (session.jackOLanternTimer) {
+    clearTimeout(session.jackOLanternTimer);
+    session.jackOLanternTimer = null;
+  }
+
+  const acc = config.accounts.find((a) => a.id === accountId);
+  if (!acc || !acc.autoJackOLantern || !acc.autoJackOLantern.enabled) {
+    session.isJackOLanternRunning = false;
+    return;
+  }
+
+  const intervalMs = Math.max(5, Number(acc.autoJackOLantern.intervalSec) || 20) * 1000;
+  session.jackOLanternTimer = setTimeout(async () => {
+    if (
+      session.status === 'online' &&
+      session.bot &&
+      acc.autoJackOLantern &&
+      acc.autoJackOLantern.enabled &&
+      !session.isJackOLanternRunning &&
+      !session.isSpawnerRoutineRunning &&
+      !session.isMinerChestSelling &&
+      !session.isFarmerSelling &&
+      !session.isDepositing &&
+      !session.isEating &&
+      !session.isRepairing
+    ) {
+      try {
+        await executeJackOLanternRoutine(accountId, false);
+      } catch (err) {
+        console.error('[FENER DÖNGÜ HATA]', err);
+      }
+    }
+    startJackOLanternLoop(accountId);
+  }, intervalMs);
+}
+
+function stopJackOLanternLoop(accountId) {
+  const session = getOrCreateSession(accountId);
+  if (session.jackOLanternTimer) {
+    clearTimeout(session.jackOLanternTimer);
+    session.jackOLanternTimer = null;
+  }
+  session.abortJackOLantern = true;
+  session.isJackOLanternRunning = false;
+  if (session.bot) {
+    try { session.bot.clearControlStates(); } catch (_) {}
+    if (session.bot.currentWindow) {
+      try { session.bot.closeWindow(session.bot.currentWindow); } catch (_) {}
+    }
+  }
+}
+
 
 
 
@@ -14096,6 +14706,8 @@ async function startBot(accountId) {
     if (session.autoPlant) startAutoPlantLoop(accountId);
     if (acc.autoFarmerSell && acc.autoFarmerSell.enabled) startFarmerSellLoop(accountId);
     if (acc.autoMinerChestSell && acc.autoMinerChestSell.enabled) startMinerChestSellLoop(accountId);
+    if (acc.autoSpawnerRoutine && acc.autoSpawnerRoutine.enabled) startSpawnerRoutineLoop(accountId);
+    if (acc.autoJackOLantern && acc.autoJackOLantern.enabled) startJackOLanternLoop(accountId);
   });
 
   bot.on('messagestr', (message, position) => {
@@ -15419,6 +16031,87 @@ const server = http.createServer(async (req, res) => {
             ? 'Tüm Spawnerlar (Otomatik)'
             : `${acc.autoSpawnerRoutine.spawnerCount} spawner`;
           addLog(accId, 'SPAWNER', `Spawner döngü ayarları güncellendi: ${spDesc}, her ${acc.autoSpawnerRoutine.intervalSec} saniyede bir.`, chalk.cyan);
+          broadcastState();
+          break;
+        case 'jackOLanternNow':
+          if (s.isJackOLanternRunning) {
+            s.abortJackOLantern = true;
+            s.isJackOLanternRunning = false;
+            s.isDepositing = false;
+            if (s.bot) {
+              try { s.bot.clearControlStates(); } catch (_) {}
+              if (s.bot.currentWindow) {
+                try { s.bot.closeWindow(s.bot.currentWindow); } catch (_) {}
+              }
+            }
+            addLog(accId, 'FENER', '⏹ Fener döngüsü kullanıcı isteğiyle durduruldu.', chalk.magenta);
+            broadcastState();
+          } else if (s.bot && s.bot.entity && s.status === 'online') {
+            s.abortJackOLantern = false;
+            executeJackOLanternRoutine(accId, true);
+          } else {
+            addLog(accId, 'FENER', 'Bot sunucuya bağlı değil!', chalk.red);
+          }
+          break;
+        case 'stopJackOLanternNow':
+          s.abortJackOLantern = true;
+          s.isJackOLanternRunning = false;
+          s.isDepositing = false;
+          if (s.bot) {
+            try { s.bot.clearControlStates(); } catch (_) {}
+            if (s.bot.currentWindow) {
+              try { s.bot.closeWindow(s.bot.currentWindow); } catch (_) {}
+            }
+          }
+          addLog(accId, 'FENER', '⏹ Fener döngüsü kullanıcı isteğiyle durduruldu.', chalk.magenta);
+          broadcastState();
+          break;
+        case 'toggleAutoJackOLantern':
+          if (!acc.autoJackOLantern) {
+            acc.autoJackOLantern = { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', carveSpot: '' };
+          }
+          acc.autoJackOLantern.enabled = !acc.autoJackOLantern.enabled;
+          saveConfig();
+          if (acc.autoJackOLantern.enabled) {
+            s.abortJackOLantern = false;
+            addLog(accId, 'FENER', `🎃 Otomatik Balkabağı Feneri döngüsü başlatıldı (${acc.autoJackOLantern.intervalSec} sn).`, chalk.green);
+            startJackOLanternLoop(accId);
+            if (s.bot && s.bot.entity && s.status === 'online') {
+              executeJackOLanternRoutine(accId, false);
+            }
+          } else {
+            s.abortJackOLantern = true;
+            s.isJackOLanternRunning = false;
+            s.isDepositing = false;
+            if (s.bot) {
+              try { s.bot.clearControlStates(); } catch (_) {}
+              if (s.bot.currentWindow) {
+                try { s.bot.closeWindow(s.bot.currentWindow); } catch (_) {}
+              }
+            }
+            addLog(accId, 'FENER', '⏹ Otomatik Balkabağı Feneri döngüsü durduruldu.', chalk.magenta);
+            stopJackOLanternLoop(accId);
+          }
+          broadcastState();
+          break;
+        case 'updateJackOLanternConfig':
+          if (!acc.autoJackOLantern) {
+            acc.autoJackOLantern = { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', carveSpot: '' };
+          }
+          if (typeof body.enabled !== 'undefined') acc.autoJackOLantern.enabled = Boolean(body.enabled);
+          if (typeof body.intervalSec !== 'undefined') acc.autoJackOLantern.intervalSec = Math.max(5, Number(body.intervalSec) || 20);
+          if (typeof body.batchSize !== 'undefined') acc.autoJackOLantern.batchSize = Math.max(1, Math.min(64, Number(body.batchSize) || 32));
+          if (typeof body.pumpkinChest === 'string') acc.autoJackOLantern.pumpkinChest = body.pumpkinChest;
+          if (typeof body.torchChest === 'string') acc.autoJackOLantern.torchChest = body.torchChest;
+          if (typeof body.outputChest === 'string') acc.autoJackOLantern.outputChest = body.outputChest;
+          if (typeof body.carveSpot === 'string') acc.autoJackOLantern.carveSpot = body.carveSpot;
+          saveConfig();
+          if (acc.autoJackOLantern.enabled) {
+            startJackOLanternLoop(accId);
+          } else {
+            stopJackOLanternLoop(accId);
+          }
+          addLog(accId, 'FENER', `Balkabağı Feneri ayarları güncellendi (Parti: ${acc.autoJackOLantern.batchSize}, ${acc.autoJackOLantern.intervalSec} sn).`, chalk.cyan);
           broadcastState();
           break;
         case 'depositChestNow':
