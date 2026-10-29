@@ -1,7 +1,7 @@
 {
-  "buildId": "20261029_jack_shears_craft_v57",
-  "version": "2.2.26",
-  "releaseNotes": "Oto Balkabağı Feneri (Jack o' Lantern): Makas kırıldığında veya tükendiğinde sandıktan demir külçesi (iron_ingot) alıp /craft arayüzünde 2 demiri çapraz yerleştirerek otomatik yeni makas (shears) üretme desteği eklendi. Özel demir sandığı koordinatı (ironChest) ve otomatik sandık tarama eklendi.",
+  "buildId": "20261029_jack_coords_sync_v58",
+  "version": "2.2.27",
+  "releaseNotes": "Balkabağı Feneri (Jack o' Lantern) koordinat giriş alanlarında (balkabağı sandığı, meşale sandığı, demir sandığı, fener sandığı ve oyma noktası) koordinatların silinme sorunu giderildi; anlık yerel optimistik senkronizasyon ve window fonksiyon bağlamaları düzeltildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
