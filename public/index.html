@@ -2485,8 +2485,12 @@
                       <input type="text" id="ctrlJackTorchChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
-                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Demir Sandığı (X Y Z - Makas İçin)</label>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Demir Sandığı (X Y Z - Makas & Balta İçin)</label>
                       <input type="text" id="ctrlJackIronChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
+                    </div>
+                    <div>
+                      <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Çubuk Sandığı (X Y Z - Balta İçin)</label>
+                      <input type="text" id="ctrlJackStickChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Fener Sandığı (X Y Z)</label>
@@ -5124,6 +5128,10 @@
       if (jIronChestEl && document.activeElement !== jIronChestEl) {
         jIronChestEl.value = jackCfg.ironChest || '';
       }
+      const jStickChestEl = document.getElementById('ctrlJackStickChest');
+      if (jStickChestEl && document.activeElement !== jStickChestEl) {
+        jStickChestEl.value = jackCfg.stickChest || '';
+      }
       const jOutputChestEl = document.getElementById('ctrlJackOutputChest');
       if (jOutputChestEl && document.activeElement !== jOutputChestEl) {
         jOutputChestEl.value = jackCfg.outputChest || '';
@@ -7259,6 +7267,7 @@
       const pChestEl = document.getElementById('ctrlJackPumpkinChest');
       const tChestEl = document.getElementById('ctrlJackTorchChest');
       const ironChestEl = document.getElementById('ctrlJackIronChest');
+      const stickChestEl = document.getElementById('ctrlJackStickChest');
       const oChestEl = document.getElementById('ctrlJackOutputChest');
       const cSpotEl = document.getElementById('ctrlJackCarveSpot');
 
@@ -7268,6 +7277,7 @@
         pumpkinChest: (pChestEl?.value || '').trim(),
         torchChest: (tChestEl?.value || '').trim(),
         ironChest: (ironChestEl?.value || '').trim(),
+        stickChest: (stickChestEl?.value || '').trim(),
         outputChest: (oChestEl?.value || '').trim(),
         carveSpot: (cSpotEl?.value || '').trim()
       };
@@ -7293,6 +7303,7 @@
       const pChestEl = document.getElementById('ctrlJackPumpkinChest');
       const tChestEl = document.getElementById('ctrlJackTorchChest');
       const ironChestEl = document.getElementById('ctrlJackIronChest');
+      const stickChestEl = document.getElementById('ctrlJackStickChest');
       const oChestEl = document.getElementById('ctrlJackOutputChest');
       const cSpotEl = document.getElementById('ctrlJackCarveSpot');
 
@@ -7303,6 +7314,7 @@
         pumpkinChest: (pChestEl?.value || '').trim(),
         torchChest: (tChestEl?.value || '').trim(),
         ironChest: (ironChestEl?.value || '').trim(),
+        stickChest: (stickChestEl?.value || '').trim(),
         outputChest: (oChestEl?.value || '').trim(),
         carveSpot: (cSpotEl?.value || '').trim()
       };
