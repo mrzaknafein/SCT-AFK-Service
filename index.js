@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261029_jack_seed_sell_fix_v61';
+const ENGINE_BUILD_ID = '20261029_jack_vulcan_safe_v62';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -7562,10 +7562,12 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
 
 async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount, cfg = {}) {
   let carvedSoFar = 0;
+  const carveCenter = carveSpot.offset(0.5, 0.5, 0.5);
+
   for (let i = 0; i < maxCount; i++) {
     if (isJackOLanternAbortRequested(session)) break;
 
-    // 1. Oyma öncesi envanter kontrolü: Yer kalmadıysa tohumları satarak envanteri aç
+    // 1. Oyma öncesi envanter kontrolü: Boş slot kalmadıysa tohumları satarak envanteri aç
     const curEmptyBefore = typeof bot.inventory.emptySlotCount === 'function'
       ? bot.inventory.emptySlotCount()
       : countEmptyPlayerSlotsInWindow(bot);
@@ -7575,10 +7577,12 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       addLog(accountId, 'FENER', `⚠️ Envanter tohumlarla doldu (${curEmptyBefore} boş slot)! Oyulacak balkabakları için yer açmak üzere tohumlar satılıyor...`, chalk.yellowBright);
       const sold = await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
       if (sold) {
-        // Envanter açıldı, oyma noktasına adım at ve yerdeki eşyaları vakumla
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.8);
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
-        await new Promise((r) => setTimeout(r, 350));
+        // Envanter açıldı: yerdeki eşyaları vakumlamak için kısa bir adım at ve hemen güvenli mesafeye (2.0m) geri çekil!
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
+        await new Promise((r) => setTimeout(r, 200));
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
+        try { bot.setControlState('sprint', false); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 150));
       } else {
         addLog(accountId, 'FENER', '❌ Envanter dolu olduğu ve tohumlar satılamadığı için oyma durduruldu.', chalk.redBright);
         break;
@@ -7594,16 +7598,22 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       const ready = await ensureShearsAvailable(bot, session, accountId, cfg);
       if (!ready || isJackOLanternAbortRequested(session)) break;
 
-      const dist = bot.entity.position.distanceTo(carveSpot.offset(0.5, 0.5, 0.5));
-      if (dist > 3.2 || dist < 1.15) {
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
-      }
       shearsItem = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
       if (!shearsItem) {
         addLog(accountId, 'FENER', '❌ Yeni makas temin edilemediği için oyma durduruldu.', chalk.redBright);
         break;
       }
     }
+
+    // 2. VULCAN GÜVENLİĞİ: Oyma noktasına olan mesafeyi her zaman 1.6 - 2.6m arasında tut!
+    // Asla bloğun içinde veya 1.45m'den yakın durulmamalı (Self-intersection / Scaffold kick koruması).
+    const distToSpot = bot.entity.position.distanceTo(carveCenter);
+    if (distToSpot > 2.8 || distToSpot < 1.5) {
+      await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
+      try { bot.setControlState('sprint', false); } catch (_) {}
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    try { bot.setControlState('sprint', false); } catch (_) {}
 
     // Önceden kalan blok varsa temizle
     const existing = bot.blockAt(carveSpot);
@@ -7612,6 +7622,9 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
         try {
           await bot.equip(shearsItem, 'hand');
           await new Promise((r) => setTimeout(r, 100));
+          const exCenter = existing.position.offset(0.5, 0.5, 0.5);
+          await lookAtBlockFaceStealth(bot, exCenter);
+          await new Promise((r) => setTimeout(r, 80));
           await bot.activateBlock(existing);
           await new Promise((r) => setTimeout(r, 180));
         } catch (_) {}
@@ -7621,15 +7634,18 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
         let axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
         if (!axe) {
           await ensureAxeAvailable(bot, session, accountId, cfg);
-          const dist = bot.entity.position.distanceTo(carveSpot.offset(0.5, 0.5, 0.5));
-          if (dist > 3.2 || dist < 1.15) {
+          const dNow = bot.entity.position.distanceTo(carveCenter);
+          if (dNow > 2.8 || dNow < 1.5) {
             await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
           }
           axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
         }
         if (axe) try { await bot.equip(axe, 'hand'); } catch (_) {}
-        try { await bot.dig(bToDig); } catch (_) {}
-        await new Promise((r) => setTimeout(r, 180));
+        const digCenter = bToDig.position.offset(0.5, 0.5, 0.5);
+        await lookAtBlockFaceStealth(bot, digCenter);
+        await new Promise((r) => setTimeout(r, 80));
+        try { await bot.dig(bToDig, 'ignore'); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 200));
       }
     }
 
@@ -7645,33 +7661,42 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     } catch (_) {}
     await new Promise((r) => setTimeout(r, 120));
 
-    // Vulcan-Safe stealth açı ile yerleştir (>=260ms)
+    // Vulcan-Safe stealth açı ile zemin bloğunun üst yüzeyine bak
+    const floorTopFace = floorBlock.position.offset(0.5, 1.0, 0.5);
     try {
-      await lookAtBlockFaceStealth(bot, session, floorBlock, new Vec3(0, 1, 0));
+      await lookAtBlockFaceStealth(bot, floorTopFace);
     } catch (_) {}
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 90));
 
+    // Blok yerleştirme: forceLook ignore edilerek Vulcan GCD-uyumlu stealth bakış korunur
     try {
-      await bot.placeBlock(floorBlock, new Vec3(0, 1, 0));
+      if (typeof bot._placeBlockWithOptions === 'function') {
+        await bot._placeBlockWithOptions(floorBlock, new Vec3(0, 1, 0), { forceLook: 'ignore', swingArm: 'right' });
+      } else {
+        await bot.placeBlock(floorBlock, new Vec3(0, 1, 0));
+      }
     } catch (placeErr) {
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 220));
       continue;
     }
-    await new Promise((r) => setTimeout(r, 260 + Math.floor(Math.random() * 45)));
+    // Vulcan FastPlace gecikmesi (>=280ms)
+    await new Promise((r) => setTimeout(r, 280 + Math.floor(Math.random() * 50)));
 
     // Makası eline al
     try {
       await bot.equip(shearsItem, 'hand');
     } catch (_) {}
-    await new Promise((r) => setTimeout(r, 110));
+    await new Promise((r) => setTimeout(r, 120));
 
     const placedPumpkin = bot.blockAt(carveSpot);
     if (!placedPumpkin || placedPumpkin.name === 'air') continue;
 
+    // Balkabağı merkezine stealth açı ile bak
+    const placedCenter = placedPumpkin.position.offset(0.5, 0.5, 0.5);
     try {
-      await lookAtBlockFaceStealth(bot, session, placedPumpkin, new Vec3(0, 0, 1));
+      await lookAtBlockFaceStealth(bot, placedCenter);
     } catch (_) {}
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 80));
 
     try {
       await bot.activateBlock(placedPumpkin);
@@ -7688,14 +7713,14 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       }
     }
 
-    // Oyulmuş balkabağını kaz/kır (balta ile hızlı kırış)
+    // Oyulmuş balkabağını kaz/kır (balta ile stealth kırış)
     const blockToMine = carvedBlock || bot.blockAt(carveSpot);
     if (blockToMine && blockToMine.name !== 'air' && !blockToMine.name.includes('air')) {
       let axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
       if (!axe) {
         await ensureAxeAvailable(bot, session, accountId, cfg);
-        const dist = bot.entity.position.distanceTo(carveSpot.offset(0.5, 0.5, 0.5));
-        if (dist > 3.2 || dist < 1.15) {
+        const dNow = bot.entity.position.distanceTo(carveCenter);
+        if (dNow > 2.8 || dNow < 1.5) {
           await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
         }
         axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
@@ -7703,11 +7728,19 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       if (axe) {
         try {
           await bot.equip(axe, 'hand');
-          await new Promise((r) => setTimeout(r, 95));
+          await new Promise((r) => setTimeout(r, 100));
         } catch (_) {}
       }
-      try { await bot.dig(blockToMine); } catch (_) {}
-      await new Promise((r) => setTimeout(r, 160));
+      const mineCenter = blockToMine.position.offset(0.5, 0.5, 0.5);
+      try {
+        await lookAtBlockFaceStealth(bot, mineCenter);
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 70));
+
+      try {
+        await bot.dig(blockToMine, 'ignore');
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 180));
     }
 
     carvedSoFar++;
@@ -7715,7 +7748,7 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       addLog(accountId, 'FENER', `✂️ Balkabağı oyuldu (${carvedSoFar}/${maxCount})...`, chalk.cyan);
     }
 
-    // 2. Kazma/kırma sonrası envanter kontrolü: Yeni kırılan veya yerdeki oyulmuş balkabağı için yer kalmadıysa sat
+    // 3. Kazma/kırma sonrası envanter kontrolü: Yer kalmadıysa tohumları sat
     const curEmptyAfter = typeof bot.inventory.emptySlotCount === 'function'
       ? bot.inventory.emptySlotCount()
       : countEmptyPlayerSlotsInWindow(bot);
@@ -7725,10 +7758,12 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       addLog(accountId, 'FENER', `⚠️ Envanter tohumlarla doldu (${curEmptyAfter} boş slot)! Yerdeki oyulmuş balkabaklarını toplayabilmek için tohumlar satılıyor...`, chalk.yellowBright);
       const sold = await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
       if (sold) {
-        // Envanter açıldı, oyma noktasına yaklaş ve yerdeki oyulmuş balkabağını vakumla
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.8);
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
-        await new Promise((r) => setTimeout(r, 350));
+        // Envanter açıldı: yerdeki oyulmuş balkabağını vakumlamak için adım at, sonra hemen güvenli mesafeye (2.0m) dön!
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
+        await new Promise((r) => setTimeout(r, 200));
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
+        try { bot.setControlState('sprint', false); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 150));
       } else {
         addLog(accountId, 'FENER', '❌ Envanter dolu olduğu ve tohumlar satılamadığı için oyma işlemi durduruldu.', chalk.redBright);
         break;
@@ -7736,10 +7771,11 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     }
   }
 
-  // Yere dökülen carved_pumpkin ve tohumları vakumlamak için oyma noktasına adım at
+  // Döngü sonunda yerdeki son oyulmuş balkabağı veya tohumları toplamak için bir kere yaklaş
   if (!isJackOLanternAbortRequested(session)) {
-    await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
-    await new Promise((r) => setTimeout(r, 350));
+    await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
+    await new Promise((r) => setTimeout(r, 300));
+    try { bot.setControlState('sprint', false); } catch (_) {}
   }
   return carvedSoFar;
 }
@@ -7992,7 +8028,8 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
 
       // Yere dökülen carved_pumpkin ve tohumları vakumlamak için oyma noktasına adım at
       if (!isJackOLanternAbortRequested(session)) {
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
+        try { bot.setControlState('sprint', false); } catch (_) {}
         await new Promise((r) => setTimeout(r, 300));
       }
     }
