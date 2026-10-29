@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261029_jack_coords_sync_v58';
+const ENGINE_BUILD_ID = '20261029_jack_chest_nav_v59';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5832,6 +5832,13 @@ function isSpawnerAbortRequested(session) {
   return !session || session.abortSpawnerRoutine || !session.isSpawnerRoutineRunning || session.status !== 'online' || !session.bot;
 }
 
+function isNavigationAbortRequested(session) {
+  if (!session || session.status !== 'online' || !session.bot) return true;
+  if (session.isSpawnerRoutineRunning && session.abortSpawnerRoutine) return true;
+  if (session.isJackOLanternRunning && session.abortJackOLantern) return true;
+  return false;
+}
+
 function isSpawnerCorridorWalkable(bot, pos, session = null) {
   if (!bot || !pos) return false;
   const foot = bot.blockAt(pos);
@@ -5854,7 +5861,7 @@ function isSpawnerCorridorWalkable(bot, pos, session = null) {
 
 async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach = 3.95) {
   if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
-  if (isSpawnerAbortRequested(session)) return false;
+  if (isNavigationAbortRequested(session)) return false;
 
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
   const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter);
@@ -5890,7 +5897,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
   });
 
   for (let i = 0; i < Math.min(spotCandidates.length, 10); i++) {
-    if (isSpawnerAbortRequested(session)) return false;
+    if (isNavigationAbortRequested(session)) return false;
     const cand = spotCandidates[i];
     const path = findBuilderPath(bot, startStand, cand.spot, session, 2000, {
       allowStepDown: true
@@ -6809,16 +6816,54 @@ function isTargetJackItem(item, targetName) {
 
 async function openChestAtPosition(bot, session, chestPos, accountId) {
   if (!bot || !chestPos || isJackOLanternAbortRequested(session)) return null;
-  const reached = await navigateNearSpawnerOrChest(bot, session, chestPos, 3.85);
-  if (!reached || isJackOLanternAbortRequested(session)) return null;
 
-  const chestBlock = bot.blockAt(chestPos);
-  if (!chestBlock) return null;
+  // 1. Verilen koordinat doğrudan sandık mı? Değilse +/-1 blok etrafındaki sandığı tespit et
+  let targetBlock = bot.blockAt(chestPos);
+  let resolvedPos = chestPos;
 
+  if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const b = bot.blockAt(chestPos.offset(dx, dy, dz));
+          if (b && isFarmContainerBlockName(b.name)) {
+            targetBlock = b;
+            resolvedPos = b.position;
+            break;
+          }
+        }
+        if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
+      }
+      if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
+    }
+  }
+
+  // 2. Sandığa yaklaş (Vulcan-safe reach: 3.85m)
+  const reached = await navigateNearSpawnerOrChest(bot, session, resolvedPos, 3.85);
+  if (!reached || isJackOLanternAbortRequested(session)) {
+    if (accountId) {
+      addLog(accountId, 'FENER', `⚠️ Sandığa (${resolvedPos.x}, ${resolvedPos.y}, ${resolvedPos.z}) ulaşılamadı.`, chalk.yellow);
+    }
+    return null;
+  }
+
+  // 3. Yaklaştıktan sonra bloğu doğrula
+  targetBlock = bot.blockAt(resolvedPos);
+  if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
+    if (accountId) {
+      addLog(accountId, 'FENER', `⚠️ Koordinatta (${resolvedPos.x}, ${resolvedPos.y}, ${resolvedPos.z}) sandık/fıçı tespit edilemedi (Blok: ${targetBlock ? targetBlock.name : 'yok'}).`, chalk.yellow);
+    }
+    return null;
+  }
+
+  // 4. Sandığı aç
   try {
-    const res = await safelyOpenContainer(bot, chestBlock, session, 4500);
+    const res = await safelyOpenContainer(bot, targetBlock, session, 4500);
     return res && res.container ? res.container : null;
   } catch (err) {
+    if (accountId) {
+      addLog(accountId, 'FENER', `⚠️ Sandık açılamadı (${resolvedPos.x}, ${resolvedPos.y}, ${resolvedPos.z}): ${err.message}`, chalk.yellow);
+    }
     return null;
   }
 }
@@ -6840,12 +6885,18 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
 
   if (specificPos) {
     candidatePositions.push(specificPos);
+    addLog(accountId, 'FENER', `📍 Belirtilen sandık koordinatına gidiliyor (${itemName}): ${specificPos.x} ${specificPos.y} ${specificPos.z}`, chalk.cyan);
   }
-  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 18);
+  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
   for (const p of nearbyChests) {
-    if (!specificPos || p.distanceTo(specificPos) > 1) {
+    if (!specificPos || p.distanceTo(specificPos) > 1.2) {
       candidatePositions.push(p);
     }
+  }
+
+  if (candidatePositions.length === 0) {
+    addLog(accountId, 'FENER', `⚠️ Etrafta taranacak sandık bulunamadı!`, chalk.yellow);
+    return 0;
   }
 
   for (const cPos of candidatePositions) {
@@ -6855,21 +6906,27 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
     const chestWin = await openChestAtPosition(bot, session, cPos, accountId);
     if (!chestWin) continue;
 
-    const containerEnd = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : Math.min(chestWin.slots.length, 27);
+    const containerEnd = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : (chestWin.slots.length > 63 ? 54 : 27);
+    let foundInThisChest = 0;
     for (let s = 0; s < containerEnd; s++) {
       if (isJackOLanternAbortRequested(session)) break;
       const slotItem = chestWin.slots[s];
       if (isTargetJackItem(slotItem, itemName)) {
         const countInSlot = slotItem.count;
         await withPromiseTimeout(bot.clickWindow(s, 0, 1), 1600);
-        await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 40)));
+        await new Promise((r) => setTimeout(r, 140 + Math.floor(Math.random() * 45)));
         totalWithdrawn += countInSlot;
+        foundInThisChest += countInSlot;
         if (totalWithdrawn >= targetCount) break;
       }
     }
 
     closeChestContainerSafely(bot, chestWin);
-    await new Promise((r) => setTimeout(r, 180));
+    await new Promise((r) => setTimeout(r, 200));
+
+    if (foundInThisChest > 0) {
+      addLog(accountId, 'FENER', `📦 Sandıktan (${cPos.x}, ${cPos.y}, ${cPos.z}) ${foundInThisChest} adet "${itemName}" çekildi.`, chalk.green);
+    }
   }
 
   return totalWithdrawn;
@@ -6884,10 +6941,11 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
 
   if (specificPos) {
     candidatePositions.push(specificPos);
+    addLog(accountId, 'FENER', `📍 Belirtilen sandık koordinatına gidiliyor (${itemName} aktarımı): ${specificPos.x} ${specificPos.y} ${specificPos.z}`, chalk.cyan);
   }
-  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 18);
+  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
   for (const p of nearbyChests) {
-    if (!specificPos || p.distanceTo(specificPos) > 1) {
+    if (!specificPos || p.distanceTo(specificPos) > 1.2) {
       candidatePositions.push(p);
     }
   }
@@ -6900,8 +6958,9 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
     const chestWin = await openChestAtPosition(bot, session, cPos, accountId);
     if (!chestWin) continue;
 
-    const invStart = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : 27;
+    const invStart = typeof chestWin.inventoryStart === 'number' ? chestWin.inventoryStart : (chestWin.slots.length > 63 ? 54 : 27);
     const invEnd = typeof chestWin.inventoryEnd === 'number' ? chestWin.inventoryEnd : chestWin.slots.length;
+    let depositedInThisChest = 0;
 
     for (let s = invStart; s < invEnd; s++) {
       if (isJackOLanternAbortRequested(session)) break;
@@ -6909,13 +6968,18 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
       if (isTargetJackItem(slotItem, itemName)) {
         const countInSlot = slotItem.count;
         await withPromiseTimeout(bot.clickWindow(s, 0, 1), 1600);
-        await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 40)));
+        await new Promise((r) => setTimeout(r, 140 + Math.floor(Math.random() * 45)));
         totalDeposited += countInSlot;
+        depositedInThisChest += countInSlot;
       }
     }
 
     closeChestContainerSafely(bot, chestWin);
-    await new Promise((r) => setTimeout(r, 180));
+    await new Promise((r) => setTimeout(r, 200));
+
+    if (depositedInThisChest > 0) {
+      addLog(accountId, 'FENER', `📥 Sandığa (${cPos.x}, ${cPos.y}, ${cPos.z}) ${depositedInThisChest} adet "${itemName}" aktarıldı.`, chalk.green);
+    }
   }
 
   return totalDeposited;
@@ -7128,7 +7192,7 @@ async function ensureShearsAvailable(bot, session, accountId, cfg = {}) {
   }
 
   // 4. Yedek kontrol: Eğer demir temin edilemediyse sandıklarda hazır makas var mı diye bak
-  await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'shears', 1, cfg.pumpkinChest);
+  await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'shears', 1, cfg.ironChest || cfg.pumpkinChest);
   shears = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
   if (shears) {
     addLog(accountId, 'FENER', '✂️ Sandıktan hazır makas temin edildi.', chalk.green);
@@ -7424,7 +7488,11 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
   }
 
   const acc = config.accounts.find((a) => a.id === accountId);
-  const cfg = (acc && acc.autoJackOLantern) || { enabled: false, intervalSec: 20, batchSize: 32 };
+  const cfg = Object.assign(
+    { enabled: false, intervalSec: 20, batchSize: 32, pumpkinChest: '', torchChest: '', outputChest: '', ironChest: '', carveSpot: '' },
+    (acc && acc.autoJackOLantern) || {},
+    (session && session.autoJackOLantern) || {}
+  );
   const batchSize = Math.max(1, Math.min(64, Number(cfg.batchSize) || 32));
 
   const homePos = bot.entity.position.clone();
@@ -7434,6 +7502,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
 
   try {
     addLog(accountId, 'FENER', `🎃 Balkabağı Feneri (Jack o' Lantern) döngüsü başlatıldı (Parti: ${batchSize} adet)...`, chalk.yellowBright);
+    addLog(accountId, 'FENER', `📋 Sandık Ayarları: Balkabağı: [${cfg.pumpkinChest || 'Oto'}], Meşale: [${cfg.torchChest || 'Oto'}], Demir: [${cfg.ironChest || 'Oto'}], Fener: [${cfg.outputChest || 'Oto'}], Oyma: [${cfg.carveSpot || 'Bot Önü'}]`, chalk.gray);
 
     // 1. KONTROL: Makas (shears) kontrolü (kırıldıysa veya yoksa demir alınıp /craft ile üretilir)
     const shearsReady = await ensureShearsAvailable(bot, session, accountId, cfg);
@@ -7457,6 +7526,10 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
     curCarved = countInventoryItemByName(bot, null, 'carved_pumpkin');
     const totalReadyPumpkins = curPumpkins + curCarved;
+    if (totalReadyPumpkins <= 0) {
+      addLog(accountId, 'FENER', '⚠️ Envanterde veya sandıkta hiç balkabağı bulunamadı! Fener üretimi için balkabağı temin edilemedi.', chalk.yellowBright);
+      return false;
+    }
 
     let curTorches = countInventoryItemByName(bot, null, 'torch');
     if (curTorches < totalReadyPumpkins) {
@@ -7465,6 +7538,11 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
       await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'torch', neededTorches, cfg.torchChest);
     }
     if (isJackOLanternAbortRequested(session)) return false;
+
+    curTorches = countInventoryItemByName(bot, null, 'torch');
+    if (curTorches <= 0 && curCarved > 0) {
+      addLog(accountId, 'FENER', '⚠️ Envanterde veya sandıkta meşale bulunamadı! Meşale olmadan fener birleştirilemez.', chalk.yellowBright);
+    }
 
     // 3. AŞAMA: Oyma Noktasına Git & Balkabaklarını Oy
     curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
@@ -12530,7 +12608,7 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
 
   try {
     while (currentTargetIndex < path.length && Date.now() - startTime < maxTimeoutMs) {
-      if (!session || !session.bot || session.status !== 'online' || session.abortSpawnerRoutine) break;
+      if (!session || !session.bot || session.status !== 'online' || isNavigationAbortRequested(session)) break;
 
       const curPos = bot.entity.position;
       const curEye = curPos.offset(0, 1.62, 0);
