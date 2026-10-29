@@ -1,7 +1,7 @@
 {
-  "buildId": "20261029_jack_vulcan_safe_v62",
-  "version": "2.2.31",
-  "releaseNotes": "Balkabağı Feneri: Vulcan Anti-Cheat [Unfair Advantage] kick düzeltmesi. Oyma sırasında bloğun içine basarak blok koyma hatası giderildi (mesafe her zaman 1.6-2.5m aralığında tutulur, vakumlama sonrası güvenli mesafeye geri çekilinir). lookAtBlockFaceStealth parametreleri düzeltilerek zemin yüzeyine ve balkabağına GCD uyumlu stealth bakış sağlandı, forceLook ignore edilerek raytrace ve rotasyon ihlalleri engellendi.",
+  "buildId": "20261029_jack_stand_spot_fix_v63",
+  "version": "2.2.32",
+  "releaseNotes": "Balkabağı Modülü: Oyma bloğunun üstünde durarak kendi içine blok koymaya çalışma ve sonsuz döngü/Vulcan [Unfair Advantage] kick hatası giderildi. ensureBotPositionedForCarving eklendi (bloktan en az 1.35m yatay, 1.6-2.5m toplam menzilde durma garantisi), navigateNearSpawnerOrChest hedef bloğun üstünde durmayı engeller (dx=0, dz=0 hariç tutuldu), ardışık 3 blok koyma başarısızlığında sonsuz döngü kesilir, vakumlama sonrası bot asla bloğun dibinde bırakılmaz.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
