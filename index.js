@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261029_jack_axe_stick_seeds_v60';
+const ENGINE_BUILD_ID = '20261029_jack_seed_sell_fix_v61';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -7472,7 +7472,7 @@ async function ensureAxeAvailable(bot, session, accountId, cfg = {}) {
   return false;
 }
 
-async function checkAndSellInventoryIfFull(bot, accountId, session) {
+async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
   if (!bot || !bot.inventory) return false;
   if (isJackOLanternAbortRequested(session)) return false;
 
@@ -7480,28 +7480,82 @@ async function checkAndSellInventoryIfFull(bot, accountId, session) {
     ? bot.inventory.emptySlotCount()
     : countEmptyPlayerSlotsInWindow(bot);
 
-  // Envanter doluluk kontrolü: Boş slot sayısı 2 veya daha az ise dolu kabul edilir
-  if (emptySlots > 2) return false;
+  const seedCount = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'pumpkin_seeds'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
 
-  const pumpkins = countInventoryItemByName(bot, null, 'pumpkin');
-  const carved = countInventoryItemByName(bot, null, 'carved_pumpkin');
+  const pumpkins = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'pumpkin'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
 
-  // KESİN GÜVENLİK KURALI: Envanterde kesinlikle balkabağı veya oyulmuş balkabağı bulunmamalıdır!
+  const carved = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'carved_pumpkin'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
+
+  const canHoldCarved = emptySlots > 0 || bot.inventory.items().some((it) => isTargetJackItem(it, 'carved_pumpkin') && it.count < 64);
+
+  // Envanter doluluk kontrolü: Boş slot sayısı <= 2 veya oyulmuş balkabağı için yer kalmadıysa
+  const isFull = emptySlots <= 2 || !canHoldCarved;
+  if (!isFull) return false;
+
+  // Tohum yoksa ve en az 1 boş slot varsa beklemeye gerek yok
+  if (seedCount <= 0 && emptySlots > 1) return false;
+
+  let stashedPumpkins = 0;
+  let stashedCarved = 0;
+
+  // KULLANICI KESİN EMRİ: "/sat hepsi yaparken envanterinde balkabağı olmayacak."
+  // Eğer envanterde balkabağı veya oyulmuş balkabağı varsa satılmaması için sandığa emanet konur!
   if (pumpkins > 0 || carved > 0) {
-    addLog(accountId, 'FENER', `⚠️ Envanter dolu (${emptySlots} boş slot) ancak envanterde ${pumpkins + carved} adet balkabağı bulunduğu için /sat hepsi engellendi!`, chalk.yellow);
+    addLog(accountId, 'FENER', `🛡️ /sat hepsi öncesi eldeki ${pumpkins} balkabağı ve ${carved} oyulmuş balkabağı sandığa aktarılıyor (satılmaması için)...`, chalk.yellow);
+
+    if (pumpkins > 0) {
+      stashedPumpkins = await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', cfg.pumpkinChest || cfg.outputChest);
+    }
+    if (carved > 0) {
+      stashedCarved = await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', cfg.outputChest || cfg.pumpkinChest);
+    }
+
+    if (isJackOLanternAbortRequested(session)) return false;
+  }
+
+  // Yeniden kesin kontrol: Envanterde hala balkabağı var mı?
+  const remPumpkins = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'pumpkin'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
+  const remCarved = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'carved_pumpkin'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
+
+  if (remPumpkins > 0 || remCarved > 0) {
+    addLog(accountId, 'FENER', `❌ Balkabakları sandığa aktarılamadı (${remPumpkins} balkabağı, ${remCarved} oyulmuş)! Balkabaklarının satılmaması için /sat hepsi engellendi.`, chalk.redBright);
     return false;
   }
 
-  const seedCount = countInventoryItemByName(bot, null, 'pumpkin_seeds');
-  addLog(accountId, 'FENER', `💰 Envanter doldu (${emptySlots} boş slot, ${seedCount} tohum)! Balkabağı bulunmadığı doğrulandı, /sat hepsi yapılıyor...`, chalk.greenBright);
+  // Artık envanterde KESİNLİKLE 0 balkabağı var!
+  const acc = config.accounts.find((a) => a.id === accountId);
+  const sellCmd = (acc && acc.autoSellCommand ? acc.autoSellCommand.trim() : '') || '/sat hepsi';
+
+  addLog(accountId, 'FENER', `💰 Envanter doldu (${emptySlots} boş slot, ${seedCount} tohum)! Balkabağı bulunmadığı doğrulandı, ${sellCmd} yapılıyor...`, chalk.greenBright);
 
   try {
-    bot.chat('/sat hepsi');
-    await new Promise((r) => setTimeout(r, 650));
-    addLog(accountId, 'FENER', '✅ /sat hepsi komutu başarıyla çalıştırıldı, tohumlar satıldı ve envanter açıldı.', chalk.green);
+    bot.chat(sellCmd);
+    await new Promise((r) => setTimeout(r, 800));
+    addLog(accountId, 'FENER', `✅ ${sellCmd} komutu başarıyla çalıştırıldı, tohumlar satıldı ve envanter açıldı.`, chalk.green);
+
+    // Eğer emanet olarak sandığa balkabağı bıraktıysak geri alalım
+    if (stashedPumpkins > 0 && !isJackOLanternAbortRequested(session)) {
+      addLog(accountId, 'FENER', `📦 Emanete bırakılan ${stashedPumpkins} adet balkabağı sandıktan geri alınıyor...`, chalk.cyan);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', stashedPumpkins, cfg.pumpkinChest);
+    }
+    if (stashedCarved > 0 && !isJackOLanternAbortRequested(session)) {
+      addLog(accountId, 'FENER', `📦 Emanete bırakılan ${stashedCarved} adet oyulmuş balkabağı geri alınıyor...`, chalk.cyan);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', stashedCarved, cfg.outputChest || cfg.pumpkinChest);
+    }
+
     return true;
   } catch (err) {
-    addLog(accountId, 'FENER', `❌ /sat hepsi gönderilirken hata: ${err.message}`, chalk.red);
+    addLog(accountId, 'FENER', `❌ ${sellCmd} gönderilirken hata: ${err.message}`, chalk.red);
     return false;
   }
 }
@@ -7510,6 +7564,26 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
   let carvedSoFar = 0;
   for (let i = 0; i < maxCount; i++) {
     if (isJackOLanternAbortRequested(session)) break;
+
+    // 1. Oyma öncesi envanter kontrolü: Yer kalmadıysa tohumları satarak envanteri aç
+    const curEmptyBefore = typeof bot.inventory.emptySlotCount === 'function'
+      ? bot.inventory.emptySlotCount()
+      : countEmptyPlayerSlotsInWindow(bot);
+    const canHoldCarvedBefore = curEmptyBefore > 0 || bot.inventory.items().some((it) => isTargetJackItem(it, 'carved_pumpkin') && it.count < 64);
+
+    if (curEmptyBefore <= 1 || !canHoldCarvedBefore) {
+      addLog(accountId, 'FENER', `⚠️ Envanter tohumlarla doldu (${curEmptyBefore} boş slot)! Oyulacak balkabakları için yer açmak üzere tohumlar satılıyor...`, chalk.yellowBright);
+      const sold = await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
+      if (sold) {
+        // Envanter açıldı, oyma noktasına adım at ve yerdeki eşyaları vakumla
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.8);
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
+        await new Promise((r) => setTimeout(r, 350));
+      } else {
+        addLog(accountId, 'FENER', '❌ Envanter dolu olduğu ve tohumlar satılamadığı için oyma durduruldu.', chalk.redBright);
+        break;
+      }
+    }
 
     const pumpkinItem = bot.inventory.items().find((it) => isTargetJackItem(it, 'pumpkin'));
     if (!pumpkinItem) break;
@@ -7640,6 +7714,32 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     if (carvedSoFar % 8 === 0 || carvedSoFar === 1) {
       addLog(accountId, 'FENER', `✂️ Balkabağı oyuldu (${carvedSoFar}/${maxCount})...`, chalk.cyan);
     }
+
+    // 2. Kazma/kırma sonrası envanter kontrolü: Yeni kırılan veya yerdeki oyulmuş balkabağı için yer kalmadıysa sat
+    const curEmptyAfter = typeof bot.inventory.emptySlotCount === 'function'
+      ? bot.inventory.emptySlotCount()
+      : countEmptyPlayerSlotsInWindow(bot);
+    const canHoldCarvedAfter = curEmptyAfter > 0 || bot.inventory.items().some((it) => isTargetJackItem(it, 'carved_pumpkin') && it.count < 64);
+
+    if (curEmptyAfter <= 1 || !canHoldCarvedAfter) {
+      addLog(accountId, 'FENER', `⚠️ Envanter tohumlarla doldu (${curEmptyAfter} boş slot)! Yerdeki oyulmuş balkabaklarını toplayabilmek için tohumlar satılıyor...`, chalk.yellowBright);
+      const sold = await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
+      if (sold) {
+        // Envanter açıldı, oyma noktasına yaklaş ve yerdeki oyulmuş balkabağını vakumla
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.8);
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
+        await new Promise((r) => setTimeout(r, 350));
+      } else {
+        addLog(accountId, 'FENER', '❌ Envanter dolu olduğu ve tohumlar satılamadığı için oyma işlemi durduruldu.', chalk.redBright);
+        break;
+      }
+    }
+  }
+
+  // Yere dökülen carved_pumpkin ve tohumları vakumlamak için oyma noktasına adım at
+  if (!isJackOLanternAbortRequested(session)) {
+    await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
+    await new Promise((r) => setTimeout(r, 350));
   }
   return carvedSoFar;
 }
@@ -7836,7 +7936,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     if (isJackOLanternAbortRequested(session)) return false;
 
     // ÖN KONTROL: Tohumlar envanteri doldurduysa ve envanterde hiç balkabağı yoksa sat
-    await checkAndSellInventoryIfFull(bot, accountId, session);
+    await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
     if (isJackOLanternAbortRequested(session)) return false;
 
     // 2. AŞAMA: Balkabağı (pumpkin) ve Meşale (torch) çekimi
@@ -7919,7 +8019,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
 
     // Dikkat: Kullanıcı isteği gereği balkabağı tohumları fener/balkabağı sandığına konmaz, envanterde biriktirilir.
     // Envanter dolduğunda ve envanterde hiç balkabağı kalmadığında /sat hepsi yapılarak satılır.
-    await checkAndSellInventoryIfFull(bot, accountId, session);
+    await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
 
     // Başlangıç konumuna geri dön
     await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
