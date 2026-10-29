@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261029_jack_o_lantern_crafter_v56';
+const ENGINE_BUILD_ID = '20261029_jack_shears_craft_v57';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -6761,7 +6761,17 @@ function parseCoordString(coordStr) {
 
 function resolveCarveSpot(bot, customCarveSpotStr) {
   const parsed = parseCoordString(customCarveSpotStr);
-  if (parsed) return parsed;
+  if (parsed) {
+    if (bot && typeof bot.blockAt === 'function') {
+      const bAt = bot.blockAt(parsed);
+      const bAbove = bot.blockAt(parsed.offset(0, 1, 0));
+      // Kullanıcı zemin bloğunu verdiyse ve üstü havaysa, oyma yerini 1 blok yukarı al
+      if (bAt && bAt.name !== 'air' && !bAt.name.includes('air') && !bAt.name.includes('pumpkin') && bAbove && (bAbove.name === 'air' || bAbove.name.includes('air') || bAbove.name.includes('pumpkin'))) {
+        return parsed.offset(0, 1, 0);
+      }
+    }
+    return parsed;
+  }
   const yaw = bot && bot.entity && typeof bot.entity.yaw === 'number' ? bot.entity.yaw : 0;
   const dx = -Math.round(Math.sin(yaw));
   const dz = -Math.round(Math.cos(yaw));
@@ -6874,9 +6884,12 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
 
   if (specificPos) {
     candidatePositions.push(specificPos);
-  } else {
-    const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 18);
-    candidatePositions.push(...nearbyChests);
+  }
+  const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 18);
+  for (const p of nearbyChests) {
+    if (!specificPos || p.distanceTo(specificPos) > 1) {
+      candidatePositions.push(p);
+    }
   }
 
   for (const cPos of candidatePositions) {
@@ -7141,8 +7154,8 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       if (!ready || isJackOLanternAbortRequested(session)) break;
 
       const dist = bot.entity.position.distanceTo(carveSpot.offset(0.5, 0.5, 0.5));
-      if (dist > 3.3) {
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.5);
+      if (dist > 3.2 || dist < 1.15) {
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
       }
       shearsItem = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
       if (!shearsItem) {
@@ -7226,11 +7239,16 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       }
     }
 
-    // Oyulmuş balkabağını kaz/kır
+    // Oyulmuş balkabağını kaz/kır (balta ile hızlı kırış)
     const blockToMine = carvedBlock || bot.blockAt(carveSpot);
     if (blockToMine && blockToMine.name !== 'air' && !blockToMine.name.includes('air')) {
       const axe = bot.inventory.items().find((it) => it.name.includes('_axe'));
-      if (axe) try { await bot.equip(axe, 'hand'); } catch (_) {}
+      if (axe) {
+        try {
+          await bot.equip(axe, 'hand');
+          await new Promise((r) => setTimeout(r, 95));
+        } catch (_) {}
+      }
       try { await bot.dig(blockToMine); } catch (_) {}
       await new Promise((r) => setTimeout(r, 160));
     }
@@ -7452,14 +7470,26 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     curPumpkins = countInventoryItemByName(bot, null, 'pumpkin');
     if (curPumpkins > 0) {
       const carveSpot = resolveCarveSpot(bot, cfg.carveSpot);
-      const distToSpot = bot.entity.position.distanceTo(carveSpot.offset(0.5, 0.5, 0.5));
-      if (distToSpot > 3.3) {
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.5);
+      const centerSpot = carveSpot.offset(0.5, 0.5, 0.5);
+      const distToSpot = bot.entity.position.distanceTo(centerSpot);
+      
+      // Güvenli oyma mesafesi ayarla (Vulcan safe: 1.6 - 2.5m arası, bloğun üstünde durmamalı)
+      if (distToSpot > 3.2 || distToSpot < 1.15) {
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
       }
       if (isJackOLanternAbortRequested(session)) return false;
 
+      // Sprint durumunu sıfırla (Vulcan kuralı)
+      try { bot.setControlState('sprint', false); } catch (_) {}
+
       addLog(accountId, 'FENER', `✂️ ${curPumpkins} adet balkabağı oyuluyor...`, chalk.greenBright);
       await carvePumpkinsAtSpot(bot, session, accountId, carveSpot, curPumpkins, cfg);
+
+      // Yere dökülen carved_pumpkin ve tohumları vakumlamak için oyma noktasına adım at
+      if (!isJackOLanternAbortRequested(session)) {
+        await navigateNearSpawnerOrChest(bot, session, carveSpot, 0.8);
+        await new Promise((r) => setTimeout(r, 300));
+      }
     }
     if (isJackOLanternAbortRequested(session)) return false;
 
