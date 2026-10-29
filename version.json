@@ -1,7 +1,7 @@
 {
-  "buildId": "20261030_jack_chest_isolation_fix_v64",
-  "version": "2.2.33",
-  "releaseNotes": "Balkabağı Feneri: Sandık izolasyonu ve koruma düzeltmesi. Fenerlerin demir, çubuk veya meşale sandıklarına boşaltılması kesin olarak engellendi. Belirtilen fener sandığı koordinatı (specificPos) dolu veya meşgul olsa dahi botların diğer sandıklara fallback yapması engellendi. Sandık içi içerik denetimi eklendi: içinde demir, çubuk, balkabağı veya meşale bulunan hiçbir sandığa fener konulamaz. Çoklu bot açma çakışmalarında yeniden deneme (retry) ve hesap değişiminde arayüz input blur desteği sağlandı.",
+  "buildId": "20261030_jack_pos_lock_sync_v65",
+  "version": "2.2.34",
+  "releaseNotes": "Balkabağı Feneri: Bağımsız sandık kilidi (posKey) ve meşale-balkabağı senkronizasyonu. Çoklu botlarda sandıkların birbirini yanlışlıkla kilitlemesi (global kilit) kaldırıldı; artık sandıklar koordinat bazlı (<=1.5m bitişik sandık) kilitlenir ve uzak sandıklar birbirini asla etkilemez. Balkabaklarının fenere dönüştürülmeden sandığa atılması engellendi: mevcut meşale sayısı kadar balkabağı oyulur, meşale yoksa balkabakları oyulmadan korunur. openChestAtPosition yaklaşıldıktan sonra +/-1 blok taramasıyla sandığı kesin tespit eder.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
