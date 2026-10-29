@@ -2470,32 +2470,32 @@
                   <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Parti Boyutu (Adet)</label>
-                      <input type="number" id="ctrlJackBatchSize" min="1" max="64" step="1" value="32" class="form-control" onchange="updateJackOLanternConfig()" />
+                      <input type="number" id="ctrlJackBatchSize" min="1" max="64" step="1" value="32" class="form-control" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Döngü Aralığı (Sn)</label>
-                      <input type="number" id="ctrlJackInterval" min="5" max="86400" step="5" value="20" class="form-control" onchange="updateJackOLanternConfig()" />
+                      <input type="number" id="ctrlJackInterval" min="5" max="86400" step="5" value="20" class="form-control" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Balkabağı Sandığı (X Y Z)</label>
-                      <input type="text" id="ctrlJackPumpkinChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                      <input type="text" id="ctrlJackPumpkinChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Meşale Sandığı (X Y Z)</label>
-                      <input type="text" id="ctrlJackTorchChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                      <input type="text" id="ctrlJackTorchChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Demir Sandığı (X Y Z - Makas İçin)</label>
-                      <input type="text" id="ctrlJackIronChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                      <input type="text" id="ctrlJackIronChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Fener Sandığı (X Y Z)</label>
-                      <input type="text" id="ctrlJackOutputChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                      <input type="text" id="ctrlJackOutputChest" placeholder="Boşsa Otomatik" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                     </div>
                     <div>
                       <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Oyma Noktası (X Y Z)</label>
                       <div style="display: flex; gap: 4px;">
-                        <input type="text" id="ctrlJackCarveSpot" placeholder="Boşsa Botun Önü" class="form-control" style="font-family: monospace; font-size: 11px;" onchange="updateJackOLanternConfig()" />
+                        <input type="text" id="ctrlJackCarveSpot" placeholder="Boşsa Botun Önü" class="form-control" style="font-family: monospace; font-size: 11px;" oninput="syncLocalJackOLanternState()" onchange="updateJackOLanternConfig()" />
                         <button class="btn btn-outline btn-sm" onclick="setCarveSpotToBotFront()" title="Botun baktığı ön bloğu ayarla" style="padding: 0 8px; flex-shrink: 0;">📍 Önüm</button>
                       </div>
                     </div>
@@ -7244,11 +7244,16 @@
       if (helpEl) {
         helpEl.textContent = s >= 60 ? `(${Math.floor(s / 60)} dk ${s % 60 ? (s % 60) + ' sn' : ''})` : `(${s} sn)`;
       }
-
-    async function updateJackOLanternConfig() {
       if (!selectedAccountId) return;
       const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
-      const isEnabled = Boolean(curBot?.autoJackOLantern?.enabled);
+      const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
+      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, customCoords: coords, enabled: isEnabled });
+    }
+
+    function syncLocalJackOLanternState() {
+      if (!selectedAccountId) return;
+      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
+      const curAcc = (appState.accounts || []).find(a => a.id === selectedAccountId);
       const batchEl = document.getElementById('ctrlJackBatchSize');
       const intEl = document.getElementById('ctrlJackInterval');
       const pChestEl = document.getElementById('ctrlJackPumpkinChest');
@@ -7256,7 +7261,42 @@
       const ironChestEl = document.getElementById('ctrlJackIronChest');
       const oChestEl = document.getElementById('ctrlJackOutputChest');
       const cSpotEl = document.getElementById('ctrlJackCarveSpot');
-      await sendBotAction('updateJackOLanternConfig', {
+
+      const data = {
+        batchSize: Math.max(1, Math.min(64, parseInt(batchEl?.value || 32, 10))),
+        intervalSec: Math.max(5, parseInt(intEl?.value || 20, 10)),
+        pumpkinChest: (pChestEl?.value || '').trim(),
+        torchChest: (tChestEl?.value || '').trim(),
+        ironChest: (ironChestEl?.value || '').trim(),
+        outputChest: (oChestEl?.value || '').trim(),
+        carveSpot: (cSpotEl?.value || '').trim()
+      };
+
+      if (curBot) {
+        if (!curBot.autoJackOLantern) curBot.autoJackOLantern = {};
+        Object.assign(curBot.autoJackOLantern, data);
+      }
+      if (curAcc) {
+        if (!curAcc.autoJackOLantern) curAcc.autoJackOLantern = {};
+        Object.assign(curAcc.autoJackOLantern, data);
+      }
+    }
+
+    async function updateJackOLanternConfig() {
+      if (!selectedAccountId) return;
+      syncLocalJackOLanternState();
+      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
+      const curAcc = (appState.accounts || []).find(a => a.id === selectedAccountId);
+      const isEnabled = Boolean(curBot?.autoJackOLantern?.enabled ?? curAcc?.autoJackOLantern?.enabled);
+      const batchEl = document.getElementById('ctrlJackBatchSize');
+      const intEl = document.getElementById('ctrlJackInterval');
+      const pChestEl = document.getElementById('ctrlJackPumpkinChest');
+      const tChestEl = document.getElementById('ctrlJackTorchChest');
+      const ironChestEl = document.getElementById('ctrlJackIronChest');
+      const oChestEl = document.getElementById('ctrlJackOutputChest');
+      const cSpotEl = document.getElementById('ctrlJackCarveSpot');
+
+      const payload = {
         enabled: isEnabled,
         batchSize: Math.max(1, Math.min(64, parseInt(batchEl?.value || 32, 10))),
         intervalSec: Math.max(5, parseInt(intEl?.value || 20, 10)),
@@ -7265,7 +7305,18 @@
         ironChest: (ironChestEl?.value || '').trim(),
         outputChest: (oChestEl?.value || '').trim(),
         carveSpot: (cSpotEl?.value || '').trim()
-      });
+      };
+
+      if (curBot) {
+        if (!curBot.autoJackOLantern) curBot.autoJackOLantern = {};
+        Object.assign(curBot.autoJackOLantern, payload);
+      }
+      if (curAcc) {
+        if (!curAcc.autoJackOLantern) curAcc.autoJackOLantern = {};
+        Object.assign(curAcc.autoJackOLantern, payload);
+      }
+
+      await sendBotAction('updateJackOLanternConfig', payload);
     }
 
     function setCarveSpotToBotFront() {
@@ -7284,14 +7335,15 @@
       const spotStr = `${fx} ${fy} ${fz}`;
       const cSpotEl = document.getElementById('ctrlJackCarveSpot');
       if (cSpotEl) cSpotEl.value = spotStr;
+      syncLocalJackOLanternState();
       updateJackOLanternConfig();
       showToast(`Oyma noktası botun önüne ayarlandı: ${spotStr}`, 'success');
     }
-      if (!selectedAccountId) return;
-      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
-      const isEnabled = Boolean(curBot?.autoSpawnerRoutine?.enabled);
-      await sendBotAction('updateSpawnerRoutineConfig', { intervalSec: s, spawnerCount: cnt, customCoords: coords, enabled: isEnabled });
-    }
+
+    window.updateSpawnerRoutineConfig = updateSpawnerRoutineConfig;
+    window.syncLocalJackOLanternState = syncLocalJackOLanternState;
+    window.updateJackOLanternConfig = updateJackOLanternConfig;
+    window.setCarveSpotToBotFront = setCarveSpotToBotFront;
 
     function moveBot(direction) {
       sendBotAction('moveStep', { direction, duration: 450 });
