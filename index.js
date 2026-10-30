@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261030_jack_perfect_audit_v68';
+const ENGINE_BUILD_ID = '20261030_zero_refused_v69';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -925,7 +925,11 @@ async function applyHotUpdate() {
       fs.utimesSync(HTML_PATH, now, now);
     } catch (e) {}
 
-    addLog(null, 'GÜNCELLEME', 'Güncelleme başarıyla yüklendi! Sistem 1.2 sn içinde yeniden başlatılıyor...', chalk.green);
+    addLog(null, 'GÜNCELLEME', 'Güncelleme başarıyla yüklendi! Sistem yeniden başlatılıyor...', chalk.green);
+    broadcastSSE('server-restarting', {
+      buildId: dlBuildId || manifest.buildId || manifest.version,
+      version: manifest.version || ''
+    });
 
     // Tüm botları güvenle kapat
     for (const a of config.accounts) {
@@ -934,19 +938,38 @@ async function applyHotUpdate() {
 
     setTimeout(() => {
       try {
-        const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
-          cwd: __dirname,
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-          env: process.env
-        });
-        child.unref();
+        for (const clientRes of sseClients) {
+          try {
+            clientRes.end();
+            if (clientRes.socket) clientRes.socket.destroy();
+          } catch (e) {}
+        }
+        sseClients.clear();
       } catch (e) {}
-      process.exit(0);
-    }, 1200);
 
-    return { ok: true, buildId: manifest.buildId || manifest.version };
+      try {
+        server.close();
+      } catch (e) {}
+
+      setTimeout(() => {
+        try {
+          const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
+            cwd: __dirname,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+            env: {
+              ...process.env,
+              SCT_HOT_UPDATE_RESTART: '1'
+            }
+          });
+          child.unref();
+        } catch (e) {}
+        process.exit(0);
+      }, 200);
+    }, 650);
+
+    return { ok: true, buildId: dlBuildId || manifest.buildId || manifest.version };
   } finally {
     updateCheckState.isUpdating = false;
   }
@@ -981,11 +1004,12 @@ function rebuildPortableExe() {
   }
 
   for (const outExe of targetPaths) {
+    const tmpExe = `${outExe}.new.exe`;
     const args = [
       '/nologo',
       '/target:winexe',
       '/optimize+',
-      `/out:${outExe}`,
+      `/out:${tmpExe}`,
       `/win32icon:${icoPath}`,
       `/resource:${path.join(__dirname, 'package.json')},sct.package.json`,
       `/resource:${path.join(__dirname, 'index.js')},sct.index.js`,
@@ -996,7 +1020,25 @@ function rebuildPortableExe() {
       `/resource:${icoPath},sct.app.ico`,
       launcherCs
     ];
-    execFile(cscPath, args, { windowsHide: true }, () => {});
+    execFile(cscPath, args, { windowsHide: true }, (err) => {
+      if (err || !fs.existsSync(tmpExe)) {
+        try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (e) {}
+        return;
+      }
+      try {
+        fs.renameSync(tmpExe, outExe);
+      } catch (renameErr) {
+        try {
+          const oldBackup = `${outExe}.old`;
+          try { if (fs.existsSync(oldBackup)) fs.unlinkSync(oldBackup); } catch (e) {}
+          if (fs.existsSync(outExe)) fs.renameSync(outExe, oldBackup);
+          fs.renameSync(tmpExe, outExe);
+          try { fs.unlinkSync(oldBackup); } catch (e) {}
+        } catch (e2) {
+          try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (e3) {}
+        }
+      }
+    });
   }
 }
 
@@ -16685,6 +16727,87 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/sw.js') {
+    const swScript = `
+const FALLBACK_HTML = \`<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <title>SCT AFK Service — Başlatılıyor...</title>
+  <style>
+    body {
+      margin: 0; height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #090a0f; color: #f8fafc;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+      text-align: center; user-select: none;
+    }
+    .spinner {
+      width: 52px; height: 52px;
+      border: 3.5px solid rgba(59, 130, 246, 0.22);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h2 { margin: 0 0 8px 0; font-size: 18px; font-weight: 800; color: #fff; }
+    p { margin: 0; font-size: 13px; color: #94a3b8; max-width: 420px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <h2>SCT AFK Service Hazırlanıyor...</h2>
+  <p>Yerel motor başlatılıyor veya güncelleniyor. Bağlantı kurulur kurulmaz arayüz otomatik açılacaktır...</p>
+  <script>
+    (async function pollReady() {
+      while (true) {
+        try {
+          const r = await fetch('/api/keyauth/status?t=' + Date.now(), { cache: 'no-store' });
+          if (r && r.ok) {
+            const d = await r.json();
+            window.location.replace('/?v=' + encodeURIComponent((d && d.engineBuildId) || Date.now()));
+            return;
+          }
+        } catch (e) {}
+        await new Promise(res => setTimeout(res, 350));
+      }
+    })();
+  </script>
+</body>
+</html>\`;
+
+self.addEventListener('install', (e) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('fetch', (e) => {
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).catch(() => {
+        return new Response(FALLBACK_HTML, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-cache, no-store, must-revalidate'
+          }
+        });
+      })
+    );
+  }
+});
+`;
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate'
+    });
+    return res.end(swScript);
+  }
+
   if (req.method === 'GET' && pathname === '/api/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -16693,18 +16816,17 @@ const server = http.createServer(async (req, res) => {
     });
     res.write('\n');
     sseClients.add(res);
+    const keepAliveTimer = setInterval(() => {
+      try {
+        res.write(': keepalive\n\n');
+      } catch (e) {
+        clearInterval(keepAliveTimer);
+        sseClients.delete(res);
+      }
+    }, 25000);
     req.on('close', () => {
+      clearInterval(keepAliveTimer);
       sseClients.delete(res);
-      setTimeout(() => {
-        if (sseClients.size === 0) {
-          const anyActiveBot = Array.from(sessions.values()).some(
-            (s) => s.status === 'online' || s.status === 'connecting' || s.status === 'reconnecting'
-          );
-          if (!anyActiveBot) {
-            process.exit(0);
-          }
-        }
-      }, 4000);
     });
     return;
   }
@@ -16712,7 +16834,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && pathname === '/api/shutdown') {
     config.accounts.forEach((acc) => stopBot(acc.id));
     sendJson(res, 200, { ok: true });
-    setTimeout(() => process.exit(0), 300);
+    setTimeout(() => {
+      try {
+        for (const clientRes of sseClients) {
+          try {
+            clientRes.end();
+            if (clientRes.socket) clientRes.socket.destroy();
+          } catch (e) {}
+        }
+        sseClients.clear();
+        server.close();
+      } catch (e) {}
+      process.exit(0);
+    }, 150);
     return;
   }
 
@@ -18616,37 +18750,84 @@ function launchAppWindow(browserExe, appUrl) {
   }
 }
 
+function waitForLocalHttpReady(port, maxAttempts, cb) {
+  let attempt = 0;
+  function check() {
+    attempt++;
+    const req = http.get(`http://127.0.0.1:${port}/api/keyauth/status`, { timeout: 1000 }, (res) => {
+      res.resume();
+      if (res.statusCode === 200) {
+        return cb(true);
+      }
+      if (attempt < maxAttempts) {
+        return setTimeout(check, 250);
+      }
+      cb(false);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      if (attempt < maxAttempts) setTimeout(check, 250);
+      else cb(false);
+    });
+    req.on('error', () => {
+      if (attempt < maxAttempts) setTimeout(check, 250);
+      else cb(false);
+    });
+  }
+  check();
+}
+
 function openClientWindow(url) {
   const appUrl = url.includes('?') ? url : `${url}/?v=${ENGINE_BUILD_ID}`;
 
-  if (process.platform !== 'win32') {
-    openExternalUrl(appUrl);
-    return;
-  }
-
-  // Varsayılan tarayıcı Chromium tabanlıysa (Chrome, Opera, Brave, Edge, Vivaldi) onu uygulama penceresi modunda aç.
-  // Varsayılan tarayıcı Firefox gibi app modu desteklemeyen bir tarayıcıysa, yüklü bir Chromium tarayıcıyla uygulama penceresi aç.
-  getDefaultBrowserExe((defaultExe) => {
-    let browserExe = null;
-    if (defaultExe && CHROMIUM_EXE_NAMES.includes(path.basename(defaultExe).toLowerCase())) {
-      browserExe = defaultExe;
-    } else {
-      browserExe = findInstalledChromium();
-    }
-
-    if (!browserExe || !launchAppWindow(browserExe, appUrl)) {
+  waitForLocalHttpReady(PORT, 20, () => {
+    if (process.platform !== 'win32') {
       openExternalUrl(appUrl);
+      return;
     }
+
+    // Varsayılan tarayıcı Chromium tabanlıysa (Chrome, Opera, Brave, Edge, Vivaldi) onu uygulama penceresi modunda aç.
+    // Varsayılan tarayıcı Firefox gibi app modu desteklemeyen bir tarayıcıysa, yüklü bir Chromium tarayıcıyla uygulama penceresi aç.
+    getDefaultBrowserExe((defaultExe) => {
+      let browserExe = null;
+      if (defaultExe && CHROMIUM_EXE_NAMES.includes(path.basename(defaultExe).toLowerCase())) {
+        browserExe = defaultExe;
+      } else {
+        browserExe = findInstalledChromium();
+      }
+
+      if (!browserExe || !launchAppWindow(browserExe, appUrl)) {
+        openExternalUrl(appUrl);
+      }
+    });
   });
 }
 
 const PORT = Number(config.uiPort) || 3847;
 const CLIENT_URL = `http://127.0.0.1:${PORT}`;
+let eaddrInUseRetries = 0;
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
+    eaddrInUseRetries++;
+    if (eaddrInUseRetries > 25) {
+      return;
+    }
+
+    if (process.env.SCT_HOT_UPDATE_RESTART === '1') {
+      const shutdownReq = http.request({ hostname: '127.0.0.1', port: PORT, path: '/api/shutdown', method: 'POST', timeout: 700 }, () => {});
+      shutdownReq.on('error', () => {});
+      shutdownReq.end();
+      setTimeout(() => {
+        try {
+          server.listen(PORT, '127.0.0.1');
+        } catch (e) {}
+      }, 400);
+      return;
+    }
+
     http
-      .get(`http://127.0.0.1:${PORT}/api/keyauth/status`, (res) => {
+      .get(`http://127.0.0.1:${PORT}/api/keyauth/status`, { timeout: 1000 }, (res) => {
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => {
@@ -18659,17 +18840,21 @@ server.on('error', (err) => {
           } catch (e) {}
 
           if (isSameBuild) {
-            openClientWindow(CLIENT_URL);
+            if (process.env.SCT_LAUNCHER_MANAGED !== '1' && process.env.SCT_HOT_UPDATE_RESTART !== '1') {
+              openClientWindow(CLIENT_URL);
+            }
             setTimeout(() => process.exit(0), 500);
           } else {
             // Eski motor çalışıyorsa kapatıp yeni KeyAuth motorunu başlat
-            const req = http.request({ hostname: '127.0.0.1', port: PORT, path: '/api/shutdown', method: 'POST' }, () => {
+            const req = http.request({ hostname: '127.0.0.1', port: PORT, path: '/api/shutdown', method: 'POST', timeout: 800 }, () => {
               setTimeout(() => {
-                server.listen(PORT, '127.0.0.1');
-              }, 650);
+                try { server.listen(PORT, '127.0.0.1'); } catch (e) {}
+              }, 450);
             });
             req.on('error', () => {
-              setTimeout(() => server.listen(PORT, '127.0.0.1'), 650);
+              setTimeout(() => {
+                try { server.listen(PORT, '127.0.0.1'); } catch (e) {}
+              }, 450);
             });
             req.end();
           }
@@ -18680,7 +18865,7 @@ server.on('error', (err) => {
           try {
             server.listen(PORT, '127.0.0.1');
           } catch (e) {}
-        }, 1000);
+        }, 450);
       });
   }
 });
@@ -19002,17 +19187,34 @@ function startAdminRelayReporter() {
 }
 
 server.listen(PORT, '127.0.0.1', () => {
+  eaddrInUseRetries = 0;
   try {
     fs.writeFileSync(path.join(__dirname, 'server.pid'), String(process.pid));
   } catch (e) {}
   console.log(chalk.bold.green('===================================================='));
   console.log(chalk.bold.green('            SCT AFK Client Başlatıldı               '));
   console.log(chalk.bold.green('===================================================='));
-  if (process.env.SCT_LAUNCHER_MANAGED !== '1') {
+  if (process.env.SCT_LAUNCHER_MANAGED !== '1' && process.env.SCT_HOT_UPDATE_RESTART !== '1') {
     openClientWindow(CLIENT_URL);
   }
   initDiscordRPC();
   startAdminRelayReporter();
+  setTimeout(() => {
+    try {
+      const lcsPath = path.join(__dirname, 'Launcher.cs');
+      if (fs.existsSync(lcsPath)) {
+        const lcsRaw = fs.readFileSync(lcsPath, 'utf8');
+        const updatedLcs = lcsRaw.replace(
+          /public const string CURRENT_ENGINE_BUILD_ID = "[^"]*";/,
+          `public const string CURRENT_ENGINE_BUILD_ID = "${ENGINE_BUILD_ID}";`
+        );
+        if (updatedLcs !== lcsRaw) {
+          fs.writeFileSync(lcsPath, updatedLcs, 'utf8');
+          rebuildPortableExe();
+        }
+      }
+    } catch (e) {}
+  }, 3500);
 
   // Otomatik Güncelleme İlk Kontrolü ve Arka Plan Zamanlayıcısı
   setTimeout(() => {
@@ -19047,6 +19249,11 @@ server.listen(PORT, '127.0.0.1', () => {
 process.on('exit', () => {
   try {
     const pidFile = path.join(__dirname, 'server.pid');
-    if (fs.existsSync(pidFile)) fs.unlinkSync(pidFile);
+    if (fs.existsSync(pidFile)) {
+      const currentOwner = fs.readFileSync(pidFile, 'utf8').trim();
+      if (currentOwner === String(process.pid)) {
+        fs.unlinkSync(pidFile);
+      }
+    }
   } catch (e) {}
 });
