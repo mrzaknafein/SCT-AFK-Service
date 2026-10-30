@@ -1,7 +1,7 @@
 {
-  "buildId": "20261030_jack_chest_withdraw_fix_v66",
-  "version": "2.2.35",
-  "releaseNotes": "Balkabağı Feneri ve Sandık Çekim Düzeltmesi (v66): Sandıklardan eşya çekilememe sorunu tamamen giderildi (3 kademeli çekim: Shift-click, container.withdraw ve doğrudan aktarım). Sandık yaklaşım kontrolleri iyileştirilerek bitişik bloktaki sandıkların erişilemez sayılması önlendi. Konteyner tespitine minecraft: ön ek temizliği ve +/-2 blok tarama eklendi. Otomatik güncellemede CDN önbellek uyuşmazlığına karşı doğrudan GitHub API raw yedek indirmesi sağlandı. Vulcan anticheat için blok kazma raytrace uyumu güçlendirildi.",
+  "buildId": "20261030_jack_lantern_chest_isolation_fix_v67",
+  "version": "2.2.36",
+  "releaseNotes": "Balkabağı Modülü ve Vulcan Anti-Cheat Kusursuz Güvenlik Güncellemesi (v67): 1) Vulcan kick ([Vulcan] Unfair Advantage) tamamen engellendi: Blok yerleştirme, oyma (makas) ve kırma işlemlerinde stealth GCD-kuantize bakış uygulandı, blokla kendi gövdesinin kesişmesi (Scaffold Self-Intersection) ve hareket halindeyken blok koyma önlendi, madencilikte dahili lookAt devreden çıkarıldı. 2) Sandık izolasyonu kesinleştirildi: Fener sandığına ham veya oyulmuş balkabağı aktarılması kesin olarak yasaklandı, sandık çakışma kontrollerine oyulmuş balkabağı ve fener filtreleri eklendi. 3) /craft işleminde tüm fenerlerin eksiksiz üretilmesi sağlandı. 4) Otomatik güncelleme CDN önbellek uyumsuzluğu kalıcı olarak giderildi.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
     "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
