@@ -1,9 +1,11 @@
 {
-  "buildId": "20261030_jack_perfect_audit_v68",
-  "version": "2.2.37",
-  "releaseNotes": "Balkabağı Feneri (Jack o' Lantern) Modülü Tam Denetim ve Mükemmelleştirme Güncellemesi (v68): 1) /craft penceresinde fenerlerin alınmasını engelleyen canCraft değişken hatası (ReferenceError) ve çoklu slot (multi-stack) oyulmuş balkabağı/meşale birleştirme sorunu tamamen giderildi. 2) Vulcan Anti-Cheat koruması kusursuzlaştırıldı: 1.14-1.21+ sunucularda makasla oyma (blockPlaceHasInsideBlock) ve dinamik yüzey koordinatı (cursorY=1.0 + mikro teğet varyasyonu) eklendi, sessiz envanter tıklamalarını (window_click) sıfıra indiren akıllı hotbar kuşanma sistemi (equipJackHotbarItem) devreye alındı, fener döngüsü çalışırken Anti-AFK ve otomatik yemek/komut çakışmaları tamamen izole edildi. 3) Oyma noktası mesafe matematiği (maxAxisDist >= 0.84m, yatay 0.90m-1.95m) ile hem blok içi kesişme (Self-Intersection) engellendi hem de Vanilla 1.30m eşya vakumlama menzili garanti altına alındı. 4) Sandık açma ve aktarımda mesafe sıralaması, diğer rol sandıklarını hariç tutma ve proaktif tohum satışı eklendi.",
+  "version": "2.2.38",
+  "buildId": "20261030_zero_refused_v69",
+  "releaseDate": "2026-10-30T19:45:49.932Z",
+  "releaseNotes": "Bağlantı & Başlatma (v69): Güncelleme sonrası ve ilk açılışta oluşan ERR_CONNECTION_REFUSED (\"127.0.0.1 bağlanmayı reddetti\") ekranı 4 katmanlı koruma ile tamamen giderildi. 1) Güncelleme sırasında sabit zamanlayıcıyla kör yenileme kaldırıldı; yeni motor HTTP 200 yanıtı verene kadar akıllı bekleme ekranı (waitForServerAndReload) eklendi. 2) Tarayıcı düzeyinde /sw.js Service Worker koruması eklendi. 3) Hot-Update sırasında eski sunucu soketleri yeni işlem başlamadan önce temiz kapatılır ve EADDRINUSE çoklu yeniden deneme döngüsü eklendi. 4) Launcher.cs ilk açılışta ham TCP yerine gerçek HTTP 200 (IsServerHttpReady) doğrulaması yapar ve çalışan güncel motoru gereksiz yere kapatmaz.",
   "files": {
-    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/59da985043a727a7c8ef8ef2976dd0255a294902/index.js",
-    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/0fd27426b3d67c321681449f957a86dc8dd35c9b/public/index.html"
-  }
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/4897b8160274bd35d1247c34da6937228bf27831/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/4ba3d2f5e120ee983846ea91daa0ec5e1d374c14/public/index.html"
+  },
+  "commitSha": "4ba3d2f5e120ee983846ea91daa0ec5e1d374c14"
 }
