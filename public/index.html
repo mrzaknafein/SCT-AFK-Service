@@ -3694,7 +3694,7 @@
                       <span id="updateStatusBadge" class="badge status-online">Güncel</span>
                     </div>
                     <div style="background: var(--bg-base); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 12px; line-height: 1.5;">
-                      <div>Mevcut Sürüm: <strong id="updateCurBuildId" style="color: #ffffff;">20261026_auto_pipeline_v35</strong></div>
+                      <div>Mevcut Sürüm: <strong id="updateCurBuildId" style="color: #ffffff;">20261030_zero_refused_v69</strong></div>
                       <div id="updateLatestInfo" style="margin-top: 4px; color: var(--text-muted);">Sunucu kontrol ediliyor...</div>
                       <div id="updateNotesBox" style="display: none; margin-top: 8px; padding: 8px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px; color: #93c5fd;"></div>
                     </div>
@@ -4438,11 +4438,108 @@
       });
     }
 
+    let activeSSE = null;
+    let isWaitingForServerRestart = false;
+
+    function showServerRestartOverlay(titleText, subText) {
+      let overlay = document.getElementById('sctServerRestartOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'sctServerRestartOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(9,10,15,0.94);backdrop-filter:blur(8px);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#f8fafc;font-family:Inter,system-ui,-apple-system,sans-serif;text-align:center;padding:24px;';
+        overlay.innerHTML = `
+          <div style="width:54px;height:54px;border:3.5px solid rgba(59,130,246,0.22);border-top-color:#3b82f6;border-radius:50%;animation:sctSpin 0.85s linear infinite;margin-bottom:20px;"></div>
+          <style>@keyframes sctSpin { to { transform: rotate(360deg); } }</style>
+          <div id="sctRestartOverlayTitle" style="font-size:18px;font-weight:800;letter-spacing:-0.01em;margin-bottom:8px;color:#ffffff;"></div>
+          <div id="sctRestartOverlaySub" style="font-size:13px;color:#94a3b8;max-width:440px;line-height:1.55;"></div>
+        `;
+        document.body.appendChild(overlay);
+      }
+      const tEl = document.getElementById('sctRestartOverlayTitle');
+      const sEl = document.getElementById('sctRestartOverlaySub');
+      if (tEl && titleText) tEl.textContent = titleText;
+      if (sEl && subText) sEl.textContent = subText;
+      overlay.style.display = 'flex';
+    }
+
+    async function waitForServerAndReload(expectedBuildId = null) {
+      if (isWaitingForServerRestart) return;
+      isWaitingForServerRestart = true;
+      const oldBuildId = (appState && appState.updates && appState.updates.currentBuildId) || (appState && appState.keyauth && appState.keyauth.engineBuildId) || '';
+
+      try {
+        if (activeSSE) {
+          activeSSE.close();
+          activeSSE = null;
+        }
+      } catch (e) {}
+
+      showServerRestartOverlay(
+        '🚀 Yeni Motor Başlatılıyor...',
+        'Güncelleme uygulandı. Yerel sunucu hazır olduğunda ekran otomatik olarak yenilenecek (lütfen pencereyi kapatmayın)...'
+      );
+
+      // Eski sunucunun portu tamamen bırakması için kısa bekleme
+      await new Promise(r => setTimeout(r, 1300));
+
+      let consecutiveOk = 0;
+      const startWait = Date.now();
+      for (let attempt = 0; attempt < 90; attempt++) {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 1400);
+          const resp = await fetch(`/api/keyauth/status?t=${Date.now()}`, {
+            method: 'GET',
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+            signal: ctrl.signal
+          });
+          clearTimeout(timer);
+
+          if (resp && resp.ok) {
+            const data = await resp.json();
+            const liveBuild = (data && data.engineBuildId) || '';
+            consecutiveOk++;
+
+            const buildUpdated =
+              (expectedBuildId && liveBuild === expectedBuildId) ||
+              (oldBuildId && liveBuild && liveBuild !== oldBuildId);
+
+            if (buildUpdated || (consecutiveOk >= 2 && Date.now() - startWait > 2200)) {
+              showServerRestartOverlay(
+                '✓ Sunucu Hazır!',
+                `Yeni sürüm (${liveBuild || 'aktif'}) yüklendi, arayüz açılıyor...`
+              );
+              await new Promise(r => setTimeout(r, 200));
+              window.location.replace(`/?v=${encodeURIComponent(liveBuild || Date.now())}`);
+              return;
+            }
+          } else {
+            consecutiveOk = 0;
+          }
+        } catch (err) {
+          consecutiveOk = 0;
+        }
+        await new Promise(r => setTimeout(r, 380));
+      }
+
+      // Çok uzun sürdüyse son bir kez kontrol edip yenile
+      window.location.replace(`/?v=${Date.now()}`);
+    }
+
     function connectSSE() {
+      try {
+        if (activeSSE) activeSSE.close();
+      } catch (e) {}
       const es = new EventSource('/api/events');
+      activeSSE = es;
       es.onmessage = (evt) => {
         try {
           const payload = JSON.parse(evt.data);
+          if (payload.type === 'server-restarting') {
+            waitForServerAndReload(payload.data && payload.data.buildId);
+            return;
+          }
           if (payload.type === 'state') {
             appState = payload.data;
             if (!selectedAccountId && appState.config.accounts.length > 0) {
@@ -7653,7 +7750,7 @@
     }
 
     async function applyUpdateNow() {
-      const confirmed = await showConfirmModal('Yeni sürüm indirilip uygulama 1 saniye içinde yeniden başlatılacak. Devam edilsin mi?', 'Güncellemeyi Yükle', 'Yükle ve Yeniden Başlat', false);
+      const confirmed = await showConfirmModal('Yeni sürüm indirilip uygulama yeniden başlatılacak. Devam edilsin mi?', 'Güncellemeyi Yükle', 'Yükle ve Yeniden Başlat', false);
       if (!confirmed) return;
 
       showAppToast('Güncelleme indiriliyor, lütfen bekleyin...', 'info', 10000);
@@ -7662,14 +7759,12 @@
         if (res && res.error) {
           showAppToast('Güncelleme uygulanamadı: ' + res.error, 'error', 6000);
         } else {
-          showAppToast('Güncelleme başarıyla yüklendi! Sayfa yenileniyor...', 'success', 4000);
-          setTimeout(() => {
-            window.location.reload();
-          }, 2500);
+          showAppToast('Güncelleme başarıyla yüklendi! Yeni motor bekleniyor...', 'success', 4000);
+          await waitForServerAndReload(res && res.buildId ? res.buildId : null);
         }
       } catch (e) {
-        showAppToast('Güncelleme isteği gönderildi. Sistem yeniden başlatılıyor...', 'info', 4000);
-        setTimeout(() => window.location.reload(), 3000);
+        showAppToast('Güncelleme isteği gönderildi. Yeni motor bekleniyor...', 'info', 4000);
+        await waitForServerAndReload(null);
       }
     }
 
@@ -8117,6 +8212,10 @@
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
 
     applyScoreboardCollapseState();
