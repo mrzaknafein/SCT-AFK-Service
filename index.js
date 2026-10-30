@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261030_jack_lantern_chest_isolation_fix_v67';
+const ENGINE_BUILD_ID = '20261030_jack_perfect_audit_v68';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -4442,7 +4442,15 @@ function startAutoCommandLoop(accountId) {
   const sec = Math.max(5, Number(acc.autoCommandIntervalSec) || 180);
   session.autoCmdInterval = setInterval(() => {
     const currentAcc = config.accounts.find((a) => a.id === accountId);
-    if (!session.bot || session.status !== 'online' || !currentAcc || !currentAcc.autoCommandEnabled) return;
+    if (
+      !session.bot ||
+      session.status !== 'online' ||
+      !currentAcc ||
+      !currentAcc.autoCommandEnabled ||
+      session.isJackOLanternRunning ||
+      session.isDepositing ||
+      Boolean(session.bot.currentWindow)
+    ) return;
 
     const cmds = String(currentAcc.autoCommandText)
       .split(',')
@@ -4451,7 +4459,13 @@ function startAutoCommandLoop(accountId) {
 
     cmds.forEach((cmd, idx) => {
       setTimeout(() => {
-        if (session.bot && session.status === 'online') {
+        if (
+          session.bot &&
+          session.status === 'online' &&
+          !session.isJackOLanternRunning &&
+          !session.isDepositing &&
+          !session.bot.currentWindow
+        ) {
           addLog(accountId, 'OTO-KOMUT', `[Zamanlayıcı] ${cmd}`, chalk.yellow);
           session.bot.chat(cmd);
         }
@@ -4531,8 +4545,18 @@ async function checkHealthAndHunger(accountId) {
 
   // 3. AKILLI OTOMATİK YEMEK YEME (AUTO-EAT)
   // Canı eksikse (< 20) canın hızla yenilenmesi için açlık < 20 olduğu anda hemen yer!
+  // Vulcan Inventory / AutoTool koruması: Açık pencere varken veya fener/sandık işlemi sürerken araya girme
   const targetFoodThreshold = (bot.health < 20) ? 19 : 15;
-  if (acc.autoEat !== false && typeof bot.food === 'number' && bot.food <= targetFoodThreshold && !session.isEating && !session.isDropping) {
+  if (
+    acc.autoEat !== false &&
+    typeof bot.food === 'number' &&
+    bot.food <= targetFoodThreshold &&
+    !session.isEating &&
+    !session.isDropping &&
+    !session.isDepositing &&
+    !session.isJackOLanternRunning &&
+    !bot.currentWindow
+  ) {
     const items = bot.inventory ? bot.inventory.items() : [];
     const foodItem = items.find((it) => FOOD_ITEMS.has(it.name));
     if (!foodItem) return;
@@ -4886,14 +4910,27 @@ async function safelyOpenContainer(bot, chestBlock, session, timeoutMs = 5000) {
   }
 
   const hadSneakLock = session ? Boolean(session.sneakLock) : false;
+  const wasSneaking = Boolean(
+    hadSneakLock ||
+    (typeof bot.getControlState === 'function' && bot.getControlState('sneak')) ||
+    (bot.entity && bot.entity.crouching)
+  );
 
-  // 1. Botun istemci tarafındaki çömelme/shift durumunu iptal et
+  // 1. Sandık açmadan önce tüm hareket ve çömelme tuşlarını durdur (Vulcan Inventory / BadPackets koruması)
   if (typeof bot.setControlState === 'function') {
-    bot.setControlState('sneak', false);
+    try {
+      bot.setControlState('forward', false);
+      bot.setControlState('back', false);
+      bot.setControlState('left', false);
+      bot.setControlState('right', false);
+      bot.setControlState('sprint', false);
+      bot.setControlState('jump', false);
+      bot.setControlState('sneak', false);
+    } catch (e) {}
   }
 
-  // 2. Sunucuya da doğrudan ve garanti "çömelmeyi bırak" (stop_sneaking) paketi gönder
-  if (bot._client && bot.entity) {
+  // 2. Yalnızca bot gerçekten çömelmiş durumdaysa "stop_sneaking" paketi gönder (mükerrer paket Vulcan BadPackets tetikler)
+  if (wasSneaking && bot._client && bot.entity) {
     try {
       if (bot.supportFeature && bot.supportFeature('newPlayerInputPacket')) {
         bot._client.write('player_input', { inputs: { shift: false, jump: false } });
@@ -4907,12 +4944,12 @@ async function safelyOpenContainer(bot, chestBlock, session, timeoutMs = 5000) {
     } catch (e) {}
   }
 
-  // 3. Sunucunun ve eklentilerin botun dik durduğunu (düz duruş) kesin olarak işlemesi için 80ms bekle
-  await new Promise((r) => setTimeout(r, 80));
+  // 3. Fizik döngüsünün duruşu senkronize etmesi için bekle
+  await waitOnePhysicsTick(bot, 80);
 
-  // 4. Sandığa insansı şekilde bak
+  // 4. Sandığa Vulcan GCD-uyumlu stealth bakışla kilitlen (openContainer'ın dahili lookAt çağrısını 0 açılı no-op yapar)
   try {
-    await bot.lookAt(chestBlock.position.offset(0.5, 0.5, 0.5), true);
+    await lookAtBlockFaceStealth(bot, chestBlock.position.offset(0.5, 0.5, 0.5));
   } catch (e) {}
 
   // 5. Sandığı düz sağ tık ile aç (zaman aşımı korumalı)
@@ -5936,15 +5973,18 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
   const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter);
   const curHorizDist = Math.hypot(bot.entity.position.x - targetCenter.x, bot.entity.position.z - targetCenter.z);
+  const maxAxisDist = Math.max(Math.abs(bot.entity.position.x - targetCenter.x), Math.abs(bot.entity.position.z - targetCenter.z));
   const isSameBlockColumn = Math.floor(bot.entity.position.x) === targetBlockPos.x && Math.floor(bot.entity.position.z) === targetBlockPos.z;
-  // Eğer bot zaten istenen menzildeyse VE bloğun tam üstünde durmuyorsa (aynı blok kolonunda değilse ve yatay >= 0.45m)
-  if (curEyeDist <= maxReach && !isSameBlockColumn && curHorizDist >= 0.45) {
+  // Eğer bot zaten istenen menzildeyse VE bloğun AABB sınırıyla kesişmiyorsa (!isSameBlockColumn ve maxAxisDist >= 0.84m)
+  if (curEyeDist <= maxReach && !isSameBlockColumn && maxAxisDist >= 0.84 && curHorizDist >= 0.90) {
     return true;
   }
 
   const botPos = bot.entity.position;
   const startStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
   const spotCandidates = [];
+  const effectiveMaxReach = Math.min(3.85, Math.max(1.45, maxReach));
+  const stopReach = Math.min(3.75, Math.max(1.45, maxReach));
 
   for (let dx = -3; dx <= 3; dx++) {
     for (let dz = -3; dz <= 3; dz++) {
@@ -5953,7 +5993,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
         const spot = new Vec3(targetBlockPos.x + dx, targetBlockPos.y + dy, targetBlockPos.z + dz);
         const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
         const reachDist = eyeFromSpot.distanceTo(targetCenter);
-        if (reachDist > 3.85 || reachDist < 0.9) continue;
+        if (reachDist > effectiveMaxReach || reachDist < 0.9) continue;
         if (isSpawnerCorridorWalkable(bot, spot, session)) {
           spotCandidates.push({
             spot,
@@ -5982,15 +6022,21 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
         session,
         targetBlockPos,
         Math.max(5000, Math.min(20000, Math.ceil((path.length + 2) * 450))),
-        path
+        path,
+        stopReach
       );
-      if (ok || bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.25) {
+      const afterPos = bot.entity.position;
+      const afterSameCol = Math.floor(afterPos.x) === targetBlockPos.x && Math.floor(afterPos.z) === targetBlockPos.z;
+      const afterAxisDist = Math.max(Math.abs(afterPos.x - targetCenter.x), Math.abs(afterPos.z - targetCenter.z));
+      if (!afterSameCol && afterAxisDist >= 0.84 && (ok || afterPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= Math.max(maxReach + 0.3, 4.1))) {
         return true;
       }
     }
   }
 
-  return bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.25;
+  const finalPos = bot.entity.position;
+  const finalSameCol = Math.floor(finalPos.x) === targetBlockPos.x && Math.floor(finalPos.z) === targetBlockPos.z;
+  return !finalSameCol && finalPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.25;
 }
 
 async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
@@ -6840,36 +6886,89 @@ function parseCoordString(coordStr) {
   return null;
 }
 
+function isPumpkinLikeBlock(block) {
+  if (!block || !block.name) return false;
+  const n = block.name.toLowerCase();
+  return (
+    n === 'pumpkin' ||
+    n === 'minecraft:pumpkin' ||
+    n === 'carved_pumpkin' ||
+    n === 'minecraft:carved_pumpkin' ||
+    n === 'jack_o_lantern' ||
+    n === 'minecraft:jack_o_lantern' ||
+    n === 'lit_pumpkin' ||
+    n === 'minecraft:lit_pumpkin'
+  );
+}
+
+function isValidCarveSpotBlock(bot, candidatePos) {
+  if (!bot || typeof bot.blockAt !== 'function' || !candidatePos) return true;
+  const bAt = bot.blockAt(candidatePos);
+  const bFloor = bot.blockAt(candidatePos.offset(0, -1, 0));
+  if (!bFloor || bFloor.name === 'air' || bFloor.name.includes('air') || isFarmContainerBlockName(bFloor.name)) {
+    return false;
+  }
+  if (!bAt || bAt.name === 'air' || bAt.name.includes('air') || isPumpkinLikeBlock(bAt)) {
+    return true;
+  }
+  return false;
+}
+
 function resolveCarveSpot(bot, customCarveSpotStr) {
   const parsed = parseCoordString(customCarveSpotStr);
   if (parsed) {
+    let target = parsed;
     if (bot && typeof bot.blockAt === 'function') {
       const bAt = bot.blockAt(parsed);
       const bAbove = bot.blockAt(parsed.offset(0, 1, 0));
-      // Kullanıcı zemin bloğunu verdiyse ve üstü havaysa, oyma yerini 1 blok yukarı al
-      if (bAt && bAt.name !== 'air' && !bAt.name.includes('air') && !bAt.name.includes('pumpkin') && bAbove && (bAbove.name === 'air' || bAbove.name.includes('air') || bAbove.name.includes('pumpkin'))) {
-        return parsed.offset(0, 1, 0);
+      // Kullanıcı zemin bloğunu verdiyse ve üstü havaysa (veya balkabağıysa), oyma yerini 1 blok yukarı al
+      if (
+        bAt &&
+        bAt.name !== 'air' &&
+        !bAt.name.includes('air') &&
+        !isPumpkinLikeBlock(bAt) &&
+        bAbove &&
+        (bAbove.name === 'air' || bAbove.name.includes('air') || isPumpkinLikeBlock(bAbove))
+      ) {
+        target = parsed.offset(0, 1, 0);
       }
     }
-    // GÜVENLİK KORUMASI: Eğer kullanıcı koordinatı tam olarak botun durduğu bloğa denk geliyorsa, botun 1 blok önüne kaydır!
+    // GÜVENLİK KORUMASI: Eğer koordinat botun durduğu bloğa denk geliyorsa veya dolu bir bloksa, çevredeki uygun oyma noktasına kaydır
     if (bot && bot.entity && bot.entity.position) {
       const botFloor = bot.entity.position.floored();
-      if (parsed.x === botFloor.x && parsed.z === botFloor.z) {
+      const isSameAsBot = target.x === botFloor.x && target.z === botFloor.z;
+      if (isSameAsBot || !isValidCarveSpotBlock(bot, target)) {
         const yaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : 0;
         let dx = -Math.round(Math.sin(yaw));
         let dz = -Math.round(Math.cos(yaw));
         if (dx === 0 && dz === 0) dx = 1;
-        return parsed.offset(dx, 0, dz);
+        const candidateOffsets = [
+          [dx, dz], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]
+        ];
+        for (const [ox, oz] of candidateOffsets) {
+          const cand = target.offset(ox, 0, oz);
+          if ((cand.x !== botFloor.x || cand.z !== botFloor.z) && isValidCarveSpotBlock(bot, cand)) {
+            return cand;
+          }
+        }
+        return target.offset(dx, 0, dz);
       }
     }
-    return parsed;
+    return target;
   }
   const yaw = bot && bot.entity && typeof bot.entity.yaw === 'number' ? bot.entity.yaw : 0;
   let dx = -Math.round(Math.sin(yaw));
   let dz = -Math.round(Math.cos(yaw));
   if (dx === 0 && dz === 0) dx = 1;
   const botFloor = bot.entity && bot.entity.position ? bot.entity.position.floored() : new Vec3(0, 0, 0);
-  return botFloor.offset(dx, 0, dz);
+  const frontSpot = botFloor.offset(dx, 0, dz);
+  if (isValidCarveSpotBlock(bot, frontSpot)) return frontSpot;
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+  for (const [ox, oz] of dirs) {
+    const cand = botFloor.offset(ox, 0, oz);
+    if (isValidCarveSpotBlock(bot, cand)) return cand;
+  }
+  return frontSpot;
 }
 
 function isTargetJackItem(item, targetName) {
@@ -6906,29 +7005,92 @@ function isTargetJackItem(item, targetName) {
   return n === t || n.endsWith(':' + t);
 }
 
-async function openChestAtPosition(bot, session, chestPos, accountId) {
-  if (!bot || !chestPos || isJackOLanternAbortRequested(session)) return null;
+/**
+ * Vulcan Anti-Cheat (Inventory Type A/B/C & AutoTool) Uyumlu Hotbar Kuşanma Fonksiyonu:
+ * Mineflayer'ın bot.inventory.items() fonksiyonu 9..35 ana envanter slotlarını 36..44 hotbar
+ * slotlarından ÖNCE tarar ve bot.equip() her çağrıda seçili hotbar slotuna window_click ile
+ * takas (swap) yapar (32 balkabağında 96x3 = 288 sessiz window_click paketi!).
+ * Bu fonksiyon:
+ * 1) Zaten elde (bot.heldItem) hedef eşya varsa 0 paket gönderir.
+ * 2) Eşya hotbar'daysa (36..44) yalnızca setQuickBarSlot (held_item_slot paketi) gönderir (0 window_click).
+ * 3) Eşya yalnızca ana envanterdeyse (9..35), rolüne özel sabit bir hotbar slotuna (0: balkabağı, 1: makas, 2: balta)
+ *    taşır; böylece balkabağı, makas ve balta birbirinin hotbar slotunu asla ezmez!
+ */
+async function equipJackHotbarItem(bot, targetName) {
+  if (!bot || !bot.inventory) return false;
+  if (bot.heldItem && isTargetJackItem(bot.heldItem, targetName)) {
+    return true;
+  }
 
-  // 1. Verilen koordinat doğrudan sandık mı? Değilse +/-1 blok etrafındaki sandığı tespit et
-  let targetBlock = bot.blockAt(chestPos);
-  let resolvedPos = chestPos;
-
-  if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dz = -1; dz <= 1; dz++) {
-          const b = bot.blockAt(chestPos.offset(dx, dy, dz));
-          if (b && isFarmContainerBlockName(b.name)) {
-            targetBlock = b;
-            resolvedPos = b.position;
-            break;
-          }
-        }
-        if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
+  const slots = Array.isArray(bot.inventory.slots) ? bot.inventory.slots : [];
+  // 1. Önce Hotbar (36..44) içinde ara -> Sadece held_item_slot paketi (0 window_click!)
+  for (let s = 36; s <= 44; s++) {
+    if (slots[s] && isTargetJackItem(slots[s], targetName)) {
+      if (typeof bot.setQuickBarSlot === 'function') {
+        bot.setQuickBarSlot(s - 36);
       }
-      if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
+      return true;
     }
   }
+
+  // 2. Ana envanterde (9..35) ara ve rolüne özel hotbar yuvasına taşı
+  const invItem = bot.inventory.items().find((it) => isTargetJackItem(it, targetName));
+  if (!invItem) return false;
+
+  const preferredHotbarIdx = targetName === 'pumpkin' ? 0 : (targetName === 'shears' ? 1 : (targetName === 'axe' ? 2 : 3));
+  const destHotbarSlot = 36 + preferredHotbarIdx;
+
+  try {
+    if (typeof bot.setQuickBarSlot === 'function') {
+      bot.setQuickBarSlot(preferredHotbarIdx);
+    }
+    if (typeof bot.moveSlotItem === 'function' && typeof invItem.slot === 'number' && invItem.slot !== destHotbarSlot) {
+      await bot.moveSlotItem(invItem.slot, destHotbarSlot);
+    } else if (typeof bot.equip === 'function') {
+      await bot.equip(invItem, 'hand');
+    }
+    return true;
+  } catch (_) {
+    try {
+      await bot.equip(invItem, 'hand');
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+
+function findClosestContainerNearPosition(bot, centerPos, radius = 1, excludedPositions = []) {
+  if (!bot || typeof bot.blockAt !== 'function' || !centerPos) return null;
+  const direct = bot.blockAt(centerPos);
+  if (direct && isFarmContainerBlockName(direct.name)) {
+    return direct;
+  }
+  const candidates = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        if (dx === 0 && dy === 0 && dz === 0) continue;
+        const pos = centerPos.offset(dx, dy, dz);
+        if (excludedPositions.some((ex) => ex && ex.distanceTo(pos) <= 0.9)) continue;
+        const b = bot.blockAt(pos);
+        if (b && isFarmContainerBlockName(b.name)) {
+          candidates.push({ block: b, dist: pos.distanceTo(centerPos) });
+        }
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.dist - b.dist);
+  return candidates[0].block;
+}
+
+async function openChestAtPosition(bot, session, chestPos, accountId, excludedPositions = []) {
+  if (!bot || !chestPos || isJackOLanternAbortRequested(session)) return null;
+
+  // 1. Verilen koordinat doğrudan sandık mı? Değilse +/-1 blok etrafındaki EN YAKIN sandığı tespit et (diğer rol sandıkları hariç)
+  let targetBlock = findClosestContainerNearPosition(bot, chestPos, 1, excludedPositions);
+  let resolvedPos = targetBlock && targetBlock.position ? targetBlock.position : chestPos;
 
   // 2. Sandığa yaklaş (Vulcan-safe reach: 3.85m)
   const reached = await navigateNearSpawnerOrChest(bot, session, resolvedPos, 3.85);
@@ -6939,37 +7101,16 @@ async function openChestAtPosition(bot, session, chestPos, accountId) {
     return null;
   }
 
-  // 3. Yaklaştıktan sonra bloğu doğrula (ve etrafındaki +/-2 bloğu tara)
-  targetBlock = bot.blockAt(resolvedPos);
-  if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        for (let dz = -2; dz <= 2; dz++) {
-          const b = bot.blockAt(resolvedPos.offset(dx, dy, dz));
-          if (b && isFarmContainerBlockName(b.name)) {
-            targetBlock = b;
-            resolvedPos = b.position;
-            break;
-          }
-        }
-        if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
-      }
-      if (targetBlock && isFarmContainerBlockName(targetBlock.name)) break;
-    }
-  }
-
-  // Son güvenlik adımı: Botun 3.8m yakınındaki ilk konteyneri tespit et
-  if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
-    const nearCont = findNearestContainerBlock(bot, 3.8);
-    if (nearCont && isFarmContainerBlockName(nearCont.name)) {
-      targetBlock = nearCont;
-      resolvedPos = nearCont.position;
-    }
+  // 3. Yaklaştıktan sonra bloğu doğrula (mesafe sıralamalı, diğer rol sandıklarını hariç tutarak)
+  targetBlock = findClosestContainerNearPosition(bot, chestPos, 1, excludedPositions);
+  if (targetBlock && targetBlock.position) {
+    resolvedPos = targetBlock.position;
   }
 
   if (!targetBlock || !isFarmContainerBlockName(targetBlock.name)) {
     if (accountId) {
-      addLog(accountId, 'FENER', `⚠️ Koordinatta (${resolvedPos.x}, ${resolvedPos.y}, ${resolvedPos.z}) sandık/fıçı tespit edilemedi (Blok: ${targetBlock ? targetBlock.name : 'yok'}).`, chalk.yellow);
+      const rawBlock = bot.blockAt(chestPos);
+      addLog(accountId, 'FENER', `⚠️ Koordinatta (${chestPos.x}, ${chestPos.y}, ${chestPos.z}) sandık/fıçı tespit edilemedi (Blok: ${rawBlock ? rawBlock.name : 'yok'}).`, chalk.yellow);
     }
     return null;
   }
@@ -6995,6 +7136,18 @@ function closeChestContainerSafely(bot, container) {
   }
 }
 
+function getExcludedRolePositions(cfg = {}, currentRolePos = null) {
+  const roles = [
+    parseCoordString(cfg.pumpkinChest),
+    parseCoordString(cfg.torchChest),
+    parseCoordString(cfg.outputChest),
+    parseCoordString(cfg.ironChest),
+    parseCoordString(cfg.stickChest)
+  ].filter(Boolean);
+  if (!currentRolePos) return roles;
+  return roles.filter((r) => r.distanceTo(currentRolePos) > 0.9);
+}
+
 async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemName, targetCount, specificChestCoordStr, cfg = {}) {
   if (isJackOLanternAbortRequested(session)) return 0;
   let totalWithdrawn = 0;
@@ -7008,15 +7161,18 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
   }
 
   const specificPos = parseCoordString(specificChestCoordStr);
+  const excludedPositions = getExcludedRolePositions(cfg, specificPos);
   const candidatePositions = [];
 
   if (specificPos) {
     candidatePositions.push(specificPos);
     addLog(accountId, 'FENER', `📍 Belirtilen sandık koordinatına gidiliyor (${itemName}): ${specificPos.x} ${specificPos.y} ${specificPos.z}`, chalk.cyan);
   } else {
-    // Sadece koordinat belirtilmemişse etraftaki sandıkları tara
+    // Sadece koordinat belirtilmemişse etraftaki sandıkları tara (fener çıkış sandığı hariç)
+    const outputPos = parseCoordString(cfg.outputChest);
     const nearbyChests = findNearbyContainerPositions(bot, bot.entity.position, 24);
     for (const p of nearbyChests) {
+      if (outputPos && p.distanceTo(outputPos) <= 1.2 && itemName !== 'jack_o_lantern') continue;
       candidatePositions.push(p);
     }
   }
@@ -7033,7 +7189,7 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
     // Çoklu bot senkronizasyonu: Sandık başka bir bot tarafından kullanılıyorsa 2 kez dene
     let chestWin = null;
     for (let tryOpen = 0; tryOpen < 2; tryOpen++) {
-      chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+      chestWin = await openChestAtPosition(bot, session, cPos, accountId, excludedPositions);
       if (chestWin) break;
       await new Promise((r) => setTimeout(r, 450 + Math.floor(Math.random() * 200)));
     }
@@ -7067,18 +7223,18 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
           } catch (_) {}
         }
 
-        // 3. Fallback: Normal tıklama ve boş envanter slotuna aktarma
+        // 3. Fallback: Normal tıklama ve boş envanter slotuna aktarma (ÖNCE boş slot kontrolü yapılır, imleçte eşya kalmaz!)
         if (moved === 0) {
-          try {
-            await withPromiseTimeout(bot.clickWindow(s, 0, 0), 1600);
-            await new Promise((r) => setTimeout(r, 100));
-            const emptySlot = findFirstEmptyPlayerSlotInWindow(chestWin);
-            if (emptySlot !== -1) {
+          const emptySlot = findFirstEmptyPlayerSlotInWindow(chestWin);
+          if (emptySlot !== -1) {
+            try {
+              await withPromiseTimeout(bot.clickWindow(s, 0, 0), 1600);
+              await new Promise((r) => setTimeout(r, 100));
               await withPromiseTimeout(bot.clickWindow(emptySlot, 0, 0), 1600);
               await new Promise((r) => setTimeout(r, 100));
               moved = countBefore;
-            }
-          } catch (_) {}
+            } catch (_) {}
+          }
         }
 
         if (moved > 0) {
@@ -7086,6 +7242,17 @@ async function withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, itemN
           foundInThisChest += moved;
         }
         if (totalWithdrawn >= targetCount) break;
+      }
+    }
+
+    // İmleçte (selectedItem) eşya kaldıysa kapatmadan önce güvenli yuvaya bırak
+    if (chestWin.selectedItem) {
+      const emptySlot = findFirstEmptyPlayerSlotInWindow(chestWin);
+      if (emptySlot !== -1) {
+        try {
+          await withPromiseTimeout(bot.clickWindow(emptySlot, 0, 0), 1200);
+          await new Promise((r) => setTimeout(r, 90));
+        } catch (_) {}
       }
     }
 
@@ -7105,6 +7272,7 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
   let totalDeposited = 0;
 
   const specificPos = parseCoordString(specificChestCoordStr);
+  const excludedPositions = getExcludedRolePositions(cfg, specificPos);
   const candidatePositions = [];
 
   // Tanımlı diğer rol sandıklarının koordinatları
@@ -7152,7 +7320,7 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
     // Çoklu bot senkronizasyonu: Sandık başka bir bot tarafından açıksa 2 kez kısa aralıkla dene
     let chestWin = null;
     for (let tryOpen = 0; tryOpen < 2; tryOpen++) {
-      chestWin = await openChestAtPosition(bot, session, cPos, accountId);
+      chestWin = await openChestAtPosition(bot, session, cPos, accountId, excludedPositions);
       if (chestWin) break;
       await new Promise((r) => setTimeout(r, 450 + Math.floor(Math.random() * 200)));
     }
@@ -7237,10 +7405,41 @@ async function depositToSpecifiedOrNearbyChest(bot, session, accountId, itemName
           } catch (_) {}
         }
 
+        // 3. Fallback: Normal sol tık ile alıp sandıktaki ilk boş yuvaya bırak
+        if (moved === 0) {
+          let emptyChestSlot = -1;
+          for (let cs = 0; cs < containerEnd; cs++) {
+            if (!chestWin.slots[cs]) {
+              emptyChestSlot = cs;
+              break;
+            }
+          }
+          if (emptyChestSlot !== -1) {
+            try {
+              await withPromiseTimeout(bot.clickWindow(s, 0, 0), 1600);
+              await new Promise((r) => setTimeout(r, 100));
+              await withPromiseTimeout(bot.clickWindow(emptyChestSlot, 0, 0), 1600);
+              await new Promise((r) => setTimeout(r, 100));
+              moved = countBefore;
+            } catch (_) {}
+          }
+        }
+
         if (moved > 0) {
           totalDeposited += moved;
           depositedInThisChest += moved;
         }
+      }
+    }
+
+    // İmleçte (selectedItem) eşya kaldıysa kapatmadan önce güvenli yuvaya bırak
+    if (chestWin.selectedItem) {
+      const emptySlot = findFirstEmptyPlayerSlotInWindow(chestWin);
+      if (emptySlot !== -1) {
+        try {
+          await withPromiseTimeout(bot.clickWindow(emptySlot, 0, 0), 1200);
+          await new Promise((r) => setTimeout(r, 90));
+        } catch (_) {}
       }
     }
 
@@ -7448,7 +7647,7 @@ async function ensureShearsAvailable(bot, session, accountId, cfg = {}) {
   if (curIron < 2) {
     const ironNeeded = Math.max(2, 4 - curIron);
     addLog(accountId, 'FENER', `⛏️ Sandıktan ${ironNeeded} adet demir külçesi (iron_ingot) çekiliyor...`, chalk.cyan);
-    await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'iron_ingot', ironNeeded, cfg.ironChest);
+    await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'iron_ingot', ironNeeded, cfg.ironChest, cfg);
     curIron = countInventoryItemByName(bot, null, 'iron_ingot');
   }
 
@@ -7465,7 +7664,7 @@ async function ensureShearsAvailable(bot, session, accountId, cfg = {}) {
   }
 
   // 4. Yedek kontrol: Eğer demir temin edilemediyse sandıklarda hazır makas var mı diye bak
-  await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'shears', 1, cfg.ironChest || cfg.pumpkinChest);
+  await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'shears', 1, cfg.ironChest || cfg.pumpkinChest, cfg);
   shears = bot.inventory.items().find((it) => isTargetJackItem(it, 'shears'));
   if (shears) {
     addLog(accountId, 'FENER', '✂️ Sandıktan hazır makas temin edildi.', chalk.green);
@@ -7701,7 +7900,7 @@ async function ensureAxeAvailable(bot, session, accountId, cfg = {}) {
   if (curIron < 3) {
     const ironNeeded = Math.max(3, 5 - curIron);
     addLog(accountId, 'FENER', `⛏️ Balta için sandıktan ${ironNeeded} adet demir külçesi çekiliyor...`, chalk.cyan);
-    await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'iron_ingot', ironNeeded, cfg.ironChest);
+    await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'iron_ingot', ironNeeded, cfg.ironChest, cfg);
     curIron = countInventoryItemByName(bot, null, 'iron_ingot');
   }
 
@@ -7710,7 +7909,7 @@ async function ensureAxeAvailable(bot, session, accountId, cfg = {}) {
   if (curSticks < 2) {
     const sticksNeeded = Math.max(2, 4 - curSticks);
     addLog(accountId, 'FENER', `🪵 Balta için sandıktan ${sticksNeeded} adet çubuk (stick) çekiliyor...`, chalk.cyan);
-    await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'stick', sticksNeeded, cfg.stickChest || cfg.ironChest);
+    await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'stick', sticksNeeded, cfg.stickChest || cfg.ironChest, cfg);
     curSticks = countInventoryItemByName(bot, null, 'stick');
   }
 
@@ -7727,7 +7926,7 @@ async function ensureAxeAvailable(bot, session, accountId, cfg = {}) {
   }
 
   // 5. Yedek kontrol: Eğer üretilemediyse sandıklarda hazır balta var mı diye bak
-  await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'axe', 1, cfg.ironChest || cfg.stickChest);
+  await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'axe', 1, cfg.ironChest || cfg.stickChest, cfg);
   axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
   if (axe) {
     addLog(accountId, 'FENER', '🪓 Sandıktan hazır balta temin edildi.', chalk.green);
@@ -7738,7 +7937,7 @@ async function ensureAxeAvailable(bot, session, accountId, cfg = {}) {
   return false;
 }
 
-async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
+async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}, proactive = false) {
   if (!bot || !bot.inventory) return false;
   if (isJackOLanternAbortRequested(session)) return false;
 
@@ -7758,14 +7957,25 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
     .filter((it) => isTargetJackItem(it, 'carved_pumpkin'))
     .reduce((sum, it) => sum + (it.count || 0), 0);
 
+  const lanterns = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'jack_o_lantern'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
+
   const canHoldCarved = emptySlots > 0 || bot.inventory.items().some((it) => isTargetJackItem(it, 'carved_pumpkin') && it.count < 64);
 
-  // Envanter doluluk kontrolü: Boş slot sayısı <= 2 veya oyulmuş balkabağı için yer kalmadıysa
-  const isFull = emptySlots <= 2 || !canHoldCarved;
+  // Envanter doluluk kontrolü:
+  // - Normal/oyma sırasında: Boş slot sayısı <= 2 veya oyulmuş balkabağı için yer kalmadıysa
+  // - Proaktif (tur başı/sonu, envanterde balkabağı yokken): En az 64 tohum biriktiyse veya boş slot <= 8 ise
+  const isFull = emptySlots <= 2 || !canHoldCarved || (proactive && pumpkins === 0 && carved === 0 && lanterns === 0 && seedCount > 0 && (emptySlots <= 8 || seedCount >= 64));
   if (!isFull) return false;
 
   // Tohum yoksa ve en az 1 boş slot varsa beklemeye gerek yok
   if (seedCount <= 0 && emptySlots > 1) return false;
+
+  // Eğer envanterde fener varsa önce fener sandığına güvenle aktar
+  if (lanterns > 0 && cfg.outputChest) {
+    await depositToSpecifiedOrNearbyChest(bot, session, accountId, 'jack_o_lantern', cfg.outputChest, cfg);
+  }
 
   let stashedPumpkins = 0;
   let stashedCarved = 0;
@@ -7786,22 +7996,25 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
     if (isJackOLanternAbortRequested(session)) return false;
   }
 
-  // Yeniden kesin kontrol: Envanterde hala balkabağı var mı?
+  // Yeniden kesin kontrol: Envanterde hala balkabağı veya fener var mı?
   const remPumpkins = bot.inventory.items()
     .filter((it) => isTargetJackItem(it, 'pumpkin'))
     .reduce((sum, it) => sum + (it.count || 0), 0);
   const remCarved = bot.inventory.items()
     .filter((it) => isTargetJackItem(it, 'carved_pumpkin'))
     .reduce((sum, it) => sum + (it.count || 0), 0);
+  const remLanterns = bot.inventory.items()
+    .filter((it) => isTargetJackItem(it, 'jack_o_lantern'))
+    .reduce((sum, it) => sum + (it.count || 0), 0);
 
-  if (remPumpkins > 0 || remCarved > 0) {
-    addLog(accountId, 'FENER', `❌ Balkabakları sandığa aktarılamadı (${remPumpkins} balkabağı, ${remCarved} oyulmuş)! Balkabaklarının satılmaması için /sat hepsi engellendi.`, chalk.redBright);
+  if (remPumpkins > 0 || remCarved > 0 || remLanterns > 0) {
+    addLog(accountId, 'FENER', `❌ Balkabakları/fenerler sandığa aktarılamadı (${remPumpkins} balkabağı, ${remCarved} oyulmuş, ${remLanterns} fener)! Satılmamaları için /sat hepsi engellendi.`, chalk.redBright);
     // Sandığa emanet bırakılan parçalar varsa geri al, sandıkta unutma!
     if (stashedPumpkins > 0) {
-      try { await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', stashedPumpkins, cfg.pumpkinChest); } catch (_) {}
+      try { await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', stashedPumpkins, cfg.pumpkinChest, cfg); } catch (_) {}
     }
     if (stashedCarved > 0) {
-      try { await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', stashedCarved, cfg.pumpkinChest); } catch (_) {}
+      try { await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', stashedCarved, cfg.pumpkinChest, cfg); } catch (_) {}
     }
     return false;
   }
@@ -7810,7 +8023,7 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
   const acc = config.accounts.find((a) => a.id === accountId);
   const sellCmd = (acc && acc.autoSellCommand ? acc.autoSellCommand.trim() : '') || '/sat hepsi';
 
-  addLog(accountId, 'FENER', `💰 Envanter doldu (${emptySlots} boş slot, ${seedCount} tohum)! Balkabağı bulunmadığı doğrulandı, ${sellCmd} yapılıyor...`, chalk.greenBright);
+  addLog(accountId, 'FENER', `💰 Tohum satışı (${emptySlots} boş slot, ${seedCount} tohum)! Balkabağı bulunmadığı doğrulandı, ${sellCmd} yapılıyor...`, chalk.greenBright);
 
   try {
     bot.chat(sellCmd);
@@ -7820,11 +8033,11 @@ async function checkAndSellInventoryIfFull(bot, accountId, session, cfg = {}) {
     // Eğer emanet olarak sandığa balkabağı bıraktıysak geri alalım
     if (stashedPumpkins > 0 && !isJackOLanternAbortRequested(session)) {
       addLog(accountId, 'FENER', `📦 Emanete bırakılan ${stashedPumpkins} adet balkabağı sandıktan geri alınıyor...`, chalk.cyan);
-      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', stashedPumpkins, cfg.pumpkinChest);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'pumpkin', stashedPumpkins, cfg.pumpkinChest, cfg);
     }
     if (stashedCarved > 0 && !isJackOLanternAbortRequested(session)) {
       addLog(accountId, 'FENER', `📦 Emanete bırakılan ${stashedCarved} adet oyulmuş balkabağı geri alınıyor...`, chalk.cyan);
-      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', stashedCarved, cfg.pumpkinChest);
+      await withdrawFromSpecifiedOrNearbyChest(bot, session, accountId, 'carved_pumpkin', stashedCarved, cfg.pumpkinChest, cfg);
     }
 
     return true;
@@ -7841,66 +8054,72 @@ async function ensureBotPositionedForCarving(bot, session, carveSpot, accountId)
   for (let attempt = 0; attempt < 3; attempt++) {
     const botPos = bot.entity.position;
     const curHorizDist = Math.hypot(botPos.x - carveCenter.x, botPos.z - carveCenter.z);
+    const maxAxisDist = Math.max(Math.abs(botPos.x - carveCenter.x), Math.abs(botPos.z - carveCenter.z));
     const curEyeDist = botPos.offset(0, 1.62, 0).distanceTo(carveCenter);
     const isSameCol = Math.floor(botPos.x) === carveSpot.x && Math.floor(botPos.z) === carveSpot.z;
 
-    // Güvenli menzil: Blok içinde veya temas sınırında değil (!isSameCol), yatayda 1.45m - 2.8m VE göz mesafesi 1.5m - 3.4m arası (Vulcan Scaffold Self-Intersection koruması)
-    if (!isSameCol && curHorizDist >= 1.45 && curHorizDist <= 2.8 && curEyeDist >= 1.5 && curEyeDist <= 3.4) {
+    // İdeal Oyma & Vakum Menzili:
+    // - Oyuncu AABB yarıçapı (0.30m) + Blok AABB yarıçapı (0.50m) = 0.80m -> maxAxisDist >= 0.84m olduğunda 0 kesişme (Vulcan Scaffold Self-Intersection %100 güvenli!)
+    // - Bitişik blok merkezlerinde (cardinal 1.00m, çapraz 1.41m) bot hem Vulcan için tamamen güvenli hem de Vanilla 1.30m eşya toplama (pickup) kutusunun tam içindedir!
+    if (!isSameCol && maxAxisDist >= 0.84 && curHorizDist >= 0.90 && curHorizDist <= 1.95 && curEyeDist >= 1.35 && curEyeDist <= 2.85) {
       try { bot.setControlState('sprint', false); } catch (_) {}
       return true;
     }
 
-    if (isSameCol || curHorizDist < 1.45) {
-      addLog(accountId, 'FENER', `⚠️ Bot oyma bloğuna çok yakın veya üstünde (yatay: ${curHorizDist.toFixed(2)}m)! Vulcan güvenli mesafesine (1.85m) çekiliyor...`, chalk.yellow);
+    if (isSameCol || maxAxisDist < 0.84) {
+      addLog(accountId, 'FENER', `⚠️ Bot oyma bloğunun üstünde veya temas sınırında (yatay: ${curHorizDist.toFixed(2)}m)! Bitişik güvenli bloğa çekiliyor...`, chalk.yellow);
     }
 
-    // 1.85m hedefiyle güvenli navigasyon yap (dx===0 && dz===0 engeli sayesinde asla bloğun üstüne gitmez)
-    await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.85);
+    // 1.65m hedefiyle bitişik bloğa güvenli navigasyon yap (dx===0 && dz===0 engeli sayesinde asla bloğun üstüne gitmez)
+    await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.65);
     try { bot.setControlState('sprint', false); } catch (_) {}
-    await new Promise((r) => setTimeout(r, 140));
+    await new Promise((r) => setTimeout(r, 120));
 
-    // Kontrol et: Eğer hala bloğun içindeyse/üstündeyse, çevredeki boş bir zemin bloğuna adım attır
+    // Kontrol et: Eğer hala bloğun içindeyse/üstündeyse, bitişik yürünebilir bir zemin bloğunun merkezine doğrudan adım attır
     const checkPos = bot.entity.position;
     const checkSameCol = Math.floor(checkPos.x) === carveSpot.x && Math.floor(checkPos.z) === carveSpot.z;
-    const checkHoriz = Math.hypot(checkPos.x - carveCenter.x, checkPos.z - carveCenter.z);
-    if (checkSameCol || checkHoriz < 1.45) {
+    const checkAxisDist = Math.max(Math.abs(checkPos.x - carveCenter.x), Math.abs(checkPos.z - carveCenter.z));
+    if (checkSameCol || checkAxisDist < 0.84) {
       const offsets = [
-        [2, 0], [-2, 0], [0, 2], [0, -2],
-        [1, 1], [-1, -1], [1, -1], [-1, 1]
+        [1, 0], [-1, 0], [0, 1], [0, -1],
+        [1, 1], [-1, -1], [1, -1], [-1, 1],
+        [2, 0], [-2, 0], [0, 2], [0, -2]
       ];
       for (const [ox, oz] of offsets) {
         const candidatePos = new Vec3(carveSpot.x + ox, carveSpot.y, carveSpot.z + oz);
-        const floorCandidate = candidatePos.offset(0, -1, 0);
-        const bFloor = bot.blockAt(floorCandidate);
-        const bCand = bot.blockAt(candidatePos);
-        const bHead = bot.blockAt(candidatePos.offset(0, 1, 0));
-        if (
-          bFloor && bFloor.name !== 'air' && !bFloor.name.includes('air') &&
-          (!bCand || bCand.name === 'air' || bCand.name.includes('air')) &&
-          (!bHead || bHead.name === 'air' || bHead.name.includes('air'))
-        ) {
-          await navigateNearSpawnerOrChest(bot, session, candidatePos, 0.8);
-          try { bot.setControlState('sprint', false); } catch (_) {}
+        if (isSpawnerCorridorWalkable(bot, candidatePos, session)) {
+          const stepCenter = candidatePos.offset(0.5, 0, 0.5);
+          await lookAtBlockFaceStealth(bot, stepCenter.offset(0, 1.2, 0));
+          bot.setControlState('sprint', false);
+          bot.setControlState('forward', true);
+          for (let stepTick = 0; stepTick < 10; stepTick++) {
+            await new Promise((r) => setTimeout(r, 45));
+            if (Math.hypot(bot.entity.position.x - stepCenter.x, bot.entity.position.z - stepCenter.z) <= 0.32) break;
+          }
+          bot.setControlState('forward', false);
           break;
         }
       }
-      await new Promise((r) => setTimeout(r, 160));
+      await new Promise((r) => setTimeout(r, 120));
     }
   }
 
   const finalPos = bot.entity.position;
   const finalSameCol = Math.floor(finalPos.x) === carveSpot.x && Math.floor(finalPos.z) === carveSpot.z;
+  const finalAxisDist = Math.max(Math.abs(finalPos.x - carveCenter.x), Math.abs(finalPos.z - carveCenter.z));
   const finalHoriz = Math.hypot(finalPos.x - carveCenter.x, finalPos.z - carveCenter.z);
   try { bot.setControlState('sprint', false); } catch (_) {}
-  return !finalSameCol && finalHoriz >= 1.45 && finalHoriz <= 3.2;
+  return !finalSameCol && finalAxisDist >= 0.84 && finalHoriz >= 0.88 && finalHoriz <= 3.2;
 }
 
 async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount, cfg = {}) {
   let carvedSoFar = 0;
+  let attempts = 0;
   let consecutivePlaceFails = 0;
-  const carveCenter = carveSpot.offset(0.5, 0.5, 0.5);
+  const maxAttempts = Math.max(maxCount + 6, Math.ceil(maxCount * 1.35));
 
-  for (let i = 0; i < maxCount; i++) {
+  while (carvedSoFar < maxCount && attempts < maxAttempts) {
+    attempts++;
     if (isJackOLanternAbortRequested(session)) break;
 
     // 1. Oyma öncesi envanter kontrolü: Boş slot kalmadıysa tohumları satarak envanteri aç
@@ -7913,12 +8132,8 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       addLog(accountId, 'FENER', `⚠️ Envanter tohumlarla doldu (${curEmptyBefore} boş slot)! Oyulacak balkabakları için yer açmak üzere tohumlar satılıyor...`, chalk.yellowBright);
       const sold = await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
       if (sold) {
-        // Envanter açıldı: yerdeki eşyaları vakumlamak için kısa bir adım at ve hemen güvenli mesafeye (2.0m) geri çekil!
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 1.2);
-        await new Promise((r) => setTimeout(r, 200));
-        await navigateNearSpawnerOrChest(bot, session, carveSpot, 2.0);
-        try { bot.setControlState('sprint', false); } catch (_) {}
-        await new Promise((r) => setTimeout(r, 150));
+        await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
+        await new Promise((r) => setTimeout(r, 160));
       } else {
         addLog(accountId, 'FENER', '❌ Envanter dolu olduğu ve tohumlar satılamadığı için oyma durduruldu.', chalk.redBright);
         break;
@@ -7941,34 +8156,37 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       }
     }
 
-    // 2. VULCAN GÜVENLİĞİ: Oyma noktasına olan mesafeyi her zaman 1.6 - 2.6m arasında tut!
-    // Asla bloğun içinde veya 1.35m'den yakın durulmamalı (Self-intersection / Scaffold kick koruması).
+    // 2. VULCAN GÜVENLİĞİ & EŞYA VAKUMLAMA: Botu bitişik güvenli bloğa (1.0m - 1.75m) hizala
     const isSafePos = await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
     if (!isSafePos) {
       addLog(accountId, 'FENER', '⚠️ Bot oyma noktasına güvenli mesafede konumlandırılamadı (blok üstünde kalındı), oyma durduruldu.', chalk.red);
       break;
     }
 
-    // Önceden kalan blok varsa temizle
+    // Önceden oyma noktasında kalan bir BALKABAĞI bloğu varsa temizle (sandık veya ada bloğuysa ASLA kırma!)
     const existing = bot.blockAt(carveSpot);
     if (existing && existing.name !== 'air' && !existing.name.includes('air')) {
+      if (!isPumpkinLikeBlock(existing)) {
+        addLog(accountId, 'FENER', `🛑 Oyma noktasında (${carveSpot.x}, ${carveSpot.y}, ${carveSpot.z}) balkabağı olmayan bir blok (${existing.name}) tespit edildi! Ada/sandık güvenliği için kırma iptal edildi.`, chalk.redBright);
+        break;
+      }
       if (isTargetJackItem(existing, 'pumpkin')) {
         try {
-          await bot.equip(shearsItem, 'hand');
-          await waitOnePhysicsTick(bot, 80);
+          await equipJackHotbarItem(bot, 'shears');
+          await waitOnePhysicsTick(bot, 70);
           await activateBlockStealth(bot, existing, new Vec3(0, 1, 0));
           await new Promise((r) => setTimeout(r, 180));
         } catch (_) {}
       }
       const bToDig = bot.blockAt(carveSpot);
-      if (bToDig && bToDig.name !== 'air' && !bToDig.name.includes('air')) {
+      if (bToDig && isPumpkinLikeBlock(bToDig)) {
         let axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
         if (!axe) {
           await ensureAxeAvailable(bot, session, accountId, cfg);
           await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
-          axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
         }
-        if (axe) try { await bot.equip(axe, 'hand'); await waitOnePhysicsTick(bot, 60); } catch (_) {}
+        await equipJackHotbarItem(bot, 'axe');
+        await waitOnePhysicsTick(bot, 60);
         const digCenter = bToDig.position.offset(0.5, 0.5, 0.5);
         await lookAtBlockFaceStealth(bot, digCenter);
         await waitOnePhysicsTick(bot, 60);
@@ -7994,37 +8212,51 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     } catch (_) {}
     await waitOnePhysicsTick(bot, 60);
 
-    // Balkabağını eline al
-    try {
-      await bot.equip(pumpkinItem, 'hand');
-    } catch (_) {}
-    await waitOnePhysicsTick(bot, 80);
+    // Balkabağını hotbar üzerinden eline al (0 sessiz window_click!)
+    const equippedPumpkin = await equipJackHotbarItem(bot, 'pumpkin');
+    if (!equippedPumpkin) break;
+    await waitOnePhysicsTick(bot, 70);
 
-    // Vulcan-Safe stealth açı ile zemin bloğunun üst yüzeyine bak
-    const floorTopFace = floorBlock.position.offset(0.5, 1.0, 0.5);
+    // Vulcan-Safe stealth yüzey koordinatı (her yerleştirmede mikro teğet varyasyonlu, Y=1.0)
+    const placeFaceVec = new Vec3(0, 1, 0);
+    const placeDelta = computeStealthFaceDelta(placeFaceVec);
+    const floorTopFace = floorBlock.position.plus(placeDelta);
     try {
       await lookAtBlockFaceStealth(bot, floorTopFace);
     } catch (_) {}
-    await waitOnePhysicsTick(bot, 80);
+    await waitOnePhysicsTick(bot, 70);
 
-    // Blok yerleştirme: forceLook ignore edilerek Vulcan GCD-uyumlu stealth bakış korunur
+    // Blok yerleştirme: _genericPlace + 600ms blok doğrulama (5 saniyelik _placeBlockWithOptions takılmasını önler)
     try {
-      if (typeof bot._placeBlockWithOptions === 'function') {
-        await bot._placeBlockWithOptions(floorBlock, new Vec3(0, 1, 0), {
+      if (typeof bot._genericPlace === 'function') {
+        await bot._genericPlace(floorBlock, placeFaceVec, {
           swingArm: false,
           forceLook: 'ignore',
-          delta: new Vec3(0.5, 1.0, 0.5)
+          delta: placeDelta
         });
-      } else if (typeof bot._genericPlace === 'function') {
-        await bot._genericPlace(floorBlock, new Vec3(0, 1, 0), {
+      } else if (typeof bot._placeBlockWithOptions === 'function') {
+        await bot._placeBlockWithOptions(floorBlock, placeFaceVec, {
           swingArm: false,
           forceLook: 'ignore',
-          delta: new Vec3(0.5, 1.0, 0.5)
+          delta: placeDelta
         });
       } else {
-        await bot.placeBlock(floorBlock, new Vec3(0, 1, 0));
+        await bot.placeBlock(floorBlock, placeFaceVec);
       }
       try { bot.swingArm('right'); } catch (_) {}
+
+      let placedConfirm = null;
+      for (let poll = 0; poll < 10; poll++) {
+        const checkB = bot.blockAt(carveSpot);
+        if (checkB && isPumpkinLikeBlock(checkB)) {
+          placedConfirm = checkB;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 55));
+      }
+      if (!placedConfirm) {
+        throw new Error(`Sunucu blok yerleşimini onaylamadı (${carveSpot.x}, ${carveSpot.y}, ${carveSpot.z})`);
+      }
       consecutivePlaceFails = 0;
     } catch (placeErr) {
       consecutivePlaceFails++;
@@ -8033,19 +8265,16 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
         addLog(accountId, 'FENER', '❌ Ardışık 3 kez blok koyma başarısız oldu! Vulcan kick koruması gereği oyma döngüsü güvenle sonlandırıldı.', chalk.redBright);
         break;
       }
-      // Pozisyonu düzelt ve kısa bekle
       await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
-      await new Promise((r) => setTimeout(r, 350));
+      await new Promise((r) => setTimeout(r, 320));
       continue;
     }
     // Vulcan FastPlace gecikmesi (>=280ms)
     await new Promise((r) => setTimeout(r, 280 + Math.floor(Math.random() * 50)));
 
-    // Makası eline al
-    try {
-      await bot.equip(shearsItem, 'hand');
-    } catch (_) {}
-    await waitOnePhysicsTick(bot, 80);
+    // Makası hotbar üzerinden eline al
+    await equipJackHotbarItem(bot, 'shears');
+    await waitOnePhysicsTick(bot, 70);
 
     const placedPumpkin = bot.blockAt(carveSpot);
     if (!placedPumpkin || placedPumpkin.name === 'air') continue;
@@ -8056,7 +8285,7 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
     // carved_pumpkin dönüşümünü bekle
     let carvedBlock = null;
     for (let t = 0; t < 8; t++) {
-      await new Promise((r) => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 75));
       const b = bot.blockAt(carveSpot);
       if (b && (isTargetJackItem(b, 'carved_pumpkin') || b.name.includes('carved'))) {
         carvedBlock = b;
@@ -8064,21 +8293,43 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       }
     }
 
+    // Eğer ilk sağ tıkta oyulmadıysa (makas kırılmış veya paket gecikmiş olabilir), makası doğrulayıp 1 kez daha oy!
+    if (!carvedBlock) {
+      const stillRaw = bot.blockAt(carveSpot);
+      if (stillRaw && isTargetJackItem(stillRaw, 'pumpkin')) {
+        const shearsOk = await ensureShearsAvailable(bot, session, accountId, cfg);
+        if (shearsOk && !isJackOLanternAbortRequested(session)) {
+          await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
+          await equipJackHotbarItem(bot, 'shears');
+          await waitOnePhysicsTick(bot, 70);
+          await activateBlockStealth(bot, stillRaw, new Vec3(0, 1, 0));
+          for (let t = 0; t < 8; t++) {
+            await new Promise((r) => setTimeout(r, 75));
+            const b = bot.blockAt(carveSpot);
+            if (b && (isTargetJackItem(b, 'carved_pumpkin') || b.name.includes('carved'))) {
+              carvedBlock = b;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     // Oyulmuş balkabağını kaz/kır (balta ile stealth kırış)
     const blockToMine = carvedBlock || bot.blockAt(carveSpot);
-    if (blockToMine && blockToMine.name !== 'air' && !blockToMine.name.includes('air')) {
+    const wasSuccessfullyCarved = Boolean(
+      carvedBlock || (blockToMine && (isTargetJackItem(blockToMine, 'carved_pumpkin') || blockToMine.name.includes('carved')))
+    );
+
+    if (blockToMine && isPumpkinLikeBlock(blockToMine)) {
       let axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
       if (!axe) {
         await ensureAxeAvailable(bot, session, accountId, cfg);
         await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
-        axe = bot.inventory.items().find((it) => isTargetJackItem(it, 'axe'));
       }
-      if (axe) {
-        try {
-          await bot.equip(axe, 'hand');
-          await waitOnePhysicsTick(bot, 60);
-        } catch (_) {}
-      }
+      await equipJackHotbarItem(bot, 'axe');
+      await waitOnePhysicsTick(bot, 60);
+
       const mineCenter = blockToMine.position.offset(0.5, 0.5, 0.5);
       try {
         await lookAtBlockFaceStealth(bot, mineCenter);
@@ -8088,12 +8339,14 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       try {
         await bot.dig(blockToMine, 'ignore');
       } catch (_) {}
-      await new Promise((r) => setTimeout(r, 180));
+      await new Promise((r) => setTimeout(r, 190));
     }
 
-    carvedSoFar++;
-    if (carvedSoFar % 8 === 0 || carvedSoFar === 1) {
-      addLog(accountId, 'FENER', `✂️ Balkabağı oyuldu (${carvedSoFar}/${maxCount})...`, chalk.cyan);
+    if (wasSuccessfullyCarved) {
+      carvedSoFar++;
+      if (carvedSoFar % 8 === 0 || carvedSoFar === 1 || carvedSoFar === maxCount) {
+        addLog(accountId, 'FENER', `✂️ Balkabağı oyuldu (${carvedSoFar}/${maxCount})...`, chalk.cyan);
+      }
     }
 
     // 3. Kazma/kırma sonrası envanter kontrolü: Yer kalmadıysa tohumları sat
@@ -8106,7 +8359,6 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
       addLog(accountId, 'FENER', `⚠️ Envanter tohumlarla doldu (${curEmptyAfter} boş slot)! Yerdeki oyulmuş balkabaklarını toplayabilmek için tohumlar satılıyor...`, chalk.yellowBright);
       const sold = await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
       if (sold) {
-        // Envanter açıldı: yerdeki eşyaları güvenli pozisyonda bekleterek vakumla
         await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
         await new Promise((r) => setTimeout(r, 180));
       } else {
@@ -8119,7 +8371,7 @@ async function carvePumpkinsAtSpot(bot, session, accountId, carveSpot, maxCount,
   // Döngü sonunda yerdeki son oyulmuş balkabağı veya tohumları toplamak için güvenli pozisyonda bekle
   if (!isJackOLanternAbortRequested(session)) {
     await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
-    await new Promise((r) => setTimeout(r, 220));
+    await new Promise((r) => setTimeout(r, 240));
   }
   return carvedSoFar;
 }
@@ -8129,7 +8381,8 @@ async function craftJackOLanternsViaChatCommand(bot, accountId, session = null) 
 
   const carvedBefore = countInventoryItemByName(bot, null, 'carved_pumpkin');
   const torchesBefore = countInventoryItemByName(bot, null, 'torch');
-  if (carvedBefore <= 0 || torchesBefore <= 0) return 0;
+  const canCraft = Math.min(carvedBefore, torchesBefore);
+  if (canCraft <= 0) return 0;
 
   const lanternsBefore = countInventoryItemByName(bot, null, 'jack_o_lantern');
 
@@ -8173,43 +8426,53 @@ async function craftJackOLanternsViaChatCommand(bot, accountId, session = null) 
       }
     }
 
-    // Carved pumpkin yuvasını bul
-    let carvedSlot = -1;
-    for (let s = invStart; s < invEnd; s++) {
-      if (isTargetJackItem(win.slots[s], 'carved_pumpkin')) {
-        carvedSlot = s;
-        break;
+    // Çoklu yığın (multi-stack) desteği: Oyulmuş balkabağı veya meşale birden fazla slota bölünmüşse
+    // tüm slotlardaki malzemeler bitene kadar ızgaraya yerleştirip fener üret!
+    let torchTargetGridSlot = 4;
+    for (let round = 0; round < 6; round++) {
+      if (session && isJackOLanternAbortRequested(session)) break;
+      const curW = bot.currentWindow || win;
+      if (!curW || !Array.isArray(curW.slots)) break;
+
+      // Slot 1'de carved_pumpkin yoksa envanterden bulup yerleştir
+      if (!curW.slots[1] || !isTargetJackItem(curW.slots[1], 'carved_pumpkin')) {
+        let carvedSlot = -1;
+        for (let s = invStart; s < invEnd; s++) {
+          if (isTargetJackItem(curW.slots[s], 'carved_pumpkin')) {
+            carvedSlot = s;
+            break;
+          }
+        }
+        if (carvedSlot === -1) break;
+        await withPromiseTimeout(bot.clickWindow(carvedSlot, 0, 0), 1600);
+        await new Promise((r) => setTimeout(r, 115));
+        await withPromiseTimeout(bot.clickWindow(1, 0, 0), 1600);
+        await new Promise((r) => setTimeout(r, 115));
       }
-    }
 
-    // Torch yuvasını bul
-    let torchSlot = -1;
-    for (let s = invStart; s < invEnd; s++) {
-      if (isTargetJackItem(win.slots[s], 'torch')) {
-        torchSlot = s;
-        break;
+      // Meşale yuvasında (Slot 4 veya Slot 2) torch yoksa envanterden bulup yerleştir
+      const activeTorchGrid = (curW.slots[2] && isTargetJackItem(curW.slots[2], 'torch')) ? 2 : torchTargetGridSlot;
+      if (!curW.slots[activeTorchGrid] || !isTargetJackItem(curW.slots[activeTorchGrid], 'torch')) {
+        let torchSlot = -1;
+        for (let s = invStart; s < invEnd; s++) {
+          if (isTargetJackItem(curW.slots[s], 'torch')) {
+            torchSlot = s;
+            break;
+          }
+        }
+        if (torchSlot === -1) break;
+        await withPromiseTimeout(bot.clickWindow(torchSlot, 0, 0), 1600);
+        await new Promise((r) => setTimeout(r, 115));
+        await withPromiseTimeout(bot.clickWindow(torchTargetGridSlot, 0, 0), 1600);
+        await new Promise((r) => setTimeout(r, 150));
       }
-    }
-
-    if (carvedSlot !== -1 && torchSlot !== -1) {
-      // Carved pumpkin'i Slot 1'e yerleştir
-      await withPromiseTimeout(bot.clickWindow(carvedSlot, 0, 0), 1600);
-      await new Promise((r) => setTimeout(r, 120));
-      await withPromiseTimeout(bot.clickWindow(1, 0, 0), 1600);
-      await new Promise((r) => setTimeout(r, 120));
-
-      // Torch'u Slot 4'e yerleştir (veya shapeless Slot 2)
-      await withPromiseTimeout(bot.clickWindow(torchSlot, 0, 0), 1600);
-      await new Promise((r) => setTimeout(r, 120));
-      await withPromiseTimeout(bot.clickWindow(4, 0, 0), 1600);
-      await new Promise((r) => setTimeout(r, 160));
 
       // Çıktıyı bekle
       let outputReady = false;
       for (let waitTick = 0; waitTick < 8; waitTick++) {
-        await new Promise((r) => setTimeout(r, 80));
-        const curW = bot.currentWindow || win;
-        const outItem = curW && curW.slots[0];
+        await new Promise((r) => setTimeout(r, 75));
+        const wCheckOut = bot.currentWindow || win;
+        const outItem = wCheckOut && wCheckOut.slots[0];
         if (outItem && isTargetJackItem(outItem, 'jack_o_lantern')) {
           outputReady = true;
           break;
@@ -8217,23 +8480,30 @@ async function craftJackOLanternsViaChatCommand(bot, accountId, session = null) 
       }
 
       // Eğer Slot 1 + Slot 4 üretmediyse Slot 2'ye aktarmayı dene (Shapeless kontrolü)
-      if (!outputReady) {
+      if (!outputReady && torchTargetGridSlot === 4) {
         try {
           await withPromiseTimeout(bot.clickWindow(4, 0, 0), 1600);
           await new Promise((r) => setTimeout(r, 90));
           await withPromiseTimeout(bot.clickWindow(2, 0, 0), 1600);
-          await new Promise((r) => setTimeout(r, 160));
+          await new Promise((r) => setTimeout(r, 150));
+          const wCheckAlt = bot.currentWindow || win;
+          if (wCheckAlt && wCheckAlt.slots[0] && isTargetJackItem(wCheckAlt.slots[0], 'jack_o_lantern')) {
+            outputReady = true;
+            torchTargetGridSlot = 2;
+          }
         } catch (_) {}
       }
 
-      // Slot 0'dan Jack o' Lantern'ı al (Shift-click & Normal tık koruması)
+      if (!outputReady) break;
+
+      // Slot 0'dan Jack o' Lantern'ları al (Shift-click & Normal tık koruması)
       const maxPulls = Math.min(64, canCraft + 4);
       for (let pull = 0; pull < maxPulls; pull++) {
-        const curW = bot.currentWindow || win;
-        if (!curW || !curW.slots[0] || !isTargetJackItem(curW.slots[0], 'jack_o_lantern')) break;
+        const wPull = bot.currentWindow || win;
+        if (!wPull || !wPull.slots[0] || !isTargetJackItem(wPull.slots[0], 'jack_o_lantern')) break;
         try {
           await withPromiseTimeout(bot.clickWindow(0, 0, 1), 1600);
-          await new Promise((r) => setTimeout(r, 120));
+          await new Promise((r) => setTimeout(r, 115));
         } catch (_) {
           break;
         }
@@ -8248,7 +8518,7 @@ async function craftJackOLanternsViaChatCommand(bot, accountId, session = null) 
             await withPromiseTimeout(bot.clickWindow(0, 0, 0), 1600);
             await new Promise((r) => setTimeout(r, 90));
             await withPromiseTimeout(bot.clickWindow(emptySlot, 0, 0), 1600);
-            await new Promise((r) => setTimeout(r, 120));
+            await new Promise((r) => setTimeout(r, 115));
           } catch (_) {}
         }
       }
@@ -8282,6 +8552,7 @@ async function craftJackOLanternsViaChatCommand(bot, accountId, session = null) 
     } catch (_) {}
     await new Promise((r) => setTimeout(r, 190));
   } catch (err) {
+    addLog(accountId, 'FENER', `⚠️ /craft fener üretiminde hata: ${err.message}`, chalk.yellow);
     try { bot.closeWindow(bot.currentWindow || win); } catch (_) {}
   }
 
@@ -8312,6 +8583,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
   const homePos = bot.entity.position.clone();
   session.abortJackOLantern = false;
   session.isJackOLanternRunning = true;
+  session.isDepositing = true;
   broadcastState();
 
   try {
@@ -8330,8 +8602,8 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     await ensureAxeAvailable(bot, session, accountId, cfg);
     if (isJackOLanternAbortRequested(session)) return false;
 
-    // ÖN KONTROL: Tohumlar envanteri doldurduysa ve envanterde hiç balkabağı yoksa sat
-    await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
+    // ÖN KONTROL: Tohumlar envanterde biriktiyse ve envanterde hiç balkabağı yoksa proaktif olarak sat
+    await checkAndSellInventoryIfFull(bot, accountId, session, cfg, true);
     if (isJackOLanternAbortRequested(session)) return false;
 
     // 2. AŞAMA: Balkabağı (pumpkin) ve Meşale (torch) çekimi
@@ -8383,7 +8655,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     if (pumpkinsToCarve > 0) {
       const carveSpot = resolveCarveSpot(bot, cfg.carveSpot);
       
-      // Güvenli oyma mesafesi ayarla (Vulcan safe: 1.6 - 2.5m arası, bloğun üstünde ASLA durmamalı)
+      // Güvenli oyma mesafesi ayarla (Vulcan safe & eşya vakumlama menzili: 0.90m - 1.95m, bloğun üstünde ASLA durmamalı)
       const isPosSafe = await ensureBotPositionedForCarving(bot, session, carveSpot, accountId);
       if (!isPosSafe) {
         addLog(accountId, 'FENER', '⚠️ Bot oyma noktasına güvenli mesafede konumlandırılamadı (blok üstünde kalındı), bu tur atlanıyor.', chalk.red);
@@ -8402,11 +8674,17 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     // 4. AŞAMA: /craft ile Jack o' Lantern Üretimi
     curCarved = countInventoryItemByName(bot, null, 'carved_pumpkin');
     curTorches = countInventoryItemByName(bot, null, 'torch');
-    const canCraft = Math.min(curCarved, curTorches);
+    let canCraft = Math.min(curCarved, curTorches);
 
     if (canCraft > 0) {
       addLog(accountId, 'FENER', `🔨 /craft ile ${canCraft} adet Balkabağı Feneri üretiliyor...`, chalk.yellowBright);
-      const crafted = await craftJackOLanternsViaChatCommand(bot, accountId, session);
+      let crafted = await craftJackOLanternsViaChatCommand(bot, accountId, session);
+      // Eğer sunucu gecikmesi sebebiyle envanterde hala oyulmuş balkabağı + meşale kaldıysa 1 kez daha tamamla
+      const remCarvedAfterCraft = countInventoryItemByName(bot, null, 'carved_pumpkin');
+      const remTorchesAfterCraft = countInventoryItemByName(bot, null, 'torch');
+      if (remCarvedAfterCraft > 0 && remTorchesAfterCraft > 0 && !isJackOLanternAbortRequested(session)) {
+        crafted += await craftJackOLanternsViaChatCommand(bot, accountId, session);
+      }
       addLog(accountId, 'FENER', `✨ ${crafted} adet Balkabağı Feneri (Jack o' Lantern) üretildi!`, chalk.greenBright);
     }
     if (isJackOLanternAbortRequested(session)) return false;
@@ -8419,8 +8697,8 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     }
 
     // Dikkat: Kullanıcı isteği gereği balkabağı tohumları fener/balkabağı sandığına konmaz, envanterde biriktirilir.
-    // Envanter dolduğunda ve envanterde hiç balkabağı kalmadığında /sat hepsi yapılarak satılır.
-    await checkAndSellInventoryIfFull(bot, accountId, session, cfg);
+    // Tur sonunda envanterde hiç balkabağı kalmadıysa ve tohum biriktiyse proaktif olarak /sat hepsi yapılır.
+    await checkAndSellInventoryIfFull(bot, accountId, session, cfg, true);
 
     // Başlangıç konumuna geri dön
     await navigateNearSpawnerOrChest(bot, session, homePos, 1.8);
@@ -8437,6 +8715,7 @@ async function executeJackOLanternRoutine(accountId, isManual = false) {
     return false;
   } finally {
     session.isJackOLanternRunning = false;
+    session.isDepositing = false;
     broadcastState();
   }
 }
@@ -8672,9 +8951,10 @@ function vectorToFaceDirection(v) {
  * çağırarak 8.594°/tick non-GCD lookingTask başlatır ve Vulcan Rotation/FastAim tetikler.
  * Bu fonksiyon stealth bakış kullanır, doğru el sallama (arm_animation) paketini gönderir.
  */
-async function activateBlockStealth(bot, block, faceVector = new Vec3(0, 1, 0), cursorPos = new Vec3(0.5, 0.5, 0.5)) {
+async function activateBlockStealth(bot, block, faceVector = new Vec3(0, 1, 0), cursorPos = null) {
   if (!bot || !bot.entity || !block) return;
-  const clickPos = block.position.offset(cursorPos.x, cursorPos.y, cursorPos.z);
+  const effectiveCursor = cursorPos || computeStealthFaceDelta(faceVector);
+  const clickPos = block.position.offset(effectiveCursor.x, effectiveCursor.y, effectiveCursor.z);
   await lookAtBlockFaceStealth(bot, clickPos);
   await waitOnePhysicsTick(bot, 60);
 
@@ -8682,33 +8962,57 @@ async function activateBlockStealth(bot, block, faceVector = new Vec3(0, 1, 0), 
   const pos = block.position;
 
   try {
-    if (bot.supportFeature('blockPlaceHasHeldItem')) {
+    if (bot.supportFeature && bot.supportFeature('blockPlaceHasHeldItem')) {
       const Item = require('prismarine-item')(bot.registry);
       bot._client.write('block_place', {
         location: pos,
         direction: directionNum,
         heldItem: Item.toNotch(bot.heldItem),
-        cursorX: Math.floor(cursorPos.x * 16),
-        cursorY: Math.floor(cursorPos.y * 16),
-        cursorZ: Math.floor(cursorPos.z * 16)
+        cursorX: Math.floor(effectiveCursor.x * 16),
+        cursorY: Math.floor(effectiveCursor.y * 16),
+        cursorZ: Math.floor(effectiveCursor.z * 16)
       });
-    } else if (bot.supportFeature('blockPlaceHasHandAndIntCursor')) {
+    } else if (bot.supportFeature && bot.supportFeature('blockPlaceHasHandAndIntCursor')) {
       bot._client.write('block_place', {
         location: pos,
         direction: directionNum,
         hand: 0,
-        cursorX: Math.floor(cursorPos.x * 16),
-        cursorY: Math.floor(cursorPos.y * 16),
-        cursorZ: Math.floor(cursorPos.z * 16)
+        cursorX: Math.floor(effectiveCursor.x * 16),
+        cursorY: Math.floor(effectiveCursor.y * 16),
+        cursorZ: Math.floor(effectiveCursor.z * 16)
       });
-    } else if (bot.supportFeature('blockPlaceHasHandAndFloatCursor')) {
+    } else if (bot.supportFeature && bot.supportFeature('blockPlaceHasHandAndFloatCursor')) {
       bot._client.write('block_place', {
         location: pos,
         direction: directionNum,
         hand: 0,
-        cursorX: cursorPos.x,
-        cursorY: cursorPos.y,
-        cursorZ: cursorPos.z
+        cursorX: effectiveCursor.x,
+        cursorY: effectiveCursor.y,
+        cursorZ: effectiveCursor.z
+      });
+    } else if (bot.supportFeature && bot.supportFeature('blockPlaceHasInsideBlock')) {
+      bot._client.write('block_place', {
+        location: pos,
+        direction: directionNum,
+        hand: 0,
+        cursorX: effectiveCursor.x,
+        cursorY: effectiveCursor.y,
+        cursorZ: effectiveCursor.z,
+        insideBlock: false,
+        sequence: 0,
+        worldBorderHit: false
+      });
+    } else if (bot._client && typeof bot._client.write === 'function') {
+      bot._client.write('block_place', {
+        location: pos,
+        direction: directionNum,
+        hand: 0,
+        cursorX: effectiveCursor.x,
+        cursorY: effectiveCursor.y,
+        cursorZ: effectiveCursor.z,
+        insideBlock: false,
+        sequence: 0,
+        worldBorderHit: false
       });
     } else {
       await bot.activateBlock(block, faceVector);
@@ -13466,11 +13770,13 @@ function findSafeTwoWayChestRoute(bot, session, targetBlockPos, maxNodes = 2000)
  * Eğer havada asılı inşaat ile sandık arasında uçurum/boşluk varsa (veya geri çıkış yolu yoksa),
  * ASLA hareket etmez ve aşağı düşmez!
  */
-async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs = 15000, precomputedPath = null) {
+async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs = 15000, precomputedPath = null, stopReach = 3.75) {
   if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
   const botPos = bot.entity.position;
   const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
-  if (botPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= 3.85) return true;
+  const startSameCol = Math.floor(botPos.x) === targetBlockPos.x && Math.floor(botPos.z) === targetBlockPos.z;
+  const startAxisDist = Math.max(Math.abs(botPos.x - targetCenter.x), Math.abs(botPos.z - targetCenter.z));
+  if (!startSameCol && startAxisDist >= 0.84 && botPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= stopReach) return true;
 
   let path = precomputedPath;
   if (!path) {
@@ -13490,7 +13796,7 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
   }
 
   if (!path || path.length === 0) {
-    return bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.1;
+    return !startSameCol && bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter) <= 4.1;
   }
 
   // Bulunan rotadaki her adımı tam merkez hizalaması (<= 0.24m) ve düşme korumasıyla yürü
@@ -13504,9 +13810,11 @@ async function safelyNavigateToChest(bot, session, targetBlockPos, maxTimeoutMs 
 
       const curPos = bot.entity.position;
       const curEye = curPos.offset(0, 1.62, 0);
+      const curSameCol = Math.floor(curPos.x) === targetBlockPos.x && Math.floor(curPos.z) === targetBlockPos.z;
+      const curAxisDist = Math.max(Math.abs(curPos.x - targetCenter.x), Math.abs(curPos.z - targetCenter.z));
 
-      // Sandığa yeterince yaklaştıysak (<= 3.75m) ve merkezimiz sağlam zemindeyse dur
-      if (curEye.distanceTo(targetCenter) <= 3.75) {
+      // Hedefe yeterince yaklaştıysak (<= stopReach), hedef bloğun üstünde değilsek ve merkezimiz sağlam zemindeyse dur
+      if (!curSameCol && curAxisDist >= 0.84 && curEye.distanceTo(targetCenter) <= stopReach) {
         const floorBelow = bot.blockAt(new Vec3(Math.floor(curPos.x), Math.round(curPos.y) - 1, Math.floor(curPos.z)));
         if (floorBelow && isBlockWalkableFloor(floorBelow, session)) {
           break;
@@ -15391,9 +15699,14 @@ function startSessionAntiAfk(accountId) {
       !currentAcc ||
       currentAcc.antiAfk === false ||
       session.isDepositing ||
+      session.isJackOLanternRunning ||
+      session.isSpawnerRoutineRunning ||
+      session.isMinerChestSelling ||
+      session.isRepairing ||
       session.isDropping ||
       session.isEating ||
       session.isSolvingCaptcha ||
+      Boolean(bot.currentWindow) ||
       isBuilderActive ||
       isFarmingActive
     ) return;
