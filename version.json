@@ -1,9 +1,9 @@
 {
-  "buildId": "20261030_jack_lantern_chest_isolation_fix_v67",
-  "version": "2.2.36",
-  "releaseNotes": "Balkabağı Modülü ve Vulcan Anti-Cheat Kusursuz Güvenlik Güncellemesi (v67): 1) Vulcan kick ([Vulcan] Unfair Advantage) tamamen engellendi: Blok yerleştirme, oyma (makas) ve kırma işlemlerinde stealth GCD-kuantize bakış uygulandı, blokla kendi gövdesinin kesişmesi (Scaffold Self-Intersection) ve hareket halindeyken blok koyma önlendi, madencilikte dahili lookAt devreden çıkarıldı. 2) Sandık izolasyonu kesinleştirildi: Fener sandığına ham veya oyulmuş balkabağı aktarılması kesin olarak yasaklandı, sandık çakışma kontrollerine oyulmuş balkabağı ve fener filtreleri eklendi. 3) /craft işleminde tüm fenerlerin eksiksiz üretilmesi sağlandı. 4) Otomatik güncelleme CDN önbellek uyumsuzluğu kalıcı olarak giderildi.",
+  "buildId": "20261030_jack_perfect_audit_v68",
+  "version": "2.2.37",
+  "releaseNotes": "Balkabağı Feneri (Jack o' Lantern) Modülü Tam Denetim ve Mükemmelleştirme Güncellemesi (v68): 1) /craft penceresinde fenerlerin alınmasını engelleyen canCraft değişken hatası (ReferenceError) ve çoklu slot (multi-stack) oyulmuş balkabağı/meşale birleştirme sorunu tamamen giderildi. 2) Vulcan Anti-Cheat koruması kusursuzlaştırıldı: 1.14-1.21+ sunucularda makasla oyma (blockPlaceHasInsideBlock) ve dinamik yüzey koordinatı (cursorY=1.0 + mikro teğet varyasyonu) eklendi, sessiz envanter tıklamalarını (window_click) sıfıra indiren akıllı hotbar kuşanma sistemi (equipJackHotbarItem) devreye alındı, fener döngüsü çalışırken Anti-AFK ve otomatik yemek/komut çakışmaları tamamen izole edildi. 3) Oyma noktası mesafe matematiği (maxAxisDist >= 0.84m, yatay 0.90m-1.95m) ile hem blok içi kesişme (Self-Intersection) engellendi hem de Vanilla 1.30m eşya vakumlama menzili garanti altına alındı. 4) Sandık açma ve aktarımda mesafe sıralaması, diğer rol sandıklarını hariç tutma ve proaktif tohum satışı eklendi.",
   "files": {
-    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
-    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/a280a1cbd4f90876bc72dcd8b2cefd14474ba4e7/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/ed0ddeedb8b7e23d7f4a27228b0168240fd3e7b9/public/index.html"
   }
 }
