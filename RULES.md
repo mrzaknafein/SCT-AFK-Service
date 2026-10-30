@@ -1,6 +1,6 @@
 # 🛡️ SCT AFK SERVICE - GELİŞTİRİCİ VE ANTIGRAVITY REHBERİ (RULES.md)
 
-Bu belge, SCT AFK Service projesinde geliştirme yapan tüm geliştiriciler ve Google Antigravity yapay zeka asistanları için **bağlayıcı kuralları ve mimari standartları** içerir. Projede herhangi bir değişiklik yapmadan önce bu kurallara uyulmalıdır.
+Bu belge, SCT AFK Service projesinde geliştirme yapan tüm geliştiriciler (mrzaknafein, kheromieallah) ve Google Antigravity yapay zeka asistanları için **bağlayıcı kuralları ve mimari standartları** içerir. Projede herhangi bir değişiklik yapmadan önce bu kurallara uyulmalıdır.
 
 ---
 
@@ -22,12 +22,14 @@ Sunuculardaki (Minertown vb.) Vulcan anti-cheat sistemine yakalanmamak için aş
    * Güvenli taban aralık: **260ms - 315ms** arasındadır.
    * *Neden:* 200ms ve altı hızlar Vulcan FastPlace (<4 tick) bayrağı üretir ve bot anında kicklenir (`[Vulcan] Unfair Advantage`).
 2. **Sprint (Koşma) Yasağı:**
-   * Otomatik inşaat (Auto-Builder) modunda blok yerleştirirken `sprint: true` yapılmamalıdır (`bot.setControlState('sprint', false)`).
+   * Otomatik inşaat (Auto-Builder) modunda ve blok yerleştirirken/kazarken `sprint: true` yapılmamalıdır (`bot.setControlState('sprint', false)`).
    * *Neden:* Blok koyarken sprint atmak Vulcan Scaffold Type G bayrağını tetikler.
 3. **Ada Boşluk & Kenar Kontrolü (Sneak):**
    * Botlar yalnızca fiziksel olarak ada kenarına yaklaştığında (boşluğa mesafe `< 0.22m`) sneak yapmalıdır (`isNearIslandEdge`).
    * Düz yolda yürürken veya tarla modlarında botlar gereksiz yere sneak kilidine alınmamalıdır.
-4. **Stabil Yedek Koruması:**
+4. **Pencere Açıkken Hareket Yasağı (InventoryMove):**
+   * Sandık, fıçı veya `/craft` menüsü açıkken (`bot.currentWindow`) bot kesinlikle hareket ettirilmemelidir. Pencere kapatıldıktan sonra yürüyüş başlatılmalıdır.
+5. **Stabil Yedek Koruması:**
    * `.sct-afk-engine/index.js.v38_stable_backup` dosyası her zaman en güvenilir temel sürümdür. Bu dosya asla silinmemeli veya değiştirilmemelidir.
 
 ---
@@ -50,14 +52,14 @@ Sunuculardaki (Minertown vb.) Vulcan anti-cheat sistemine yakalanmamak için aş
 
 ---
 
-## 📦 4. Sürüm Yönetimi ve GitHub Güncelleme Kuralları
+## 📦 4. Sürüm Yönetimi ve GitHub Dağıtım Kuralları (DOĞRUDAN MAIN DAĞITIMI)
 
-İstemciler güncellemeleri GitHub (`mrzaknafein/SCT-AFK-Service`) üzerinden otomatik indirir. Güncelleme yayınlarken:
+İstemciler güncellemeleri GitHub (`mrzaknafein/SCT-AFK-Service`) **`main`** dalı üzerinden otomatik olarak indirir. Dağıtıma güncelleme çıkarırken:
 
-1. `.sct-afk-engine/index.js` dosyasının 32. satırındaki `ENGINE_BUILD_ID` güncellenmelidir.
-2. `version.json` dosyasındaki `buildId` ve `version` güncellenmelidir.
+1. `.sct-afk-engine/index.js` dosyasının 32. satırındaki `ENGINE_BUILD_ID` bir üst sürüme güncellenmelidir (örn: `..._v67`).
+2. `version.json` dosyasındaki `buildId` ve `version` birebir aynı yapım kimliğiyle güncellenmelidir.
 3. **KRİTİK:** `index.js` içindeki `ENGINE_BUILD_ID` ile `version.json` içindeki `buildId` **BİREBİR AYNI OLMALIDIR**. Aksi halde istemcilerin yerleşik güvenlik kontrolü güncellemeyi iptal eder!
-4. Değişiklikler test edildikten sonra `minecraft-afk-client/GITHUB_YUKLENECEKLER/` içine kopyalanmalı ve GitHub `main` dalına push edilmelidir.
+4. **DOĞRUDAN DAĞITIM KURALI:** Tüm değişiklikler test edildikten sonra **doğrudan `main` dalına** push edilmelidir. Kodlar `dev` dalında bekletilmez; doğrudan `main` üzerinden dağıtıma çıkar.
 
 ---
 
@@ -79,12 +81,15 @@ Windows kullanıcıları için EXE'ler harici Node.js veya Electron kurulumu ger
 
 ---
 
-## 👥 6. Çoklu Geliştirici (Ortak Çalışma) Kuralları
+## 👥 6. Çoklu Geliştirici (Ortak Çalışma) & Doğrudan Dağıtım Kuralları
 
-1. **Dal (Branch) Stratejisi:**
-   * `main`: Canlı ve stabil daldır. Kullanıcılar buradan otomatik güncellenir.
-   * `dev` veya `feature/<ad>`: Geliştirme ve test dalıdır. Yeni özellikler buraya yazılır, test edildikten sonra `main` ile birleştirilir.
-2. **Hesap İsimleri:**
-   * Test ederken her geliştirici farklı bot hesap adları (örn: `zaknafein_dev1`, `zaknafein_dev2`) kullanmalıdır. Aynı isimle giriş yapılırsa sunucu diğer geliştiricinin botunu oyundan kickler.
-3. **VPS Yönetimi:**
+1. **Tek ve Doğrudan Dağıtım Dalı (`main`):**
+   * **Tüm geliştirmeler (yeni özellikler, iyileştirmeler ve hata düzeltmeleri) DOĞRUDAN `main` dalına commit/push edilir.**
+   * `dev` dalı artık bekleme veya geliştirme havuzu olarak KULLANILMAZ; geliştirmeler `dev`e atılmaz.
+   * Arkadaşınızın (kheromieallah) veya sizin yapacağınız geliştirmeler doğrudan `main`e gönderildiği an, sahadaki tüm kullanıcılar ve botlar yeni sürümü anında alıp dağıtımdan çalıştırır.
+2. **Sürüm Kimliği (Build ID) Eşitleme Zorunluluğu:**
+   * Yapılan her geliştirmede `index.js` (Satır 32) ve `version.json` içindeki `buildId` artırılıp eşitlenerek `main`e pushlanmalıdır.
+3. **Hesap İsimleri:**
+   * Test ederken her geliştirici farklı bot hesap adları (örn: `zaknafein_dev1`, `khero_dev1`) kullanmalıdır. Aynı isimle giriş yapılırsa sunucu diğer geliştiricinin botunu oyundan kickler.
+4. **VPS Yönetimi:**
    * Her iki geliştirici de kendi bilgisayarında `SCT Admin Panel.exe` açarak aynı VPS (`148.135.181.63:4890`) üzerinden tüm filoyu ortaklaşa canlı takip edebilir.
