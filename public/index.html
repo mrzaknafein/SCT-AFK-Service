@@ -4219,9 +4219,15 @@
       const showProLock = syncProTabLockState();
       if (showProLock) return;
 
-      if (tabName === 'map') {
+      if (tabName === 'chat') {
+        renderInspector();
+        renderLogs();
+      } else if (tabName === 'inv') {
+        renderInventoryAndWindow();
+      } else if (tabName === 'map') {
         fetchAndRenderRadar();
       } else if (tabName === 'builder') {
+        renderBuilderPanel();
         fetchBuilderPreview();
       } else if (tabName === 'settings') {
         populateSettingsInputs();
@@ -4444,12 +4450,19 @@
 
     let pendingRenderFrame = null;
     function scheduleRenderAll() {
+      if (document.hidden) return;
       if (pendingRenderFrame) return;
       pendingRenderFrame = requestAnimationFrame(() => {
         pendingRenderFrame = null;
         renderAll(false);
       });
     }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && appState && appState.config) {
+        renderAll(true);
+      }
+    });
 
     let activeSSE = null;
     let isWaitingForServerRestart = false;
@@ -4564,7 +4577,7 @@
             scheduleRenderAll();
           } else if (payload.type === 'log') {
             logs.push(payload.data);
-            if (logs.length > 500) logs.shift();
+            if (logs.length > 200) logs.shift();
             appendSingleLog(payload.data);
           } else if (payload.type === 'sound') {
             playAlertSound(payload.data.alertType || 'damage');
@@ -4639,6 +4652,13 @@
 
         osc.connect(gain);
         gain.connect(audioCtx.destination);
+
+        osc.onended = () => {
+          try {
+            osc.disconnect();
+            gain.disconnect();
+          } catch (e) {}
+        };
 
         osc.start(startTime);
         osc.stop(stopTime + 0.02);
@@ -4824,8 +4844,17 @@
       renderServerList();
       renderAccountList();
       renderInspector();
-      renderInventoryAndWindow();
-      renderBuilderPanel();
+      const curBot = selectedAccountId && appState.bots ? appState.bots[selectedAccountId] : null;
+      const invTabCountEl = document.getElementById('invTabCount');
+      if (invTabCountEl) {
+        invTabCountEl.textContent = (curBot && Array.isArray(curBot.inventory)) ? curBot.inventory.length : 0;
+      }
+      if (activeTabName === 'inv') {
+        renderInventoryAndWindow();
+      }
+      if (activeTabName === 'builder') {
+        renderBuilderPanel();
+      }
       if (includeLogs) {
         renderLogs();
       }
@@ -5320,15 +5349,9 @@
 
       const players = b.players || [];
       document.getElementById('playerCount').textContent = players.length;
-      const playersHtml = players.length
-        ? players.map(p => `
-            <div class="player-item">
-              <img src="https://mc-heads.net/avatar/${encodeURIComponent(p)}/18" alt="" />
-              <span>${escapeHtml(p)}</span>
-            </div>
-          `).join('')
-        : `<div class="empty-state" style="padding: 15px 0;">Bot çevrimiçi değil</div>`;
-      setHtmlIfChanged(document.getElementById('playersList'), playersHtml);
+      if (activeTabName === 'chat' && !document.hidden) {
+        renderPlayersListOptimized(players);
+      }
 
       renderScoreboard(b);
     }
@@ -5353,6 +5376,43 @@
           if (btn) btn.textContent = '▲';
         }
       }
+    }
+
+    let lastPlayersRenderTime = 0;
+    let lastPlayersSignature = '';
+    function renderPlayersListOptimized(players) {
+      const listEl = document.getElementById('playersList');
+      if (!listEl) return;
+      if (!players || players.length === 0) {
+        lastPlayersSignature = '__empty__';
+        setHtmlIfChanged(listEl, '<div class="empty-state" style="padding: 15px 0;">Bot çevrimiçi değil</div>');
+        return;
+      }
+      const sig = players.join('|');
+      if (sig === lastPlayersSignature) return;
+      const now = Date.now();
+      if (lastPlayersSignature && lastPlayersSignature !== '__empty__' && now - lastPlayersRenderTime < 2500) {
+        return;
+      }
+      lastPlayersRenderTime = now;
+      lastPlayersSignature = sig;
+
+      const MAX_VISIBLE_PLAYERS = 60;
+      const shown = players.slice(0, MAX_VISIBLE_PLAYERS);
+      const extraCount = players.length - shown.length;
+      let html = shown.map((p, idx) => `
+        <div class="player-item">
+          ${idx < 25
+            ? `<img src="https://mc-heads.net/avatar/${encodeURIComponent(p)}/18" alt="" loading="lazy" decoding="async" />`
+            : `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#4ade80;margin:0 5px;flex-shrink:0;"></span>`
+          }
+          <span>${escapeHtml(p)}</span>
+        </div>
+      `).join('');
+      if (extraCount > 0) {
+        html += `<div class="player-item" style="justify-content:center;color:var(--text-muted);font-size:11px;padding:6px;">+ ${extraCount} diğer oyuncu çevrimiçi</div>`;
+      }
+      setHtmlIfChanged(listEl, html);
     }
 
     function renderScoreboard(b) {
@@ -5596,6 +5656,9 @@
         nextUrl = `https://assets.mcasset.cloud/1.20.4/assets/minecraft/textures/block/${base}.png`;
       }
 
+      if (resolvedItemTextureCache.size > 300) {
+        resolvedItemTextureCache.clear();
+      }
       if (nextUrl) {
         resolvedItemTextureCache.set(clean, nextUrl);
         img.src = nextUrl;
@@ -5977,18 +6040,58 @@
       `;
     }
 
+    const MAX_DOM_LOGS = 200;
+    let pendingDomLogs = [];
+    let pendingLogFlushFrame = null;
+
     function renderLogs() {
+      pendingDomLogs = [];
+      if (pendingLogFlushFrame) {
+        cancelAnimationFrame(pendingLogFlushFrame);
+        pendingLogFlushFrame = null;
+      }
       const container = document.getElementById('chatLogs');
-      const filtered = logs.filter(shouldShowLog);
+      if (!container) return;
+      const filtered = logs.filter(shouldShowLog).slice(-MAX_DOM_LOGS);
       container.innerHTML = filtered.map(formatLogHtml).join('');
       container.scrollTop = container.scrollHeight;
     }
 
+    function flushPendingDomLogs() {
+      pendingLogFlushFrame = null;
+      if (pendingDomLogs.length === 0) return;
+      const container = document.getElementById('chatLogs');
+      if (!container) {
+        pendingDomLogs = [];
+        return;
+      }
+      if (pendingDomLogs.length >= MAX_DOM_LOGS) {
+        renderLogs();
+        return;
+      }
+      const batch = pendingDomLogs;
+      pendingDomLogs = [];
+      container.insertAdjacentHTML('beforeend', batch.map(formatLogHtml).join(''));
+      while (container.childElementCount > MAX_DOM_LOGS) {
+        container.removeChild(container.firstElementChild);
+      }
+      if (activeTabName === 'chat' && !document.hidden) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
     function appendSingleLog(entry) {
       if (!shouldShowLog(entry)) return;
-      const container = document.getElementById('chatLogs');
-      container.insertAdjacentHTML('beforeend', formatLogHtml(entry));
-      container.scrollTop = container.scrollHeight;
+      if (document.hidden || activeTabName !== 'chat') {
+        return;
+      }
+      pendingDomLogs.push(entry);
+      if (pendingDomLogs.length > MAX_DOM_LOGS) {
+        pendingDomLogs.shift();
+      }
+      if (!pendingLogFlushFrame) {
+        pendingLogFlushFrame = requestAnimationFrame(flushPendingDomLogs);
+      }
     }
 
     function clearLogs() {

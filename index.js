@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261031_console_layout_fix_v71';
+const ENGINE_BUILD_ID = '20261101_memory_leak_fix_v72';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -2512,9 +2512,9 @@ function buildRadarSnapshot(accountId, query = {}) {
 
 let broadcastDebounceTimer = null;
 let lastStateBroadcastTime = 0;
-const MIN_STATE_BROADCAST_INTERVAL_MS = 140;
+const MIN_STATE_BROADCAST_INTERVAL_MS = 250;
 
-function debouncedBroadcastState(delay = 120) {
+function debouncedBroadcastState(delay = 180) {
   if (broadcastDebounceTimer) return;
   broadcastDebounceTimer = setTimeout(() => {
     broadcastDebounceTimer = null;
@@ -2528,7 +2528,9 @@ function flushBroadcastStateNow() {
     broadcastDebounceTimer = null;
   }
   lastStateBroadcastTime = Date.now();
-  broadcastSSE('state', getPublicState());
+  if (sseClients.size > 0) {
+    broadcastSSE('state', getPublicState());
+  }
   updateDiscordRPC();
 }
 
@@ -2563,7 +2565,7 @@ function addLog(accountId, tag, message, colorFn = chalk.white) {
   };
 
   recentLogs.push(entry);
-  if (recentLogs.length > 400) recentLogs.shift();
+  if (recentLogs.length > 200) recentLogs.shift();
 
   const prefix = username ? chalk.cyan(`[${username}] `) : '';
   console.log(`${chalk.gray(`[${time}]`)} ${prefix}${colorFn(`[${tag}]`)} ${message}`);
