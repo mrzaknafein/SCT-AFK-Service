@@ -4,7 +4,8 @@
   "releaseDate": "2026-10-31T12:59:55.170Z",
   "releaseNotes": "Arayüz & Gelişmiş Ayarlar Düzeltmesi (v70): Otomasyon sekmesinin alt kısmındaki \"Gelişmiş Ayarlar (Tamir Komutu, Satış Komutu & Süreler)\" menüsünün Flexbox sıkışması (flex-shrink + overflow:hidden) nedeniyle kesilmesi ve açıldığında görünmemesi sorunu giderildi. Tüm sekme panellerine dikey kaydırma koruması (flex-shrink: 0, min-height: 0) ve menü açıldığında otomatik görünür alana kaydırma (scrollIntoView) eklendi.",
   "files": {
-    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
-    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
-  }
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/4897b8160274bd35d1247c34da6937228bf27831/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/4ba3d2f5e120ee983846ea91daa0ec5e1d374c14/public/index.html"
+  },
+  "commitSha": "4ba3d2f5e120ee983846ea91daa0ec5e1d374c14"
 }
