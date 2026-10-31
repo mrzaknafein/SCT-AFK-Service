@@ -1,11 +1,12 @@
 {
-  "version": "2.2.40",
-  "buildId": "20261031_console_layout_fix_v71",
-  "releaseDate": "2026-10-31T13:09:28.670Z",
-  "releaseNotes": "Konsol & Gelişmiş Ayarlar Düzeni Düzeltmesi (v71): Konsol sekmesindeki sohbet ekranı (sol) ile Sunucu Paneli / Oyuncular listesi (sağ) yan yana (yatay) eski düzenine geri getirildi, Otomasyon sekmesindeki Gelişmiş Ayarlar açılır menüsünün tam görünümü ve otomatik kaydırma özelliği korundu.",
-  "files": {
-    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/5fba77d2fc1ab2678abd57833f8e534ba7e438b9/index.js",
-    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/5fba77d2fc1ab2678abd57833f8e534ba7e438b9/public/index.html"
-  },
-  "commitSha": "5fba77d2fc1ab2678abd57833f8e534ba7e438b9"
+  "version": "2.2.41",
+  "buildId": "20261101_memory_leak_fix_v72",
+  "commit": "d01472d3c1c3fa0ad0c224cfe235afa3f33a7568",
+  "releasedAt": "2026-10-31T22:17:39.258Z",
+  "notes": "Konsol log DOM birikmesi (200 satir siniri), 180+ oyuncu avatar bellek sismesi, arka plan sekme render yukleri ve WebAudio dugum sizintisi giderilerek Chromium Out of Memory hatasi cozuldu (v2.2.41).",
+  "files": [
+    "index.js",
+    "public/index.html",
+    "package.json"
+  ]
 }
