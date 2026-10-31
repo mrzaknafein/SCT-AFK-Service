@@ -1,11 +1,11 @@
 {
-  "version": "2.2.39",
-  "buildId": "20261031_advanced_panel_scroll_v70",
-  "releaseDate": "2026-10-31T13:01:43.347Z",
-  "releaseNotes": "Arayüz & Gelişmiş Ayarlar Düzeltmesi (v70): Otomasyon sekmesinin alt kısmındaki \"Gelişmiş Ayarlar (Tamir Komutu, Satış Komutu & Süreler)\" menüsünün Flexbox sıkışması (flex-shrink + overflow:hidden) nedeniyle kesilmesi ve açıldığında görünmemesi sorunu giderildi. Tüm sekme panellerine dikey kaydırma koruması (flex-shrink: 0, min-height: 0) ve menü açıldığında otomatik görünür alana kaydırma (scrollIntoView) eklendi.",
+  "version": "2.2.40",
+  "buildId": "20261031_console_layout_fix_v71",
+  "releaseDate": "2026-10-31T13:09:28.670Z",
+  "releaseNotes": "Konsol & Gelişmiş Ayarlar Düzeni Düzeltmesi (v71): Konsol sekmesindeki sohbet ekranı (sol) ile Sunucu Paneli / Oyuncular listesi (sağ) yan yana (yatay) eski düzenine geri getirildi, Otomasyon sekmesindeki Gelişmiş Ayarlar açılır menüsünün tam görünümü ve otomatik kaydırma özelliği korundu.",
   "files": {
-    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/14773adada08e23e01497b6c9c8bd7eeb67ee8d0/index.js",
-    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/14773adada08e23e01497b6c9c8bd7eeb67ee8d0/public/index.html"
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/5fba77d2fc1ab2678abd57833f8e534ba7e438b9/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/5fba77d2fc1ab2678abd57833f8e534ba7e438b9/public/index.html"
   },
-  "commitSha": "14773adada08e23e01497b6c9c8bd7eeb67ee8d0"
+  "commitSha": "5fba77d2fc1ab2678abd57833f8e534ba7e438b9"
 }
