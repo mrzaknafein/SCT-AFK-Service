@@ -1,11 +1,10 @@
 {
-  "version": "2.2.38",
-  "buildId": "20261030_zero_refused_v69",
-  "releaseDate": "2026-10-30T19:45:49.932Z",
-  "releaseNotes": "Bağlantı & Başlatma (v69): Güncelleme sonrası ve ilk açılışta oluşan ERR_CONNECTION_REFUSED (\"127.0.0.1 bağlanmayı reddetti\") ekranı 4 katmanlı koruma ile tamamen giderildi. 1) Güncelleme sırasında sabit zamanlayıcıyla kör yenileme kaldırıldı; yeni motor HTTP 200 yanıtı verene kadar akıllı bekleme ekranı (waitForServerAndReload) eklendi. 2) Tarayıcı düzeyinde /sw.js Service Worker koruması eklendi. 3) Hot-Update sırasında eski sunucu soketleri yeni işlem başlamadan önce temiz kapatılır ve EADDRINUSE çoklu yeniden deneme döngüsü eklendi. 4) Launcher.cs ilk açılışta ham TCP yerine gerçek HTTP 200 (IsServerHttpReady) doğrulaması yapar ve çalışan güncel motoru gereksiz yere kapatmaz.",
+  "version": "2.2.39",
+  "buildId": "20261031_advanced_panel_scroll_v70",
+  "releaseDate": "2026-10-31T12:59:55.170Z",
+  "releaseNotes": "Arayüz & Gelişmiş Ayarlar Düzeltmesi (v70): Otomasyon sekmesinin alt kısmındaki \"Gelişmiş Ayarlar (Tamir Komutu, Satış Komutu & Süreler)\" menüsünün Flexbox sıkışması (flex-shrink + overflow:hidden) nedeniyle kesilmesi ve açıldığında görünmemesi sorunu giderildi. Tüm sekme panellerine dikey kaydırma koruması (flex-shrink: 0, min-height: 0) ve menü açıldığında otomatik görünür alana kaydırma (scrollIntoView) eklendi.",
   "files": {
-    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/d8303a63bc6ce1671c1b6b6d905b30c922e2d1de/index.js",
-    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/d1761d4f0c02d1ac20544cdf6ff9d072e1881a86/public/index.html"
-  },
-  "commitSha": "d1761d4f0c02d1ac20544cdf6ff9d072e1881a86"
+    "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/index.js",
+    "public/index.html": "https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/public/index.html"
+  }
 }
