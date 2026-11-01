@@ -1,12 +1,12 @@
 {
-  "version": "2.2.41",
-  "buildId": "20261101_memory_leak_fix_v72",
-  "commit": "d01472d3c1c3fa0ad0c224cfe235afa3f33a7568",
-  "releasedAt": "2026-10-31T22:17:39.258Z",
-  "notes": "Konsol log DOM birikmesi (200 satir siniri), 180+ oyuncu avatar bellek sismesi, arka plan sekme render yukleri ve WebAudio dugum sizintisi giderilerek Chromium Out of Memory hatasi cozuldu (v2.2.41).",
-  "files": [
-    "index.js",
-    "public/index.html",
-    "package.json"
-  ]
+    "version":  "2.2.42",
+    "buildId":  "20261101_spawner_enclosure_infinite_v73",
+    "commit":  "538ac281c92d34ad7c821cec3b5aebfe2e171ce2",
+    "releasedAt":  "2026-11-01T16:11:43.729Z",
+    "notes":  "Oto Spawner modunda botun sandik duvarlarinin uzerine ziplamasi ve alan disina cikmasi 2B zemin flood-fill (alan kilidi) ile engellendi; zamanlayici kaldirilarak kesintisiz/sinirsiz calisma modu eklendi (v2.2.42).",
+    "files":  [
+                  "index.js",
+                  "public/index.html",
+                  "package.json"
+              ]
 }
