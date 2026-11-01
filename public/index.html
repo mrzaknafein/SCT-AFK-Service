@@ -2350,11 +2350,11 @@
 
               <div class="auto-mode-card">
                 <div class="auto-mode-info">
-                  <div class="auto-mode-title">Oto Spawner Demir & Poppy</div>
-                  <div class="auto-mode-desc">Etraftaki tüm Spawner'ları otomatik algılar; demirleri alıp /craft ile sadece Demir Blok yapar, ardından 1. Spawner'a dönüp Poppy'leri /sat hepsi yapar.</div>
+                  <div class="auto-mode-title">Oto Spawner Demir & Poppy (Sınırsız)</div>
+                  <div class="auto-mode-desc">Bulunduğu sandık/spawner alanından çıkmadan tüm Spawner'ları algılar; demirleri /craft ile Demir Blok yapıp sandığa koyar, 1. Spawner'a dönüp Poppy'leri /sat hepsi yapar ve durmadan sınırsız tekrarlar.</div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                  <button class="btn btn-outline btn-sm" id="btnSpawnerRoutineNow" onclick="sendBotAction('spawnerRoutineNow')" title="Spawner Demir Blok + Poppy Satış Turunu Başlat / Durdur">Şimdi Başlat</button>
+                  <button class="btn btn-outline btn-sm" id="btnSpawnerRoutineNow" onclick="sendBotAction('spawnerRoutineNow')" title="Sınırsız Spawner Demir Blok + Poppy Modunu Başlat / Durdur">Şimdi Başlat</button>
                   <button class="btn btn-outline btn-sm" id="btnAutoSpawnerRoutine" style="min-width: 96px; justify-content: center;" onclick="sendBotAction('toggleAutoSpawnerRoutine')">
                     <span id="badgeAutoSpawnerRoutine">Kapalı</span>
                   </button>
@@ -2466,14 +2466,7 @@
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Miner Sandık Satış Aralığı (Sn) <span id="minerChestSellIntervalHelp" style="color: var(--text-muted);">(10 sn)</span></label>
                   <input type="number" id="ctrlMinerChestSellInterval" min="5" max="86400" step="5" value="10" class="form-control" onchange="updateMinerChestSellInterval(this.value)" />
                 </div>
-                <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Turu Aralığı (Sn) <span id="spawnerRoutineIntervalHelp" style="color: var(--text-muted);">(30 sn)</span></label>
-                  <input type="number" id="ctrlSpawnerRoutineInterval" min="10" max="86400" step="5" value="30" class="form-control" onchange="updateSpawnerRoutineConfig()" />
-                </div>
-                <div>
-                  <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Spawner Sayısı (0 = Etraftaki Hepsi)</label>
-                  <input type="number" id="ctrlSpawnerCount" min="0" max="256" step="1" value="0" placeholder="0 = Tümü" class="form-control" onchange="updateSpawnerRoutineConfig()" />
-                </div>
+
                 <div style="grid-column: 1 / -1;">
                   <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px; font-weight: 600;">Özel Spawner Koordinatları (İsteğe Bağlı, Boşsa Etraftaki Tüm Spawnerlar Otomatik Taranır)</label>
                   <textarea id="ctrlSpawnerCustomCoords" rows="2" class="form-control" style="font-size: 11px; font-family: monospace; resize: vertical;" placeholder="Örnek: 120 64 -350&#10;120 64 -346" onchange="updateSpawnerRoutineConfig()"></textarea>
@@ -5285,8 +5278,8 @@
       const minerChestCfg = b.autoMinerChestSell || acc.autoMinerChestSell || { enabled: false, intervalSec: 10 };
       updateToggleButton('btnAutoMinerChestSell', minerChestCfg.enabled, '🪨 Miner Sandık Satıcı: Açık', '🪨 Miner Sandık Satıcı: Kapalı');
       const spawnerCfg = b.autoSpawnerRoutine || acc.autoSpawnerRoutine || { enabled: false, intervalSec: 30, spawnerCount: 0, customCoords: '' };
-      updateToggleButton('btnAutoSpawnerRoutine', spawnerCfg.enabled, '🏭 Oto Spawner: Açık', '🏭 Oto Spawner: Kapalı');
-      const isRoutineRunning = Boolean(b.isSpawnerRoutineRunning);
+      const isRoutineRunning = Boolean(b.isSpawnerRoutineRunning || spawnerCfg.enabled);
+      updateToggleButton('btnAutoSpawnerRoutine', isRoutineRunning, '🏭 Oto Spawner: Açık (Sınırsız)', '🏭 Oto Spawner: Kapalı');
       const btnSpNow = document.getElementById('btnSpawnerRoutineNow');
       if (btnSpNow) {
         if (isRoutineRunning) {
