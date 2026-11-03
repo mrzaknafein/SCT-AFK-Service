@@ -806,7 +806,7 @@ async function checkForUpdates() {
   const manifestUrl = getUpdateManifestUrl();
   try {
     const rawBuf = await httpFetchUrl(manifestUrl);
-    const manifest = JSON.parse(rawBuf.toString('utf8'));
+    const manifest = JSON.parse(rawBuf.toString('utf8').replace(/^\uFEFF/, '').trim());
     const remoteBuildId = manifest.buildId || manifest.version || '';
     const hasUpdate = Boolean(remoteBuildId && remoteBuildId !== ENGINE_BUILD_ID);
 
@@ -839,7 +839,7 @@ async function applyHotUpdate() {
   try {
     const manifestUrl = getUpdateManifestUrl();
     const rawBuf = await httpFetchUrl(manifestUrl);
-    const manifest = JSON.parse(rawBuf.toString('utf8'));
+    const manifest = JSON.parse(rawBuf.toString('utf8').replace(/^\uFEFF/, '').trim());
     const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
     const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
     const branch = (config.updates && config.updates.branch) || 'main';
