@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261101_spawner_enclosure_infinite_v73';
+const ENGINE_BUILD_ID = '20261103_spawner_rebuild_v74';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 const HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -5916,9 +5916,9 @@ function sortSpawnersInSnakePattern(spawners, botPos) {
   return result;
 }
 
-function findNearbySpawnerBlocks(bot, maxRadius = 36, maxCount = 0, customCoordsText = '') {
+function findNearbySpawnerBlocks(bot, maxRadius = 28, maxCount = 0, customCoordsText = '', anchorPos = null) {
   if (!bot || !bot.entity || !bot.entity.position) return [];
-  const startPos = bot.entity.position;
+  const startPos = anchorPos || bot.entity.position;
 
   if (customCoordsText && typeof customCoordsText === 'string') {
     const customList = parseCustomSpawnerCoords(customCoordsText);
@@ -5950,7 +5950,63 @@ function findNearbySpawnerBlocks(bot, maxRadius = 36, maxCount = 0, customCoords
 
   if (found.length === 0) return [];
 
-  const ordered = sortSpawnersInSnakePattern(found, startPos);
+  // Botun bulunduğu spawner odasındaki bağlantılı spawner kümesini (cluster) ayıkla:
+  // Aynı odadaki spawner sütunları birbirine yatayda <= 4.5 blok mesafededir.
+  const visited = new Set();
+  const clusters = [];
+  for (let i = 0; i < found.length; i++) {
+    if (visited.has(i)) continue;
+    const cluster = [];
+    const q = [i];
+    visited.add(i);
+    while (q.length > 0) {
+      const idx = q.shift();
+      const cur = found[idx];
+      cluster.push(cur);
+      for (let j = 0; j < found.length; j++) {
+        if (visited.has(j)) continue;
+        const other = found[j];
+        if (
+          Math.abs(cur.x - other.x) <= 4 &&
+          Math.abs(cur.z - other.z) <= 4 &&
+          Math.abs(cur.y - other.y) <= 5
+        ) {
+          visited.add(j);
+          q.push(j);
+        }
+      }
+    }
+    clusters.push(cluster);
+  }
+
+  // Botun başlangıç konumuna en yakın olan spawner kümesini seç
+  clusters.sort((a, b) => {
+    let minA = Infinity;
+    for (const p of a) {
+      const d = Math.hypot(p.x - startPos.x, p.z - startPos.z);
+      if (d < minA) minA = d;
+    }
+    let minB = Infinity;
+    for (const p of b) {
+      const d = Math.hypot(p.x - startPos.x, p.z - startPos.z);
+      if (d < minB) minB = d;
+    }
+    return minA - minB;
+  });
+
+  const activeCluster = clusters[0] || found;
+
+  // Sabit köşe referansıyla (minX, minZ) sırala ki her turda 1. Spawner ve S-Snake sırası %100 aynı kalsın!
+  let minCornerX = Infinity;
+  let minCornerZ = Infinity;
+  let minCornerY = Infinity;
+  for (const sp of activeCluster) {
+    if (sp.x < minCornerX) minCornerX = sp.x;
+    if (sp.z < minCornerZ) minCornerZ = sp.z;
+    if (sp.y < minCornerY) minCornerY = sp.y;
+  }
+  const fixedCorner = new Vec3(minCornerX, minCornerY, minCornerZ);
+  const ordered = sortSpawnersInSnakePattern(activeCluster, fixedCorner);
 
   if (maxCount > 0 && maxCount < ordered.length) {
     return ordered.slice(0, maxCount);
@@ -5995,6 +6051,37 @@ function isNavigationAbortRequested(session) {
   return false;
 }
 
+function isSpawnerFloorValid(block) {
+  if (!block || !block.name) return false;
+  const name = block.name.toLowerCase();
+  if (
+    name === 'air' ||
+    name === 'cave_air' ||
+    name === 'void_air' ||
+    name === 'lava' ||
+    name === 'flowing_lava' ||
+    name === 'water' ||
+    name === 'flowing_water' ||
+    name === 'fire' ||
+    name === 'soul_fire' ||
+    name === 'cactus' ||
+    name === 'sweet_berry_bush' ||
+    name === 'cobweb' ||
+    name === 'powder_snow' ||
+    name === 'magma_block' ||
+    name === 'campfire' ||
+    name === 'soul_campfire'
+  ) {
+    return false;
+  }
+  // Sandıklar, variller, shulker'lar ve spawner'lar ASLA üzerine çıkılabilir zemin olamaz!
+  if (name.includes('spawner') || isFarmContainerBlockName(name)) return false;
+  if (name.includes('fence') || name.includes('wall') || name.includes('gate') || name.includes('iron_bars')) return false;
+  if (block.boundingBox === 'empty' || isBlockPassable(block)) return false;
+  // Not: Spawner odasının zeminindeki glowstone, sea_lantern, white_stained_glass, hopper, quartz vb. TAMAMI yürünebilirdir!
+  return true;
+}
+
 function isSpawnerTileWalkableRaw(bot, pos, session = null) {
   if (!bot || !pos) return false;
   const foot = bot.blockAt(pos);
@@ -6010,17 +6097,16 @@ function isSpawnerTileWalkableRaw(bot, pos, session = null) {
   if (isFarmContainerBlockName(footName) || isFarmContainerBlockName(headName) || isFarmContainerBlockName(floorName)) return false;
 
   if (!isBlockPassable(foot) || !isBlockPassable(head)) return false;
-  if (isLightingOrObstacleBlock(foot)) return false;
 
-  return isBlockWalkableFloor(floor, session);
+  return isSpawnerFloorValid(floor);
 }
 
 function isSpawnerCorridorWalkable(bot, pos, session = null) {
   if (!bot || !pos) return false;
   if (session && session.isSpawnerRoutineRunning && session.spawnerEnclosure) {
     const enc = session.spawnerEnclosure;
-    if (pos.y !== enc.floorY) return false;
     if (pos.x < enc.minX || pos.x > enc.maxX || pos.z < enc.minZ || pos.z > enc.maxZ) return false;
+    if (pos.y < enc.minY || pos.y > enc.maxY) return false;
     if (enc.interiorSet && enc.interiorSet.size > 0 && !enc.interiorSet.has(`${pos.x},${pos.y},${pos.z}`)) {
       return false;
     }
@@ -6028,55 +6114,118 @@ function isSpawnerCorridorWalkable(bot, pos, session = null) {
   return isSpawnerTileWalkableRaw(bot, pos, session);
 }
 
+function getSpawnerBotStandPos(bot, session = null) {
+  if (!bot || !bot.entity || !bot.entity.position) return null;
+  const p = bot.entity.position;
+  // Hopper çukurunda y = 105.625 olduğunda +0.42 ile 106.045 -> Math.floor = 106 olur
+  const baseY = Math.floor(p.y + 0.42);
+  const bx = Math.floor(p.x);
+  const bz = Math.floor(p.z);
+
+  const yCandidates = [baseY, baseY + 1, baseY - 1];
+  const xzOffsets = [
+    [0, 0],
+    [0.34, 0],
+    [-0.34, 0],
+    [0, 0.34],
+    [0, -0.34],
+    [0.34, 0.34],
+    [-0.34, 0.34],
+    [0.34, -0.34],
+    [-0.34, -0.34]
+  ];
+
+  for (const ty of yCandidates) {
+    for (const [ox, oz] of xzOffsets) {
+      const cand = new Vec3(Math.floor(p.x + ox), ty, Math.floor(p.z + oz));
+      if (isSpawnerCorridorWalkable(bot, cand, session)) {
+        return cand;
+      }
+    }
+  }
+  for (const ty of yCandidates) {
+    for (const [ox, oz] of xzOffsets) {
+      const cand = new Vec3(Math.floor(p.x + ox), ty, Math.floor(p.z + oz));
+      if (isSpawnerTileWalkableRaw(bot, cand, session)) {
+        return cand;
+      }
+    }
+  }
+  return new Vec3(bx, baseY, bz);
+}
+
 function computeSpawnerEnclosure(bot, spawners, homePos, session = null) {
   if (!bot || !homePos) return null;
   const standPos = (session && session.spawnerEnclosure && session.spawnerEnclosure.anchorPos)
     ? session.spawnerEnclosure.anchorPos
     : homePos.floored();
-  const floorY = standPos.y;
 
-  const localSpawners = Array.isArray(spawners)
-    ? spawners.filter((sp) => Math.hypot(sp.x - standPos.x, sp.z - standPos.z) <= 18 && sp.y >= floorY - 1 && sp.y <= floorY + 5)
-    : [];
-  const activeSpawners = localSpawners.length > 0 ? localSpawners : (spawners || []);
+  const activeSpawners = Array.isArray(spawners) && spawners.length > 0 ? spawners : [standPos];
 
-  let minSpX = standPos.x;
-  let maxSpX = standPos.x;
-  let minSpZ = standPos.z;
-  let maxSpZ = standPos.z;
+  let minSpX = Infinity;
+  let maxSpX = -Infinity;
+  let minSpZ = Infinity;
+  let maxSpZ = -Infinity;
+  let minSpY = Infinity;
+  let maxSpY = -Infinity;
+
   for (const sp of activeSpawners) {
     if (sp.x < minSpX) minSpX = sp.x;
     if (sp.x > maxSpX) maxSpX = sp.x;
     if (sp.z < minSpZ) minSpZ = sp.z;
     if (sp.z > maxSpZ) maxSpZ = sp.z;
+    if (sp.y < minSpY) minSpY = sp.y;
+    if (sp.y > maxSpY) maxSpY = sp.y;
   }
 
-  // Spawner ızgarasının etrafındaki koridor + sandık sınırı (en fazla 2 blok dış koridor payı)
+  // Spawner ızgarasının etrafındaki iç koridor sınırı (sandık duvarı minSpX-2 / maxSpX+2'dedir)
   const minX = Math.min(minSpX - 2, standPos.x - 1);
   const maxX = Math.max(maxSpX + 2, standPos.x + 1);
   const minZ = Math.min(minSpZ - 2, standPos.z - 1);
   const maxZ = Math.max(maxSpZ + 2, standPos.z + 1);
+  const minY = Math.min(minSpY - 2, standPos.y - 2);
+  const maxY = Math.max(maxSpY + 2, standPos.y + 2);
+  const floorY = standPos.y;
 
-  // 2B Düz Zemin Flood-Fill (BFS): Sandık duvarlarından veya spawner'lardan asla dışarı taşmaz!
+  // 3B Çok Katmanlı İç Alan Flood-Fill (BFS):
+  // - Hem y=106 (hopper/quartz/glowstone) hem de y=107 (white_stained_glass) koridorlarını kapsar!
+  // - Sandık duvarlarının veya spawner'ların üzerine/dışına ASLA çıkmaz!
   const interiorSet = new Set();
   const queue = [];
 
-  const curBotStand = (getEffectiveBotStandBlock(bot, session) || bot.entity.position.floored());
-  const seeds = [standPos];
-  if (
-    curBotStand.y === floorY &&
-    curBotStand.x >= minX && curBotStand.x <= maxX &&
-    curBotStand.z >= minZ && curBotStand.z <= maxZ
-  ) {
-    seeds.push(curBotStand);
+  const addSeedIfWalkable = (pt) => {
+    if (!pt) return;
+    if (pt.x < minX || pt.x > maxX || pt.z < minZ || pt.z > maxZ || pt.y < minY || pt.y > maxY) return;
+    const k = `${pt.x},${pt.y},${pt.z}`;
+    if (interiorSet.has(k)) return;
+    if (isSpawnerTileWalkableRaw(bot, pt, session)) {
+      interiorSet.add(k);
+      queue.push(pt);
+    }
+  };
+
+  addSeedIfWalkable(standPos);
+  addSeedIfWalkable(new Vec3(standPos.x, standPos.y + 1, standPos.z));
+  addSeedIfWalkable(new Vec3(standPos.x, standPos.y - 1, standPos.z));
+
+  const curBotStand = getSpawnerBotStandPos(bot, null);
+  if (curBotStand) {
+    addSeedIfWalkable(curBotStand);
   }
 
-  for (const seed of seeds) {
-    const sk = `${seed.x},${floorY},${seed.z}`;
-    if (!interiorSet.has(sk)) {
-      const p = new Vec3(seed.x, floorY, seed.z);
-      interiorSet.add(sk);
-      queue.push(p);
+  // Her spawner sütununun bitişiğindeki (|dx|<=1, |dz|<=1) yürünebilir koridor karelerini de tohum olarak ekle
+  const seenCols = new Set();
+  for (const sp of activeSpawners) {
+    const colKey = `${sp.x},${sp.z}`;
+    if (seenCols.has(colKey)) continue;
+    seenCols.add(colKey);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        if (dx === 0 && dz === 0) continue;
+        for (let dy = -2; dy <= 2; dy++) {
+          addSeedIfWalkable(new Vec3(sp.x + dx, sp.y + dy, sp.z + dz));
+        }
+      }
     }
   }
 
@@ -6087,18 +6236,22 @@ function computeSpawnerEnclosure(bot, spawners, homePos, session = null) {
     { dx: 0, dz: -1 }
   ];
 
-  while (queue.length > 0 && interiorSet.size < 900) {
+  while (queue.length > 0 && interiorSet.size < 2000) {
     const cur = queue.shift();
     for (const d of dirs) {
       const nx = cur.x + d.dx;
       const nz = cur.z + d.dz;
       if (nx < minX || nx > maxX || nz < minZ || nz > maxZ) continue;
-      const nk = `${nx},${floorY},${nz}`;
-      if (interiorSet.has(nk)) continue;
-      const cand = new Vec3(nx, floorY, nz);
-      if (isSpawnerTileWalkableRaw(bot, cand, session)) {
-        interiorSet.add(nk);
-        queue.push(cand);
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = cur.y + dy;
+        if (ny < minY || ny > maxY) continue;
+        const nk = `${nx},${ny},${nz}`;
+        if (interiorSet.has(nk)) continue;
+        const cand = new Vec3(nx, ny, nz);
+        if (isSpawnerTileWalkableRaw(bot, cand, session)) {
+          interiorSet.add(nk);
+          queue.push(cand);
+        }
       }
     }
   }
@@ -6110,6 +6263,8 @@ function computeSpawnerEnclosure(bot, spawners, homePos, session = null) {
     maxX,
     minZ,
     maxZ,
+    minY,
+    maxY,
     interiorSet
   };
 }
@@ -6117,88 +6272,396 @@ function computeSpawnerEnclosure(bot, spawners, homePos, session = null) {
 function isTargetReachableFromSpawnerEnclosure(targetPos, enclosure, maxReach = 3.85) {
   if (!targetPos || !enclosure || !enclosure.interiorSet || enclosure.interiorSet.size === 0) return true;
   const targetCenter = targetPos.offset(0.5, 0.5, 0.5);
-  const floorY = enclosure.floorY;
   for (let dx = -3; dx <= 3; dx++) {
     for (let dz = -3; dz <= 3; dz++) {
       if (dx === 0 && dz === 0) continue;
       const sx = targetPos.x + dx;
       const sz = targetPos.z + dz;
-      if (!enclosure.interiorSet.has(`${sx},${floorY},${sz}`)) continue;
-      const eyePos = new Vec3(sx + 0.5, floorY + 1.62, sz + 0.5);
-      const dist = eyePos.distanceTo(targetCenter);
-      if (dist >= 0.9 && dist <= maxReach) return true;
+      for (let sy = enclosure.minY; sy <= enclosure.maxY; sy++) {
+        if (!enclosure.interiorSet.has(`${sx},${sy},${sz}`)) continue;
+        const eyePos = new Vec3(sx + 0.5, sy + 1.62, sz + 0.5);
+        const dist = eyePos.distanceTo(targetCenter);
+        if (dist >= 0.85 && dist <= maxReach) return true;
+      }
     }
   }
   return false;
 }
 
-async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach = 3.95) {
-  if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
-  if (isNavigationAbortRequested(session)) return false;
-
-  const isSpawnerLocked = Boolean(session && session.isSpawnerRoutineRunning && session.spawnerEnclosure);
-  const enc = isSpawnerLocked ? session.spawnerEnclosure : null;
-
-  const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
-  const curEyeDist = bot.entity.position.offset(0, 1.62, 0).distanceTo(targetCenter);
-  const curHorizDist = Math.hypot(bot.entity.position.x - targetCenter.x, bot.entity.position.z - targetCenter.z);
-  const maxAxisDist = Math.max(Math.abs(bot.entity.position.x - targetCenter.x), Math.abs(bot.entity.position.z - targetCenter.z));
-  const isSameBlockColumn = Math.floor(bot.entity.position.x) === targetBlockPos.x && Math.floor(bot.entity.position.z) === targetBlockPos.z;
-  const curStandCheck = bot.entity.position.floored();
-  const isCurrentlyInsideEnclosure = !enc || (
-    curStandCheck.y === enc.floorY &&
-    curStandCheck.x >= enc.minX && curStandCheck.x <= enc.maxX &&
-    curStandCheck.z >= enc.minZ && curStandCheck.z <= enc.maxZ &&
-    (!enc.interiorSet || enc.interiorSet.size === 0 || enc.interiorSet.has(`${curStandCheck.x},${curStandCheck.y},${curStandCheck.z}`))
+function hasClearLineOfSightToSpawnerOrChest(bot, standSpot, targetBlockPos) {
+  if (!bot || !standSpot || !targetBlockPos) return false;
+  const horizDist = Math.hypot(
+    (standSpot.x + 0.5) - (targetBlockPos.x + 0.5),
+    (standSpot.z + 0.5) - (targetBlockPos.z + 0.5)
   );
+  // Doğrudan bitişik karelerde (|dx|<=1, |dz|<=1, mesafe <= 1.55m) arada başka blok olamaz
+  if (horizDist <= 1.55) return true;
 
-  // Eğer bot zaten istenen menzildeyse, kapalı alanın içindeyse VE bloğun AABB sınırıyla kesişmiyorsa (!isSameBlockColumn ve maxAxisDist >= 0.84m)
-  if (isCurrentlyInsideEnclosure && curEyeDist <= maxReach && !isSameBlockColumn && maxAxisDist >= 0.84 && curHorizDist >= 0.90) {
-    return true;
+  const eyePos = new Vec3(standSpot.x + 0.5, standSpot.y + 1.62, standSpot.z + 0.5);
+  const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
+  const steps = 10;
+  for (let s = 1; s < steps; s++) {
+    const t = s / steps;
+    const rx = Math.floor(eyePos.x + (targetCenter.x - eyePos.x) * t);
+    const ry = Math.floor(eyePos.y + (targetCenter.y - eyePos.y) * t);
+    const rz = Math.floor(eyePos.z + (targetCenter.z - eyePos.z) * t);
+    if (rx === targetBlockPos.x && ry === targetBlockPos.y && rz === targetBlockPos.z) continue;
+    if (rx === standSpot.x && rz === standSpot.z && (ry === standSpot.y || ry === standSpot.y + 1)) continue;
+    const midBlock = bot.blockAt(new Vec3(rx, ry, rz));
+    if (midBlock && midBlock.name) {
+      const mName = midBlock.name.toLowerCase();
+      if (mName.includes('spawner') || isFarmContainerBlockName(mName)) {
+        return false; // Arada başka bir spawner veya sandık var!
+      }
+    }
+  }
+  return true;
+}
+
+function findSpawnerRoomPath(bot, startPos, goalPos, session = null, maxNodes = 2500) {
+  if (!bot || !startPos || !goalPos) return null;
+  if (startPos.x === goalPos.x && startPos.z === goalPos.z && Math.abs(startPos.y - goalPos.y) <= 1) {
+    return [];
   }
 
-  const botPos = bot.entity.position;
-  const rawStartStand = getEffectiveBotStandBlock(bot, session) || botPos.floored();
-  const startStand = enc ? new Vec3(rawStartStand.x, enc.floorY, rawStartStand.z) : rawStartStand;
-  const spotCandidates = [];
-  const effectiveMaxReach = Math.min(3.85, Math.max(1.45, maxReach));
-  const stopReach = Math.min(3.75, Math.max(1.45, maxReach));
+  const openSet = [{ pos: startPos, g: 0, f: startPos.distanceTo(goalPos) }];
+  const cameFrom = new Map();
+  const gScore = new Map();
+  gScore.set(startPos.toString(), 0);
+  const closedSet = new Set();
 
-  const candidateYLevels = enc
-    ? [enc.floorY]
-    : [targetBlockPos.y - 3, targetBlockPos.y - 2, targetBlockPos.y - 1, targetBlockPos.y, targetBlockPos.y + 1];
+  const dirs = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 }
+  ];
 
-  for (let dx = -3; dx <= 3; dx++) {
-    for (let dz = -3; dz <= 3; dz++) {
-      if (dx === 0 && dz === 0) continue; // ASLA hedef bloğun tam tepesinde veya içinde durma!
-      for (const candY of candidateYLevels) {
-        const spot = new Vec3(targetBlockPos.x + dx, candY, targetBlockPos.z + dz);
-        const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
-        const reachDist = eyeFromSpot.distanceTo(targetCenter);
-        if (reachDist > effectiveMaxReach || reachDist < 0.9) continue;
-        if (isSpawnerCorridorWalkable(bot, spot, session)) {
-          spotCandidates.push({
-            spot,
-            distToBot: botPos.distanceTo(spot.offset(0.5, 0, 0.5)),
-            sameLevel: spot.y === startStand.y ? 0 : 1
-          });
+  let nodesCount = 0;
+  while (openSet.length > 0 && nodesCount < maxNodes) {
+    nodesCount++;
+    openSet.sort((a, b) => a.f - b.f);
+    const cur = openSet.shift();
+    const curKey = cur.pos.toString();
+
+    if (cur.pos.x === goalPos.x && cur.pos.z === goalPos.z && Math.abs(cur.pos.y - goalPos.y) <= 1) {
+      const path = [cur.pos];
+      let k = curKey;
+      while (cameFrom.has(k)) {
+        const prev = cameFrom.get(k);
+        path.unshift(prev);
+        k = prev.toString();
+      }
+      return path.slice(1);
+    }
+
+    closedSet.add(curKey);
+
+    for (const d of dirs) {
+      const nx = cur.pos.x + d.dx;
+      const nz = cur.pos.z + d.dz;
+      const y = cur.pos.y;
+
+      const stepOptions = [
+        { pos: new Vec3(nx, y, nz), cost: 1.0, checkCeil: null },
+        { pos: new Vec3(nx, y + 1, nz), cost: 1.3, checkCeil: cur.pos.offset(0, 2, 0) },
+        { pos: new Vec3(nx, y - 1, nz), cost: 1.2, checkCeil: new Vec3(nx, y + 1, nz) }
+      ];
+
+      for (const opt of stepOptions) {
+        const nKey = opt.pos.toString();
+        if (closedSet.has(nKey)) continue;
+        if (opt.checkCeil && !isBlockPassable(bot.blockAt(opt.checkCeil))) continue;
+        if (!isSpawnerCorridorWalkable(bot, opt.pos, session)) continue;
+
+        const tentativeG = (gScore.get(curKey) || 0) + opt.cost;
+        if (!gScore.has(nKey) || tentativeG < gScore.get(nKey)) {
+          cameFrom.set(nKey, cur.pos);
+          gScore.set(nKey, tentativeG);
+          const f = tentativeG + opt.pos.distanceTo(goalPos);
+          const existing = openSet.find((item) => item.pos.toString() === nKey);
+          if (existing) {
+            existing.g = tentativeG;
+            existing.f = f;
+          } else {
+            openSet.push({ pos: opt.pos, g: tentativeG, f });
+          }
         }
       }
     }
   }
 
+  return null;
+}
+
+async function moveBotAlongSpawnerPath(bot, session, path, targetBlockPos, stopHorizReach = 1.92, stopEyeReach = 3.55, maxTimeoutMs = 14000) {
+  if (!bot || !bot.entity || !bot.entity.position) return false;
+  if (!Array.isArray(path) || path.length === 0) return true;
+
+  const startTime = Date.now();
+  const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
+  const enc = session ? session.spawnerEnclosure : null;
+
+  let idx = 0;
+  let nodeStartTime = Date.now();
+  let lastProgressPos = bot.entity.position.clone();
+  let lastProgressTime = Date.now();
+
+  try {
+    // Spawner odasında yürürken ASLA sneak (shift) basılı tutma!
+    // Sneak açıkken Minecraft fiziği cam/hopper basamaklarından geçişi kilitler.
+    bot.setControlState('sneak', false);
+    bot.setControlState('sprint', false);
+
+    while (idx < path.length && Date.now() - startTime < maxTimeoutMs) {
+      if (isNavigationAbortRequested(session)) break;
+
+      const curPos = bot.entity.position;
+      const curEye = curPos.offset(0, 1.62, 0);
+      const curHorizDist = Math.hypot(curPos.x - targetCenter.x, curPos.z - targetCenter.z);
+      const curEyeDist = curEye.distanceTo(targetCenter);
+      const curSameCol = Math.floor(curPos.x) === targetBlockPos.x && Math.floor(curPos.z) === targetBlockPos.z;
+      const curAxisDist = Math.max(Math.abs(curPos.x - targetCenter.x), Math.abs(curPos.z - targetCenter.z));
+
+      if (
+        !curSameCol &&
+        curAxisDist >= 0.80 &&
+        curHorizDist <= stopHorizReach &&
+        curEyeDist <= stopEyeReach &&
+        hasClearLineOfSightToSpawnerOrChest(bot, new Vec3(Math.floor(curPos.x), Math.floor(curPos.y + 0.42), Math.floor(curPos.z)), targetBlockPos)
+      ) {
+        break;
+      }
+
+      const targetNode = path[idx];
+      if (enc) {
+        if (targetNode.x < enc.minX || targetNode.x > enc.maxX || targetNode.z < enc.minZ || targetNode.z > enc.maxZ) {
+          break;
+        }
+      }
+
+      const nodeCenter = new Vec3(targetNode.x + 0.5, targetNode.y, targetNode.z + 0.5);
+      const hDist = Math.hypot(nodeCenter.x - curPos.x, nodeCenter.z - curPos.z);
+      const isLastNode = idx === path.length - 1;
+      const reachThreshold = isLastNode ? 0.28 : 0.42;
+
+      if (hDist <= reachThreshold && Math.abs(targetNode.y - (curPos.y + 0.2)) <= 1.25) {
+        idx++;
+        nodeStartTime = Date.now();
+        lastProgressPos = curPos.clone();
+        lastProgressTime = Date.now();
+        continue;
+      }
+
+      // Tek bir düğümde çok uzun süre takıldıysa bir sonrakine geç veya çık
+      if (Date.now() - nodeStartTime > 2600) {
+        if (!isLastNode) {
+          idx++;
+          nodeStartTime = Date.now();
+          continue;
+        } else {
+          break;
+        }
+      }
+
+      const dx = nodeCenter.x - curPos.x;
+      const dz = nodeCenter.z - curPos.z;
+      const targetYaw = Math.atan2(-dx, -dz);
+
+      const sensitivity = (0.15 * Math.PI) / 180;
+      const curYaw = typeof bot.entity.yaw === 'number' ? bot.entity.yaw : targetYaw;
+      let dYaw = (targetYaw - curYaw) % (Math.PI * 2);
+      if (dYaw < -Math.PI) dYaw += Math.PI * 2;
+      else if (dYaw > Math.PI) dYaw -= Math.PI * 2;
+      const stepYaw = Math.round(dYaw / sensitivity) * sensitivity;
+      const safeYaw = curYaw + stepYaw;
+
+      try {
+        await bot.look(safeYaw, 0, true);
+      } catch (_) {}
+
+      bot.setControlState('forward', true);
+      bot.setControlState('sneak', false);
+      bot.setControlState('sprint', false);
+
+      // İlerleme / takılma kontrolü (hopper kenarı veya cam basamağı için)
+      if (curPos.distanceTo(lastProgressPos) >= 0.08) {
+        lastProgressPos = curPos.clone();
+        lastProgressTime = Date.now();
+      }
+      const isStuckBriefly = Date.now() - lastProgressTime > 320;
+
+      // Yukarı basamak (white_stained_glass vb.) veya hopper çukurundan çıkış için güvenli zıplama:
+      // Hedef düğüm kesinlikle iç alanda olduğu ve sandık/spawner olmadığı için güvenle zıplanabilir.
+      const dy = targetNode.y - curPos.y;
+      const targetFloor = bot.blockAt(targetNode.offset(0, -1, 0));
+      const targetFloorName = targetFloor && targetFloor.name ? targetFloor.name.toLowerCase() : '';
+      const isSafeInteriorStepUp =
+        !targetFloorName.includes('spawner') &&
+        !isFarmContainerBlockName(targetFloorName) &&
+        (!enc || (targetNode.x > enc.minX && targetNode.x < enc.maxX && targetNode.z > enc.minZ && targetNode.z < enc.maxZ));
+
+      if ((dy >= 0.32 && dy <= 1.55) || (isStuckBriefly && dy >= -0.15 && isSafeInteriorStepUp)) {
+        bot.setControlState('jump', true);
+      } else {
+        bot.setControlState('jump', false);
+      }
+
+      await new Promise((r) => setTimeout(r, 45));
+    }
+  } finally {
+    if (bot) {
+      bot.setControlState('forward', false);
+      bot.setControlState('back', false);
+      bot.setControlState('left', false);
+      bot.setControlState('right', false);
+      bot.setControlState('jump', false);
+      bot.setControlState('sprint', false);
+      bot.setControlState('sneak', false);
+    }
+  }
+
+  const endPos = bot.entity.position;
+  const endHoriz = Math.hypot(endPos.x - targetCenter.x, endPos.z - targetCenter.z);
+  const endEye = endPos.offset(0, 1.62, 0).distanceTo(targetCenter);
+  const endSameCol = Math.floor(endPos.x) === targetBlockPos.x && Math.floor(endPos.z) === targetBlockPos.z;
+  return !endSameCol && endHoriz <= Math.max(stopHorizReach + 0.55, 2.45) && endEye <= Math.max(stopEyeReach + 0.45, 3.95);
+}
+
+async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach = 3.95, options = {}) {
+  if (!bot || !bot.entity || !bot.entity.position || !targetBlockPos) return false;
+  if (isNavigationAbortRequested(session)) return false;
+
+  const isSpawnerMode = Boolean(session && session.isSpawnerRoutineRunning);
+  const targetBlock = bot.blockAt(targetBlockPos);
+  const targetName = targetBlock && targetBlock.name ? targetBlock.name.toLowerCase() : '';
+  const isTargetSpawner = targetName.includes('spawner') || Boolean(options && options.isSpawner);
+  const preferAlternativeSpot = Boolean(options && options.preferAlternativeSpot);
+
+  const targetCenter = targetBlockPos.offset(0.5, 0.5, 0.5);
+  const botPos = bot.entity.position;
+  const curEyeDist = botPos.offset(0, 1.62, 0).distanceTo(targetCenter);
+  const curHorizDist = Math.hypot(botPos.x - targetCenter.x, botPos.z - targetCenter.z);
+  const maxAxisDist = Math.max(Math.abs(botPos.x - targetCenter.x), Math.abs(botPos.z - targetCenter.z));
+  const isSameBlockColumn = Math.floor(botPos.x) === targetBlockPos.x && Math.floor(botPos.z) === targetBlockPos.z;
+
+  // Spawner hedeflerinde botun gerçekten spawner'ın yanındaki koridora (<= 1.95m yatay mesafe) gitmesini zorunlu kıl!
+  // Böylece 3.8 blok uzaktan arada başka spawner varken tıklamaya çalışıp spawner atlaması %100 engellenir.
+  const desiredHorizReach = isTargetSpawner ? 1.95 : Math.min(3.65, maxReach);
+  const desiredEyeReach = isTargetSpawner ? 3.55 : Math.min(3.85, maxReach);
+
+  const startStand = isSpawnerMode
+    ? (getSpawnerBotStandPos(bot, session) || getEffectiveBotStandBlock(bot, session) || botPos.floored())
+    : (getEffectiveBotStandBlock(bot, session) || botPos.floored());
+
+  if (
+    !preferAlternativeSpot &&
+    !isSameBlockColumn &&
+    maxAxisDist >= 0.80 &&
+    curHorizDist >= 0.85 &&
+    curHorizDist <= desiredHorizReach &&
+    curEyeDist <= desiredEyeReach &&
+    hasClearLineOfSightToSpawnerOrChest(bot, startStand, targetBlockPos)
+  ) {
+    return true;
+  }
+
+  const enc = isSpawnerMode && session.spawnerEnclosure ? session.spawnerEnclosure : null;
+  const minY = enc ? enc.minY : targetBlockPos.y - 3;
+  const maxY = enc ? enc.maxY : targetBlockPos.y + 1;
+
+  const spotCandidates = [];
+  const searchRadius = isTargetSpawner ? 2 : 3;
+
+  for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+    for (let dz = -searchRadius; dz <= searchRadius; dz++) {
+      if (dx === 0 && dz === 0) continue;
+      const isDirectlyAdjacent = Math.abs(dx) <= 1 && Math.abs(dz) <= 1;
+      const isOrthogonalAdjacent = (Math.abs(dx) === 1 && dz === 0) || (dx === 0 && Math.abs(dz) === 1);
+
+      for (let candY = minY; candY <= maxY; candY++) {
+        const spot = new Vec3(targetBlockPos.x + dx, candY, targetBlockPos.z + dz);
+        if (preferAlternativeSpot && spot.x === startStand.x && spot.z === startStand.z) continue;
+
+        const eyeFromSpot = spot.offset(0.5, 1.62, 0.5);
+        const reachDist = eyeFromSpot.distanceTo(targetCenter);
+        const horizDist = Math.hypot((spot.x + 0.5) - targetCenter.x, (spot.z + 0.5) - targetCenter.z);
+
+        if (reachDist < 0.85 || reachDist > (isTargetSpawner ? 3.65 : 3.85)) continue;
+        if (!isSpawnerCorridorWalkable(bot, spot, session)) continue;
+        if (!hasClearLineOfSightToSpawnerOrChest(bot, spot, targetBlockPos)) continue;
+
+        spotCandidates.push({
+          spot,
+          isOrthogonalAdjacent: isOrthogonalAdjacent ? 0 : 1,
+          isDirectlyAdjacent: isDirectlyAdjacent ? 0 : 1,
+          horizDist,
+          distToBot: botPos.distanceTo(spot.offset(0.5, 0, 0.5)),
+          yDiff: Math.abs(spot.y - startStand.y)
+        });
+      }
+    }
+  }
+
+  // Sıralama:
+  // 1) Spawner'ın tam yanındaki kareler (|dx|<=1, |dz|<=1) her zaman öncelikli!
+  // 2) Dik komşu kareler (±1,0 / 0,±1) köşegenlere göre öncelikli!
+  // 3) Botun mevcut konumuna en yakın olan kare!
   spotCandidates.sort((a, b) => {
-    if (a.sameLevel !== b.sameLevel) return a.sameLevel - b.sameLevel;
+    if (isTargetSpawner) {
+      if (a.isDirectlyAdjacent !== b.isDirectlyAdjacent) return a.isDirectlyAdjacent - b.isDirectlyAdjacent;
+      if (a.isOrthogonalAdjacent !== b.isOrthogonalAdjacent) return a.isOrthogonalAdjacent - b.isOrthogonalAdjacent;
+    }
+    if (a.yDiff !== b.yDiff) return a.yDiff - b.yDiff;
     return a.distToBot - b.distToBot;
   });
+
+  if (isSpawnerMode) {
+    for (let i = 0; i < Math.min(spotCandidates.length, 16); i++) {
+      if (isNavigationAbortRequested(session)) return false;
+      const cand = spotCandidates[i];
+      const path = findSpawnerRoomPath(bot, startStand, cand.spot, session, 2500);
+      if (path !== null) {
+        const moveHorizReach = cand.isDirectlyAdjacent === 0 ? 1.95 : 2.65;
+        const ok = await moveBotAlongSpawnerPath(
+          bot,
+          session,
+          path.length > 0 ? path : [cand.spot],
+          targetBlockPos,
+          moveHorizReach,
+          desiredEyeReach,
+          Math.max(5000, Math.min(18000, (path.length + 3) * 550))
+        );
+        if (ok) return true;
+      }
+    }
+
+    // Eğer A* rotası herhangi bir sebeple kesildiyse ve hedef spawner yakınımızdaysa doğrudan yürümeyi dene
+    if (spotCandidates.length > 0) {
+      const bestSpot = spotCandidates[0].spot;
+      const directOk = await moveBotAlongSpawnerPath(
+        bot,
+        session,
+        [bestSpot],
+        targetBlockPos,
+        2.35,
+        3.75,
+        4500
+      );
+      if (directOk) return true;
+    }
+
+    const finalPos = bot.entity.position;
+    const finalSameCol = Math.floor(finalPos.x) === targetBlockPos.x && Math.floor(finalPos.z) === targetBlockPos.z;
+    return !finalSameCol && finalPos.offset(0, 1.62, 0).distanceTo(targetCenter) <= 3.95;
+  }
 
   for (let i = 0; i < Math.min(spotCandidates.length, 10); i++) {
     if (isNavigationAbortRequested(session)) return false;
     const cand = spotCandidates[i];
     const path = findBuilderPath(bot, startStand, cand.spot, session, 2000, {
-      allowStepDown: !isSpawnerLocked,
-      allowStepUp: !isSpawnerLocked,
-      minY: isSpawnerLocked ? startStand.y : undefined
+      allowStepDown: true,
+      allowStepUp: true
     });
     if (path !== null) {
       const ok = await safelyNavigateToChest(
@@ -6207,7 +6670,7 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
         targetBlockPos,
         Math.max(5000, Math.min(20000, Math.ceil((path.length + 2) * 450))),
         path,
-        stopReach
+        Math.min(3.75, Math.max(1.45, maxReach))
       );
       const afterPos = bot.entity.position;
       const afterSameCol = Math.floor(afterPos.x) === targetBlockPos.x && Math.floor(afterPos.z) === targetBlockPos.z;
@@ -6226,119 +6689,152 @@ async function navigateNearSpawnerOrChest(bot, session, targetBlockPos, maxReach
 async function openSpawnerDepoWindow(bot, session, spawnerPos, accountId) {
   if (!bot || !spawnerPos || isSpawnerAbortRequested(session)) return null;
 
-  const reached = await navigateNearSpawnerOrChest(bot, session, spawnerPos, 3.95);
-  if (isSpawnerAbortRequested(session)) return null;
-  if (!reached) {
-    addLog(accountId, 'SPAWNER', `⚠️ Spawner'a (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) ulaşılamadı, atlanıyor.`, chalk.yellow);
-    return null;
-  }
+  // Her spawner için en fazla 3 deneme yap:
+  // İlk denemede menü açılmazsa farklı bir komşu kareden ve farklı bakış açısından tekrar dener, asla hemen atlamaz!
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (isSpawnerAbortRequested(session)) return null;
 
-  const spawnerBlock = bot.blockAt(spawnerPos);
-  if (!spawnerBlock) return null;
-
-  if (bot.currentWindow) {
-    try {
-      bot.closeWindow(bot.currentWindow);
-    } catch (_) {}
-    await new Promise((r) => setTimeout(r, 180));
-  }
-  if (isSpawnerAbortRequested(session)) return null;
-
-  if (typeof bot.setControlState === 'function') {
-    bot.setControlState('sneak', false);
-  }
-  if (bot._client && bot.entity) {
-    try {
-      if (bot.supportFeature && bot.supportFeature('newPlayerInputPacket')) {
-        bot._client.write('player_input', { inputs: { shift: false, jump: false } });
-      } else {
-        bot._client.write('entity_action', {
-          entityId: bot.entity.id,
-          actionId: 1,
-          jumpBoost: 0
-        });
-      }
-    } catch (_) {}
-  }
-
-  await new Promise((r) => setTimeout(r, 80));
-  if (isSpawnerAbortRequested(session)) return null;
-
-  try {
-    await bot.lookAt(spawnerPos.offset(0.5, 0.5, 0.5), true);
-  } catch (_) {}
-
-  const win1Promise = waitForFarmerWindow(bot, 5500);
-  try {
-    await bot.activateBlock(spawnerBlock);
-  } catch (e) {
-    try {
-      await bot.openBlock(spawnerBlock);
-    } catch (_) {}
-  }
-
-  const win1 = await win1Promise;
-  if (isSpawnerAbortRequested(session)) {
-    if (win1) try { bot.closeWindow(win1); } catch (_) {}
-    return null;
-  }
-  const activeWin1 = bot.currentWindow || win1;
-  if (!activeWin1) {
-    addLog(accountId, 'SPAWNER', `⚠️ Spawner (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) yönetim menüsü açılmadı.`, chalk.yellow);
-    return null;
-  }
-
-  await new Promise((r) => setTimeout(r, 220));
-  if (isSpawnerAbortRequested(session)) {
-    try { bot.closeWindow(activeWin1); } catch (_) {}
-    return null;
-  }
-
-  const win1TitleNorm = normalizeTurkishText(parseWindowTitle(activeWin1) || '');
-  if (win1TitleNorm.includes('depo')) {
-    return activeWin1;
-  }
-
-  let depoSlot = -1;
-  const containerEnd1 = activeWin1.inventoryStart || Math.min(activeWin1.slots.length, 27);
-  for (let i = 0; i < containerEnd1; i++) {
-    const it = activeWin1.slots[i];
-    if (!it) continue;
-    const itName = String(it.name || '').toLowerCase();
-    const customNorm = normalizeTurkishText(`${getItemCustomName(it) || ''} ${it.displayName || ''} ${getItemLoreText(it) || ''}`);
-    if (
-      itName.includes('chest') ||
-      customNorm.includes('depoyu ac') ||
-      customNorm.includes('birikmis esyalari') ||
-      customNorm.includes('depo')
-    ) {
-      depoSlot = i;
-      break;
+    const reached = await navigateNearSpawnerOrChest(bot, session, spawnerPos, 3.55, {
+      isSpawner: true,
+      preferAlternativeSpot: attempt >= 2
+    });
+    if (isSpawnerAbortRequested(session)) return null;
+    if (!reached && attempt === 3) {
+      addLog(accountId, 'SPAWNER', `⚠️ Spawner'a (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) 3 denemede ulaşılamadı.`, chalk.yellow);
+      return null;
     }
-  }
-  if (depoSlot === -1 && activeWin1.slots[10]) {
-    depoSlot = 10;
-  }
+    if (!reached) {
+      await new Promise((r) => setTimeout(r, 200));
+      continue;
+    }
 
-  if (depoSlot === -1) {
+    const spawnerBlock = bot.blockAt(spawnerPos);
+    if (!spawnerBlock) return null;
+
+    if (bot.currentWindow) {
+      try {
+        bot.closeWindow(bot.currentWindow);
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 220));
+    }
+    if (isSpawnerAbortRequested(session)) return null;
+
+    if (typeof bot.setControlState === 'function') {
+      bot.setControlState('forward', false);
+      bot.setControlState('jump', false);
+      bot.setControlState('sneak', false);
+    }
+    if (bot._client && bot.entity) {
+      try {
+        if (bot.supportFeature && bot.supportFeature('newPlayerInputPacket')) {
+          bot._client.write('player_input', { inputs: { shift: false, jump: false } });
+        } else {
+          bot._client.write('entity_action', {
+            entityId: bot.entity.id,
+            actionId: 1,
+            jumpBoost: 0
+          });
+        }
+      } catch (_) {}
+    }
+
+    await new Promise((r) => setTimeout(r, 110));
+    if (isSpawnerAbortRequested(session)) return null;
+
     try {
-      bot.closeWindow(activeWin1);
+      await bot.lookAt(spawnerPos.offset(0.5, 0.5, 0.5), true);
     } catch (_) {}
-    return null;
+    await new Promise((r) => setTimeout(r, 60));
+
+    const win1Promise = waitForFarmerWindow(bot, 2800);
+    try {
+      await bot.activateBlock(spawnerBlock);
+    } catch (e) {
+      try {
+        await bot.openBlock(spawnerBlock);
+      } catch (_) {}
+    }
+
+    const win1 = await win1Promise;
+    if (isSpawnerAbortRequested(session)) {
+      if (win1) try { bot.closeWindow(win1); } catch (_) {}
+      return null;
+    }
+    const activeWin1 = bot.currentWindow || win1;
+    if (!activeWin1) {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 240));
+        continue;
+      }
+      addLog(accountId, 'SPAWNER', `⚠️ Spawner (${spawnerPos.x}, ${spawnerPos.y}, ${spawnerPos.z}) yönetim menüsü açılmadı.`, chalk.yellow);
+      return null;
+    }
+
+    await new Promise((r) => setTimeout(r, 220));
+    if (isSpawnerAbortRequested(session)) {
+      try { bot.closeWindow(activeWin1); } catch (_) {}
+      return null;
+    }
+
+    const win1TitleNorm = normalizeTurkishText(parseWindowTitle(activeWin1) || '');
+    if (win1TitleNorm.includes('depo')) {
+      return activeWin1;
+    }
+
+    let depoSlot = -1;
+    const containerEnd1 = activeWin1.inventoryStart || Math.min(activeWin1.slots.length, 27);
+    for (let i = 0; i < containerEnd1; i++) {
+      const it = activeWin1.slots[i];
+      if (!it) continue;
+      const itName = String(it.name || '').toLowerCase();
+      const customNorm = normalizeTurkishText(`${getItemCustomName(it) || ''} ${it.displayName || ''} ${getItemLoreText(it) || ''}`);
+      if (
+        itName.includes('chest') ||
+        customNorm.includes('depoyu ac') ||
+        customNorm.includes('birikmis esyalari') ||
+        customNorm.includes('depo')
+      ) {
+        depoSlot = i;
+        break;
+      }
+    }
+    if (depoSlot === -1 && activeWin1.slots[10]) {
+      depoSlot = 10;
+    }
+
+    if (depoSlot === -1) {
+      try {
+        bot.closeWindow(activeWin1);
+      } catch (_) {}
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 220));
+        continue;
+      }
+      return null;
+    }
+
+    const win2Promise = waitForFarmerStorageWindow(bot, activeWin1.id, 3500);
+    try {
+      await withPromiseTimeout(bot.clickWindow(depoSlot, 0, 0), 1800);
+    } catch (_) {}
+    const win2 = await win2Promise;
+    if (isSpawnerAbortRequested(session)) {
+      if (win2) try { bot.closeWindow(win2); } catch (_) {}
+      return null;
+    }
+    const finalDepoWin = bot.currentWindow || win2;
+    if (finalDepoWin && finalDepoWin.id !== activeWin1.id) {
+      await new Promise((r) => setTimeout(r, 220));
+      return finalDepoWin;
+    }
+
+    try {
+      bot.closeWindow(bot.currentWindow || activeWin1);
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 220));
   }
 
-  const win2Promise = waitForFarmerStorageWindow(bot, activeWin1.id, 5500);
-  try {
-    await withPromiseTimeout(bot.clickWindow(depoSlot, 0, 0), 1800);
-  } catch (_) {}
-  const win2 = await win2Promise;
-  if (isSpawnerAbortRequested(session)) {
-    if (win2) try { bot.closeWindow(win2); } catch (_) {}
-    return null;
-  }
-  await new Promise((r) => setTimeout(r, 240));
-
-  return bot.currentWindow || win2 || null;
+  return null;
 }
 
 async function withdrawTargetItemFromSpawnerDepo(bot, depoWin, targetRawName, keepEmptySlots = 0, session = null) {
@@ -6687,7 +7183,7 @@ async function depositIronBlocksToNearbyChest(bot, session, accountId, homePos, 
   if (session && session.spawnerEnclosure) {
     const enc = session.spawnerEnclosure;
     const boundedChests = candidateChests.filter((c) => {
-      if (c.y < enc.floorY || c.y > enc.floorY + 2) return false;
+      if (c.y < enc.minY - 1 || c.y > enc.maxY + 2) return false;
       if (c.x < enc.minX - 1 || c.x > enc.maxX + 1 || c.z < enc.minZ - 1 || c.z > enc.maxZ + 1) return false;
       return isTargetReachableFromSpawnerEnclosure(c, enc, 3.85);
     });
@@ -6823,14 +7319,14 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false, passN
   const customCoordsText = spawnerCfg.customCoords || '';
   const sellCmd = (acc && acc.autoSellCommand ? acc.autoSellCommand.trim() : '') || '/sat hepsi';
 
-  const rawHomePos = getEffectiveBotStandBlock(bot, session) || bot.entity.position.floored();
+  const rawHomePos = getSpawnerBotStandPos(bot, session) || getEffectiveBotStandBlock(bot, session) || bot.entity.position.floored();
   const anchorHomePos = (session.spawnerEnclosure && session.spawnerEnclosure.anchorPos)
     ? session.spawnerEnclosure.anchorPos
     : rawHomePos;
 
-  let spawners = findNearbySpawnerBlocks(bot, 18, targetSpawnerCount, customCoordsText);
+  let spawners = findNearbySpawnerBlocks(bot, 26, targetSpawnerCount, customCoordsText, anchorHomePos);
   if (spawners.length === 0) {
-    spawners = findNearbySpawnerBlocks(bot, 32, targetSpawnerCount, customCoordsText);
+    spawners = findNearbySpawnerBlocks(bot, 36, targetSpawnerCount, customCoordsText, anchorHomePos);
   }
   if (spawners.length === 0) {
     if (isManual) {
@@ -6841,20 +7337,6 @@ async function executeSpawnerIronPoppyRoutine(accountId, isManual = false, passN
 
   const enclosure = computeSpawnerEnclosure(bot, spawners, anchorHomePos, session);
   session.spawnerEnclosure = enclosure;
-
-  if (!customCoordsText && enclosure && enclosure.interiorSet && enclosure.interiorSet.size > 0) {
-    const reachableSpawners = spawners.filter((sp) => {
-      if (sp.y < enclosure.floorY - 1 || sp.y > enclosure.floorY + 5) return false;
-      if (sp.x < enclosure.minX - 1 || sp.x > enclosure.maxX + 1 || sp.z < enclosure.minZ - 1 || sp.z > enclosure.maxZ + 1) return false;
-      return isTargetReachableFromSpawnerEnclosure(sp, enclosure, 3.85);
-    });
-    if (reachableSpawners.length > 0) {
-      spawners = sortSpawnersInSnakePattern(reachableSpawners, anchorHomePos);
-      if (targetSpawnerCount > 0 && targetSpawnerCount < spawners.length) {
-        spawners = spawners.slice(0, targetSpawnerCount);
-      }
-    }
-  }
 
   const homePos = anchorHomePos;
   const prevYaw = session.baseYaw !== undefined && session.baseYaw !== null ? session.baseYaw : bot.entity.yaw;
@@ -9691,10 +10173,13 @@ function isBlockWalkableFloor(block, session = null) {
   if (name.includes('spawner') || isFarmContainerBlockName(name)) return false;
   // Tarla modlarında aydınlatma blokları (deniz feneri, ışıktaşı vb.) yürünebilir zemin sayılmaz;
   // ancak Oto-İnşa (builder) sırasında tam katı ışık blokları (sea_lantern, glowstone, shroomlight, redstone_lamp) üzerinde yürünebilir.
-  const isBuilderActive = Boolean(session && session.builder && session.builder.status === 'building');
-  if (!isBuilderActive && isLightingOrObstacleBlock(block)) return false;
+  const isBuilderOrSpawnerActive = Boolean(
+    (session && session.builder && session.builder.status === 'building') ||
+    (session && session.isSpawnerRoutineRunning)
+  );
+  if (!isBuilderOrSpawnerActive && isLightingOrObstacleBlock(block)) return false;
   if (
-    isBuilderActive &&
+    isBuilderOrSpawnerActive &&
     (name.includes('lantern') && name !== 'sea_lantern' && name !== 'jack_o_lantern')
   ) {
     return false;
@@ -9810,7 +10295,7 @@ function isSafeToStep(bot, yaw, session = null, options = {}) {
   const sin = -Math.sin(yaw);
   const cos = -Math.cos(yaw);
 
-  const curFootY = Math.floor(pos.y + 0.2);
+  const curFootY = Math.floor(pos.y + 0.42);
   const curFloorY = curFootY - 1;
   const isBuilderBuilding = Boolean(session && session.builder && session.builder.status === 'building');
   const allowStepDown = options && typeof options.allowStepDown === 'boolean'
