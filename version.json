@@ -1,9 +1,9 @@
 {
-    "version":  "2.2.42",
-    "buildId":  "20261101_spawner_enclosure_infinite_v73",
-    "commit":  "538ac281c92d34ad7c821cec3b5aebfe2e171ce2",
-    "releasedAt":  "2026-11-01T16:11:43.729Z",
-    "notes":  "Oto Spawner modunda botun sandik duvarlarinin uzerine ziplamasi ve alan disina cikmasi 2B zemin flood-fill (alan kilidi) ile engellendi; zamanlayici kaldirilarak kesintisiz/sinirsiz calisma modu eklendi (v2.2.42).",
+    "version":  "2.2.43",
+    "buildId":  "20261103_spawner_rebuild_v74",
+    "commit":  "5aff81391c7e35d9767adf00e311b2f5bf9fdd74",
+    "releasedAt":  "2026-11-03T16:55:27.650Z",
+    "notes":  "Spawner toplama ve yurume motoru bastan yazildi: Cok katmanli cam/huni/glowstone zeminlerde tum spawnerlara dogrudan yanindaki koridordan (\u003c=1.95m) ulasim, gorus hatti (LoS) kontrolu ve 3 denemeli menu acma eklendi (v2.2.43).",
     "files":  [
                   "index.js",
                   "public/index.html",
