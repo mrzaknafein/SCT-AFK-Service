@@ -1,9 +1,9 @@
-{
-    "version":  "2.2.43",
-    "buildId":  "20261103_spawner_rebuild_v74",
-    "commit":  "5aff81391c7e35d9767adf00e311b2f5bf9fdd74",
-    "releasedAt":  "2026-11-03T16:55:27.650Z",
-    "notes":  "Spawner toplama ve yurume motoru bastan yazildi: Cok katmanli cam/huni/glowstone zeminlerde tum spawnerlara dogrudan yanindaki koridordan (\u003c=1.95m) ulasim, gorus hatti (LoS) kontrolu ve 3 denemeli menu acma eklendi (v2.2.43).",
+﻿{
+    "version":  "2.2.44",
+    "buildId":  "20261103_stacked_spawners_fix_v75",
+    "commit":  "16e7db55bfa8353fe3ae45fa92160902ab7c9bc1",
+    "releasedAt":  "2026-11-03T19:19:07.644Z",
+    "notes":  "Ust uste dizili (2-3 katli) spawner erisimi duzeltildi: Acik yan yuzeyden (clickFace) tiklama, ayni sutundaki spawnerlar icin LoS/mesafe optimizasyonu ve sutun bazli toplu demir toplama eklendi (v2.2.44).",
     "files":  [
                   "index.js",
                   "public/index.html",
