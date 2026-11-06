@@ -1,9 +1,9 @@
 {
-  "version": "2.4.2",
-  "buildId": "20261106_native_wpf_gui_v80",
-  "releaseDate": "2026-11-06T20:23:17.807Z",
-  "notes": "Native WPF Masaüstü Sürümü (v80): Tamamen bağımsız C# WPF masaüstü uygulaması, Forest Green & Sand Beige tema ve yuvarlak logolar.",
-  "releaseNotes": "Native WPF Masaüstü Sürümü (v80): Tamamen bağımsız C# WPF masaüstü uygulaması, Forest Green & Sand Beige tema ve yuvarlak logolar.",
+  "version": "2.4.3",
+  "buildId": "20261107_mc_inventory_skin_v81",
+  "releaseDate": "2026-11-06T21:09:20.633Z",
+  "notes": "v81 Sürümü: Gerçek Minecraft 9x4 Envanter Izgarası ve Dokuları, mc-heads Bot Oyuncu Kafa Avatarları ve Konsol Sohbet Metin Onarımı.",
+  "releaseNotes": "v81 Sürümü: Gerçek Minecraft 9x4 Envanter Izgarası ve Dokuları, mc-heads Bot Oyuncu Kafa Avatarları ve Konsol Sohbet Metin Onarımı.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/main/index.js",
     "Launcher.cs": "https://raw.githubusercontent.com/{OWNER}/{REPO}/main/Launcher.cs",
