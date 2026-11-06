@@ -1,10 +1,10 @@
 {
-    "buildId":  "20261107_avatar_fix_v84",
+    "buildId":  "20261107_ui_avatar_fix_v85",
     "files":  {
                   "index.js":  "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/index.js",
                   "Launcher.cs":  "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/Launcher.cs"
               },
-    "version":  "2.4.6",
-    "releasedAt":  "2026-11-07T01:10:00.000Z",
-    "notes": "Hotfix v84: Bot avatar (skin head) yükleme düzeltildi; mc-heads/minotar/crafatar yedekli arka plan indirme."
+    "version":  "2.4.7",
+    "releasedAt":  "2026-11-07T02:28:00.000Z",
+    "notes":  "Hotfix v85: Uygulama temasına uygun özel onay/uyarı pencereleri (SctDialogModal), Hot-Update sonrası otomatik EXE yeniden derleme + yeniden başlatma ve Node.js OpenSSL destekli 3 katmanlı bot avatar yükleyici eklendi."
 }
