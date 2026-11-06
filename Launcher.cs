@@ -7140,7 +7140,7 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_ui_avatar_fix_v85";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_hotupdate_exe_fix_v86";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
