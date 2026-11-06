@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_self_heal_v83';
+const ENGINE_BUILD_ID = '20261107_avatar_fix_v84';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
