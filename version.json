@@ -1,10 +1,10 @@
 {
-    "buildId":  "20261107_self_heal_v83",
+    "buildId":  "20261107_avatar_fix_v84",
     "files":  {
                   "index.js":  "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/index.js",
                   "Launcher.cs":  "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/Launcher.cs"
               },
-    "version":  "2.4.5",
+    "version":  "2.4.6",
     "releasedAt":  "2026-11-07T01:10:00.000Z",
-    "notes":  "Hotfix v83: VDS takılı kalan bozuk motor (v80/v81) için otomatik GitHub Self-Healing onarımı, sıkı IPC Pipe doğrulaması ve çevrimdışı güncelleme kurtarma mekanizması eklendi."
+    "notes": "Hotfix v84: Bot avatar (skin head) yükleme düzeltildi; mc-heads/minotar/crafatar yedekli arka plan indirme."
 }
