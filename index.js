@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_avatar_fix_v84';
+const ENGINE_BUILD_ID = '20261107_ui_avatar_fix_v85';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
@@ -1011,7 +1011,7 @@ async function applyHotUpdate() {
       fs.utimesSync(finalJsPath, now, now);
     } catch (e) {}
 
-    rebuildPortableExe();
+    rebuildPortableExe(true);
 
     addLog(null, 'GÜNCELLEME', 'Güncelleme başarıyla yüklendi! Sistem yeniden başlatılıyor...', chalk.green);
     broadcastSSE('server-restarting', {
@@ -1067,16 +1067,21 @@ const ipcClients = new Set();
 
 let exeSyncTimer = null;
 
-function rebuildPortableExe() {
+function rebuildPortableExe(sync = false) {
   const cscPath = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
   const launcherCs = path.join(__dirname, 'Launcher.cs');
   const icoPath = path.join(__dirname, 'app.ico');
-  if (!fs.existsSync(cscPath) || !fs.existsSync(launcherCs) || !fs.existsSync(icoPath)) return;
+  if (!fs.existsSync(cscPath) || !fs.existsSync(launcherCs) || !fs.existsSync(icoPath)) return [];
 
   const targetPaths = new Set();
+  targetPaths.add(path.join(__dirname, 'SCT AFK Service.exe'));
   const defaultExe = path.join(__dirname, '..', 'minecraft-afk-client', 'SCT AFK Service.exe');
   if (fs.existsSync(path.dirname(defaultExe))) {
     targetPaths.add(defaultExe);
+  }
+  const desktopExe = path.join(os.homedir(), 'Desktop', 'SCT AFK Service.exe');
+  if (fs.existsSync(desktopExe)) {
+    targetPaths.add(desktopExe);
   }
   const exePathTxt = path.join(__dirname, 'exe_path.txt');
   if (fs.existsSync(exePathTxt)) {
@@ -1091,6 +1096,23 @@ function rebuildPortableExe() {
   const fwDir = path.dirname(cscPath);
   const wpfDir = path.join(fwDir, 'WPF');
 
+  const applyBuiltFile = (tmpExe, outExe) => {
+    if (!fs.existsSync(tmpExe)) return;
+    try {
+      fs.renameSync(tmpExe, outExe);
+    } catch (renameErr) {
+      try {
+        const oldBackup = `${outExe}.old`;
+        try { if (fs.existsSync(oldBackup)) fs.unlinkSync(oldBackup); } catch (e) {}
+        if (fs.existsSync(outExe)) fs.renameSync(outExe, oldBackup);
+        fs.renameSync(tmpExe, outExe);
+        try { fs.unlinkSync(oldBackup); } catch (e) {}
+      } catch (e2) {
+        try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (e3) {}
+      }
+    }
+  };
+
   for (const outExe of targetPaths) {
     const tmpExe = `${outExe}.new.exe`;
     const args = [
@@ -1103,6 +1125,7 @@ function rebuildPortableExe() {
       `/r:${path.join(wpfDir, 'PresentationCore.dll')}`,
       `/r:${path.join(wpfDir, 'WindowsBase.dll')}`,
       `/r:${path.join(fwDir, 'System.Xaml.dll')}`,
+      '/r:System.Net.Http.dll',
       '/r:System.Web.Extensions.dll',
       '/r:System.Core.dll',
       '/r:System.Drawing.dll',
@@ -1115,26 +1138,56 @@ function rebuildPortableExe() {
       `/resource:${icoPath},sct.app.ico`,
       launcherCs
     ];
-    execFile(cscPath, args, { windowsHide: true }, (err) => {
-      if (err || !fs.existsSync(tmpExe)) {
-        try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (e) {}
-        return;
-      }
+    if (sync) {
       try {
-        fs.renameSync(tmpExe, outExe);
-      } catch (renameErr) {
-        try {
-          const oldBackup = `${outExe}.old`;
-          try { if (fs.existsSync(oldBackup)) fs.unlinkSync(oldBackup); } catch (e) {}
-          if (fs.existsSync(outExe)) fs.renameSync(outExe, oldBackup);
-          fs.renameSync(tmpExe, outExe);
-          try { fs.unlinkSync(oldBackup); } catch (e) {}
-        } catch (e2) {
-          try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (e3) {}
-        }
+        execFileSync(cscPath, args, { windowsHide: true });
+        applyBuiltFile(tmpExe, outExe);
+      } catch (e) {
+        try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (_) {}
       }
-    });
+    } else {
+      execFile(cscPath, args, { windowsHide: true }, (err) => {
+        if (err || !fs.existsSync(tmpExe)) {
+          try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (e) {}
+          return;
+        }
+        applyBuiltFile(tmpExe, outExe);
+      });
+    }
   }
+  return Array.from(targetPaths);
+}
+
+async function prefetchAllAccountAvatars() {
+  try {
+    const avDir = path.join(__dirname, 'avatars');
+    if (!fs.existsSync(avDir)) fs.mkdirSync(avDir, { recursive: true });
+    const accounts = Array.isArray(config.accounts) ? config.accounts : [];
+    for (const acc of accounts) {
+      const uname = (acc && acc.username ? String(acc.username).trim() : '') || 'Steve';
+      const safe = uname.replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const dest = path.join(avDir, `${safe}.png`);
+      if (fs.existsSync(dest)) {
+        try {
+          if (fs.statSync(dest).size > 64) continue;
+        } catch (e) {}
+      }
+      const urls = [
+        `https://mc-heads.net/avatar/${encodeURIComponent(uname)}/64`,
+        `https://minotar.net/helm/${encodeURIComponent(uname)}/64.png`,
+        `https://cravatar.eu/helmavatar/${encodeURIComponent(uname)}/64.png`
+      ];
+      for (const u of urls) {
+        try {
+          const buf = await httpFetchUrl(u, 3, { 'User-Agent': 'Mozilla/5.0 SCT-AFK-Service' }, 10000);
+          if (buf && buf.length > 64 && buf[0] === 0x89 && buf[1] === 0x50) {
+            fs.writeFileSync(dest, buf);
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
 }
 
 function saveConfig() {
@@ -20015,6 +20068,39 @@ ipcServer.listen(IPC_PIPE_PATH, () => {
   initDiscordRPC();
   startAdminRelayReporter();
   startUpdateChecker();
+  prefetchAllAccountAvatars();
+
+  if (process.env.SCT_HOT_UPDATE_RESTART === '1') {
+    setTimeout(() => {
+      try {
+        // Kill the old GUI process first so its file handle is unlocked and the new C# GUI can launch
+        try {
+          execSync('taskkill /F /IM "SCT AFK Service.exe" /IM "SCT_AFK_Service.exe"', { stdio: 'ignore', windowsHide: true });
+        } catch (e) {}
+        const builtPaths = rebuildPortableExe(true);
+        let launchExe = null;
+        const exePathTxt = path.join(__dirname, 'exe_path.txt');
+        if (fs.existsSync(exePathTxt)) {
+          const rec = fs.readFileSync(exePathTxt, 'utf8').trim();
+          if (rec && fs.existsSync(rec)) launchExe = rec;
+        }
+        if (!launchExe && Array.isArray(builtPaths)) {
+          for (const p of builtPaths) {
+            if (fs.existsSync(p)) { launchExe = p; break; }
+          }
+        }
+        if (launchExe && fs.existsSync(launchExe)) {
+          const guiChild = spawn(launchExe, [], {
+            cwd: path.dirname(launchExe),
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false
+          });
+          guiChild.unref();
+        }
+      } catch (e) {}
+    }, 800);
+  }
 
   if (config.autoStartAll && Array.isArray(config.accounts) && config.accounts.length > 0) {
     const delayStep = Number(config.server && config.server.joinDelayMs) || 2500;
@@ -20038,7 +20124,7 @@ ipcServer.listen(IPC_PIPE_PATH, () => {
         );
         if (updatedLcs !== lcsRaw) {
           fs.writeFileSync(lcsPath, updatedLcs, 'utf8');
-          rebuildPortableExe();
+          rebuildPortableExe(true);
         }
       }
     } catch (e) {}
@@ -20104,7 +20190,7 @@ async function autoUpgradeExecutable() {
       } catch (e) {}
     }
   } else {
-    rebuildPortableExe();
+    rebuildPortableExe(true);
   }
 
   // 3. Eger Native WPF GUI su an bagli degilse (eski webden guncellendiyse), Native EXE'yi baslat!
