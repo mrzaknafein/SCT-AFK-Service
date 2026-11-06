@@ -6726,7 +6726,7 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_mc_inventory_skin_v81";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_engine_restore_v82";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
