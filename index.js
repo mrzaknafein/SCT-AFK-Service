@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_ui_avatar_fix_v85';
+const ENGINE_BUILD_ID = '20261107_hotupdate_exe_fix_v86';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
@@ -1071,7 +1071,19 @@ function rebuildPortableExe(sync = false) {
   const cscPath = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
   const launcherCs = path.join(__dirname, 'Launcher.cs');
   const icoPath = path.join(__dirname, 'app.ico');
-  if (!fs.existsSync(cscPath) || !fs.existsSync(launcherCs) || !fs.existsSync(icoPath)) return [];
+  if (!fs.existsSync(cscPath) || !fs.existsSync(launcherCs)) return [];
+
+  // Ensure Launcher.cs has the matching CURRENT_ENGINE_BUILD_ID before compiling
+  try {
+    const lcsRaw = fs.readFileSync(launcherCs, 'utf8');
+    const updatedLcs = lcsRaw.replace(
+      /public const string CURRENT_ENGINE_BUILD_ID = "[^"]*";/,
+      `public const string CURRENT_ENGINE_BUILD_ID = "${ENGINE_BUILD_ID}";`
+    );
+    if (updatedLcs !== lcsRaw) {
+      fs.writeFileSync(launcherCs, updatedLcs, 'utf8');
+    }
+  } catch (e) {}
 
   const targetPaths = new Set();
   targetPaths.add(path.join(__dirname, 'SCT AFK Service.exe'));
@@ -1113,6 +1125,10 @@ function rebuildPortableExe(sync = false) {
     }
   };
 
+  const pkgPath = path.join(__dirname, 'package.json');
+  const jsPath = path.join(__dirname, 'index.js');
+  const logoPath = path.join(__dirname, 'public', 'logo.jpg');
+
   for (const outExe of targetPaths) {
     const tmpExe = `${outExe}.new.exe`;
     const args = [
@@ -1120,7 +1136,7 @@ function rebuildPortableExe(sync = false) {
       '/target:winexe',
       '/optimize+',
       `/out:${tmpExe}`,
-      `/win32icon:${icoPath}`,
+      ...(fs.existsSync(icoPath) ? [`/win32icon:${icoPath}`] : []),
       `/r:${path.join(wpfDir, 'PresentationFramework.dll')}`,
       `/r:${path.join(wpfDir, 'PresentationCore.dll')}`,
       `/r:${path.join(wpfDir, 'WindowsBase.dll')}`,
@@ -1130,12 +1146,12 @@ function rebuildPortableExe(sync = false) {
       '/r:System.Core.dll',
       '/r:System.Drawing.dll',
       '/r:System.Windows.Forms.dll',
-      `/resource:${path.join(__dirname, 'package.json')},sct.package.json`,
-      `/resource:${path.join(__dirname, 'index.js')},sct.index.js`,
-      `/resource:${path.join(__dirname, 'public', 'logo.jpg')},sct.logo.jpg`,
-      `/resource:${CONFIG_PATH},sct.config.json`,
+      ...(fs.existsSync(pkgPath) ? [`/resource:${pkgPath},sct.package.json`] : []),
+      ...(fs.existsSync(jsPath) ? [`/resource:${jsPath},sct.index.js`] : []),
+      ...(fs.existsSync(logoPath) ? [`/resource:${logoPath},sct.logo.jpg`] : []),
+      ...(fs.existsSync(CONFIG_PATH) ? [`/resource:${CONFIG_PATH},sct.config.json`] : []),
       `/resource:${launcherCs},sct.Launcher.cs`,
-      `/resource:${icoPath},sct.app.ico`,
+      ...(fs.existsSync(icoPath) ? [`/resource:${icoPath},sct.app.ico`] : []),
       launcherCs
     ];
     if (sync) {
@@ -1156,6 +1172,92 @@ function rebuildPortableExe(sync = false) {
     }
   }
   return Array.from(targetPaths);
+}
+
+function isExeMatchingCurrentBuild(exePath) {
+  try {
+    if (!exePath || !fs.existsSync(exePath)) return false;
+    const buf = fs.readFileSync(exePath);
+    return buf.includes(Buffer.from(ENGINE_BUILD_ID, 'utf16le'));
+  } catch (e) {
+    return false;
+  }
+}
+
+async function ensureGuiExeUpToDateAndRestartIfNeeded() {
+  try {
+    let launchExe = null;
+    const exePathTxt = path.join(__dirname, 'exe_path.txt');
+    if (fs.existsSync(exePathTxt)) {
+      const rec = fs.readFileSync(exePathTxt, 'utf8').trim();
+      if (rec && fs.existsSync(path.dirname(rec))) launchExe = rec;
+    }
+    if (!launchExe) {
+      const desktopExe = path.join(os.homedir(), 'Desktop', 'SCT AFK Service.exe');
+      if (fs.existsSync(desktopExe)) launchExe = desktopExe;
+    }
+    if (!launchExe) {
+      const defaultExe = path.join(__dirname, '..', 'minecraft-afk-client', 'SCT AFK Service.exe');
+      if (fs.existsSync(defaultExe)) launchExe = defaultExe;
+    }
+
+    const isHotRestart = process.env.SCT_HOT_UPDATE_RESTART === '1';
+    const exeMatches = launchExe ? isExeMatchingCurrentBuild(launchExe) : true;
+
+    if (!isHotRestart && exeMatches) {
+      return;
+    }
+
+    // Download app.ico if missing so rebuilt EXE keeps its icon
+    const icoPath = path.join(__dirname, 'app.ico');
+    if (!fs.existsSync(icoPath)) {
+      try {
+        const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+        const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
+        const branch = (config.updates && config.updates.branch) || 'main';
+        const icoBuf = await httpFetchUrl(getRawFileUrl(owner, repo, branch, 'app.ico'), 3, {}, 10000);
+        if (icoBuf && icoBuf.length > 256) fs.writeFileSync(icoPath, icoBuf);
+      } catch (e) {}
+    }
+
+    // Terminate the outdated GUI process so Windows releases its file lock
+    try {
+      execSync('taskkill /F /IM "SCT AFK Service.exe" /IM "SCT_AFK_Service.exe"', { stdio: 'ignore', windowsHide: true });
+    } catch (e) {}
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    const builtPaths = rebuildPortableExe(true);
+    if (!launchExe && Array.isArray(builtPaths)) {
+      for (const p of builtPaths) {
+        if (fs.existsSync(p)) { launchExe = p; break; }
+      }
+    }
+
+    // Fallback: if local csc.exe failed to update launchExe, download precompiled EXE directly from GitHub
+    if (launchExe && !isExeMatchingCurrentBuild(launchExe)) {
+      try {
+        const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+        const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
+        const branch = (config.updates && config.updates.branch) || 'main';
+        const exeUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/SCT%20AFK%20Service.exe?t=${Date.now()}`;
+        const dlExe = await httpFetchUrl(exeUrl, 5, {}, 45000);
+        if (dlExe && dlExe.length > 500000) {
+          fs.writeFileSync(launchExe, dlExe);
+        }
+      } catch (e) {}
+    }
+
+    if (launchExe && fs.existsSync(launchExe)) {
+      const guiChild = spawn(launchExe, [], {
+        cwd: path.dirname(launchExe),
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      });
+      guiChild.unref();
+    }
+  } catch (e) {}
 }
 
 async function prefetchAllAccountAvatars() {
@@ -20070,37 +20172,9 @@ ipcServer.listen(IPC_PIPE_PATH, () => {
   startUpdateChecker();
   prefetchAllAccountAvatars();
 
-  if (process.env.SCT_HOT_UPDATE_RESTART === '1') {
-    setTimeout(() => {
-      try {
-        // Kill the old GUI process first so its file handle is unlocked and the new C# GUI can launch
-        try {
-          execSync('taskkill /F /IM "SCT AFK Service.exe" /IM "SCT_AFK_Service.exe"', { stdio: 'ignore', windowsHide: true });
-        } catch (e) {}
-        const builtPaths = rebuildPortableExe(true);
-        let launchExe = null;
-        const exePathTxt = path.join(__dirname, 'exe_path.txt');
-        if (fs.existsSync(exePathTxt)) {
-          const rec = fs.readFileSync(exePathTxt, 'utf8').trim();
-          if (rec && fs.existsSync(rec)) launchExe = rec;
-        }
-        if (!launchExe && Array.isArray(builtPaths)) {
-          for (const p of builtPaths) {
-            if (fs.existsSync(p)) { launchExe = p; break; }
-          }
-        }
-        if (launchExe && fs.existsSync(launchExe)) {
-          const guiChild = spawn(launchExe, [], {
-            cwd: path.dirname(launchExe),
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: false
-          });
-          guiChild.unref();
-        }
-      } catch (e) {}
-    }, 800);
-  }
+  setTimeout(() => {
+    ensureGuiExeUpToDateAndRestartIfNeeded();
+  }, 800);
 
   if (config.autoStartAll && Array.isArray(config.accounts) && config.accounts.length > 0) {
     const delayStep = Number(config.server && config.server.joinDelayMs) || 2500;
