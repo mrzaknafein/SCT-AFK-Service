@@ -1,10 +1,10 @@
 {
-    "buildId":  "20261107_ui_avatar_fix_v85",
+    "buildId":  "20261107_hotupdate_exe_fix_v86",
     "files":  {
                   "index.js":  "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/index.js",
                   "Launcher.cs":  "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/Launcher.cs"
               },
-    "version":  "2.4.7",
-    "releasedAt":  "2026-11-07T02:28:00.000Z",
-    "notes":  "Hotfix v85: Uygulama temasına uygun özel onay/uyarı pencereleri (SctDialogModal), Hot-Update sonrası otomatik EXE yeniden derleme + yeniden başlatma ve Node.js OpenSSL destekli 3 katmanlı bot avatar yükleyici eklendi."
+    "version":  "2.4.8",
+    "releasedAt":  "2026-11-07T02:40:00.000Z",
+    "notes":  "Hotfix v86: VDS üzerinde app.ico/logo.jpg eksik olduğunda bile EXE derlemesinin çalışması, UTF-16LE buildId kontrolü ile eski EXE sürecinin otomatik yenilenmesi ve doğrudan GitHub EXE yedek indirmesi eklendi."
 }
