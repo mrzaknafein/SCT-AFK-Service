@@ -29,7 +29,7 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_engine_restore_v82';
+const ENGINE_BUILD_ID = '20261107_self_heal_v83';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
@@ -967,8 +967,8 @@ async function applyHotUpdate() {
       }
     }
 
-    if (!newJsStr.includes('ENGINE_BUILD_ID') || !newJsStr.includes('SctAfkEngineIpc') || newJsStr.length < 15000) {
-      throw new Error('İndirilen index.js dosyası geçersiz veya Native WPF IPC desteklemiyor!');
+    if (!newJsStr.includes('ENGINE_BUILD_ID') || !newJsStr.includes('ipcServer.listen(IPC_PIPE_PATH') || newJsStr.length < 500000) {
+      throw new Error('İndirilen index.js dosyası geçersiz veya Native WPF IPC sunucusu eksik!');
     }
     // Sonsuz güncelleme ve sürüm düşürme (downgrade) koruması: indirilen motor daha yeni olmalı
     if (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId) || !isBuildIdNewer(dlBuildId, ENGINE_BUILD_ID)) {
