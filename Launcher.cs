@@ -856,41 +856,93 @@ namespace SctAfkService
         return img;
       }
 
+      private static readonly Dictionary<string, List<Action<ImageSource>>> avatarPending = new Dictionary<string, List<Action<ImageSource>>>(StringComparer.OrdinalIgnoreCase);
+
+      private static readonly string[] AvatarUrlTemplates = new string[]
+      {
+        "https://mc-heads.net/avatar/{0}/64",
+        "https://minotar.net/helm/{0}/64",
+        "https://crafatar.com/avatars/{0}?size=64&overlay&default=MHF_Steve"
+      };
+
+      private static ImageSource DownloadAvatar(string username)
+      {
+        for (int i = 0; i < AvatarUrlTemplates.Length; i++)
+        {
+          try
+          {
+            ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768 | (SecurityProtocolType)192;
+            byte[] data;
+            using (WebClient wc = new WebClient())
+            {
+              wc.Headers.Add("User-Agent", "Mozilla/5.0 SCT-AFK-Service");
+              data = wc.DownloadData(string.Format(AvatarUrlTemplates[i], Uri.EscapeDataString(username)));
+            }
+            if (data == null || data.Length < 64) continue;
+            BitmapImage bmp = new BitmapImage();
+            using (MemoryStream ms = new MemoryStream(data))
+            {
+              bmp.BeginInit();
+              bmp.CacheOption = BitmapCacheOption.OnLoad;
+              bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+              bmp.StreamSource = ms;
+              bmp.EndInit();
+            }
+            bmp.Freeze();
+            return bmp;
+          }
+          catch { }
+        }
+        return null;
+      }
+
       public static ImageSource GetAvatarSource(string username, int size = 32)
       {
         if (string.IsNullOrEmpty(username)) username = "Steve";
-        string key = username + "_" + size;
         lock (avatarCache)
         {
-          if (avatarCache.ContainsKey(key)) return avatarCache[key];
+          if (avatarCache.ContainsKey(username)) return avatarCache[username];
         }
-
-        try
-        {
-          string url = string.Format("https://mc-heads.net/avatar/{0}/{1}", Uri.EscapeDataString(username), size);
-          BitmapImage bmp = new BitmapImage();
-          bmp.BeginInit();
-          bmp.UriSource = new Uri(url, UriKind.Absolute);
-          bmp.CacheOption = BitmapCacheOption.OnLoad;
-          bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-          bmp.EndInit();
-
-          RenderOptions.SetBitmapScalingMode(bmp, BitmapScalingMode.NearestNeighbor);
-
-          lock (avatarCache)
-          {
-            avatarCache[key] = bmp;
-          }
-          return bmp;
-        }
-        catch
-        {
-          return null;
-        }
+        return null;
       }
 
+      private static void FetchAvatarAsync(string username, Action<ImageSource> onReady)
+      {
+        lock (avatarCache)
+        {
+          if (avatarCache.ContainsKey(username))
+          {
+            onReady(avatarCache[username]);
+            return;
+          }
+          List<Action<ImageSource>> waiters;
+          if (avatarPending.TryGetValue(username, out waiters))
+          {
+            waiters.Add(onReady);
+            return;
+          }
+          avatarPending[username] = new List<Action<ImageSource>> { onReady };
+        }
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+          ImageSource src = DownloadAvatar(username);
+          List<Action<ImageSource>> waiters;
+          lock (avatarCache)
+          {
+            waiters = avatarPending[username];
+            avatarPending.Remove(username);
+            if (src != null) avatarCache[username] = src;
+          }
+          if (src == null || Application.Current == null) return;
+          Application.Current.Dispatcher.BeginInvoke(new Action(delegate
+          {
+            foreach (Action<ImageSource> w in waiters) w(src);
+          }));
+        });
+      }
       public static FrameworkElement CreateSkinAvatar(string username, int size = 32)
       {
+        if (string.IsNullOrEmpty(username)) username = "Steve";
         Border container = new Border
         {
           Width = size,
@@ -902,28 +954,16 @@ namespace SctAfkService
           ClipToBounds = true
         };
 
-        try
-        {
-          Image img = new Image
-          {
-            Width = size,
-            Height = size,
-            Stretch = Stretch.UniformToFill
-          };
-          RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
+        Image img = new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill };
+        RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
+        container.Child = img;
 
-          ImageSource src = GetAvatarSource(username, size);
-          if (src != null)
-          {
-            img.Source = src;
-            container.Child = img;
-          }
-        }
-        catch {}
+        ImageSource cached = GetAvatarSource(username, size);
+        if (cached != null) img.Source = cached;
+        else FetchAvatarAsync(username, delegate(ImageSource s) { img.Source = s; });
 
         return container;
       }
-
       public static FrameworkElement CreateSkinAvatarBadge(string username, int size = 30, Brush statusBrush = null)
       {
         Grid grid = new Grid { Width = size + 4, Height = size + 4 };
@@ -6760,7 +6800,7 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_self_heal_v83";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_avatar_fix_v84";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
