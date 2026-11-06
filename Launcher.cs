@@ -728,6 +728,231 @@ namespace SctAfkService
     // EDITORIAL WARM SAND-BEIGE, FOREST GREEN & ELECTRIC PURPLE WPF UI THEME
     // Palette: Sand Beige (#E8DCC4 / #F3ECE0) + Forest Green (#1F3D2B) + Electric Purple (#8B5CF6)
     // =========================================================================
+    
+    // =========================================================================
+    // MINECRAFT RETRO TEXTURE & SKIN AVATAR LOADER (PIXEL-PERFECT)
+    // =========================================================================
+    public static class McTextureHelper
+    {
+      private static readonly Dictionary<string, ImageSource> avatarCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+      private static readonly Dictionary<string, ImageSource> textureCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+
+      private static readonly HashSet<string> KnownBlockNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+      {
+        "tripwire_hook", "lever", "stone_button", "oak_button", "repeater", "comparator",
+        "redstone_wire", "redstone_torch", "hopper", "dropper", "dispenser", "observer",
+        "piston", "sticky_piston", "chest", "trapped_chest", "ender_chest", "barrel",
+        "furnace", "blast_furnace", "smoker", "crafting_table", "loom", "cartography_table",
+        "fletching_table", "smithing_table", "grindstone", "anvil", "chipped_anvil", "damaged_anvil",
+        "enchanting_table", "brewing_stand", "cauldron", "beacon", "conduit", "lodestone",
+        "tnt", "sponge", "wet_sponge", "spawner", "cobweb", "hay_block", "target",
+        "honeycomb_block", "slime_block", "honey_block", "sea_lantern", "glowstone", "shroomlight",
+        "lantern", "soul_lantern", "torch", "soul_torch", "bell", "campfire", "soul_campfire"
+      };
+
+      public static string GetItemTextureUrl(string rawName, bool forceBlock = false)
+      {
+        if (string.IsNullOrEmpty(rawName)) return "";
+        string clean = rawName.Trim().ToLowerInvariant().Replace("minecraft:", "");
+        if (clean == "air" || clean == "hava" || clean == "bos" || clean == "boş") return "";
+
+        // Common Minecraft name normalization
+        if (clean == "steak") clean = "cooked_beef";
+
+        bool isBlock = forceBlock || KnownBlockNames.Contains(clean) ||
+                       clean.EndsWith("_block") || clean.EndsWith("_ore") ||
+                       clean.EndsWith("_stairs") || clean.EndsWith("_slab") ||
+                       clean.EndsWith("_planks") || clean.EndsWith("_wool") ||
+                       clean.EndsWith("_terracotta") || clean.EndsWith("_concrete") ||
+                       clean.EndsWith("_carpet") || clean.EndsWith("_log") ||
+                       clean.EndsWith("_wood") || clean.EndsWith("_stem") ||
+                       clean.EndsWith("_glass") || clean.EndsWith("_pane") ||
+                       clean.EndsWith("_shulker_box") || clean.EndsWith("_bed");
+
+        string folder = isBlock ? "block" : "item";
+        return string.Format("https://assets.mcasset.cloud/1.20.4/assets/minecraft/textures/{0}/{1}.png", folder, clean);
+      }
+
+      public static ImageSource GetTextureSource(string rawName)
+      {
+        if (string.IsNullOrEmpty(rawName)) return null;
+        string clean = rawName.Trim().ToLowerInvariant().Replace("minecraft:", "");
+        lock (textureCache)
+        {
+          if (textureCache.ContainsKey(clean)) return textureCache[clean];
+        }
+
+        try
+        {
+          string url = GetItemTextureUrl(clean, false);
+          if (string.IsNullOrEmpty(url)) return null;
+
+          BitmapImage bmp = new BitmapImage();
+          bmp.BeginInit();
+          bmp.UriSource = new Uri(url, UriKind.Absolute);
+          bmp.CacheOption = BitmapCacheOption.OnLoad;
+          bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+          bmp.EndInit();
+
+          RenderOptions.SetBitmapScalingMode(bmp, BitmapScalingMode.NearestNeighbor);
+
+          lock (textureCache)
+          {
+            textureCache[clean] = bmp;
+          }
+          return bmp;
+        }
+        catch
+        {
+          return null;
+        }
+      }
+
+      public static FrameworkElement CreateItemIcon(string rawName, int size = 32)
+      {
+        if (string.IsNullOrEmpty(rawName)) return new Grid { Width = size, Height = size };
+        string clean = rawName.Trim().ToLowerInvariant().Replace("minecraft:", "");
+
+        Image img = new Image
+        {
+          Width = size,
+          Height = size,
+          Stretch = Stretch.Uniform,
+          HorizontalAlignment = HorizontalAlignment.Center,
+          VerticalAlignment = VerticalAlignment.Center
+        };
+        RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
+
+        try
+        {
+          string url = GetItemTextureUrl(clean, false);
+          if (!string.IsNullOrEmpty(url))
+          {
+            BitmapImage bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(url, UriKind.Absolute);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            bmp.EndInit();
+
+            bmp.DownloadFailed += delegate
+            {
+              // If item failed, attempt fallback to block folder
+              try
+              {
+                string fbUrl = GetItemTextureUrl(clean, true);
+                BitmapImage fbBmp = new BitmapImage(new Uri(fbUrl, UriKind.Absolute));
+                RenderOptions.SetBitmapScalingMode(fbBmp, BitmapScalingMode.NearestNeighbor);
+                img.Source = fbBmp;
+              }
+              catch {}
+            };
+
+            img.Source = bmp;
+          }
+        }
+        catch {}
+
+        return img;
+      }
+
+      public static ImageSource GetAvatarSource(string username, int size = 32)
+      {
+        if (string.IsNullOrEmpty(username)) username = "Steve";
+        string key = username + "_" + size;
+        lock (avatarCache)
+        {
+          if (avatarCache.ContainsKey(key)) return avatarCache[key];
+        }
+
+        try
+        {
+          string url = string.Format("https://mc-heads.net/avatar/{0}/{1}", Uri.EscapeDataString(username), size);
+          BitmapImage bmp = new BitmapImage();
+          bmp.BeginInit();
+          bmp.UriSource = new Uri(url, UriKind.Absolute);
+          bmp.CacheOption = BitmapCacheOption.OnLoad;
+          bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+          bmp.EndInit();
+
+          RenderOptions.SetBitmapScalingMode(bmp, BitmapScalingMode.NearestNeighbor);
+
+          lock (avatarCache)
+          {
+            avatarCache[key] = bmp;
+          }
+          return bmp;
+        }
+        catch
+        {
+          return null;
+        }
+      }
+
+      public static FrameworkElement CreateSkinAvatar(string username, int size = 32)
+      {
+        Border container = new Border
+        {
+          Width = size,
+          Height = size,
+          CornerRadius = new CornerRadius(Math.Max(4, size / 6)),
+          Background = UiTheme.SandBeige,
+          BorderBrush = UiTheme.BorderBrush,
+          BorderThickness = new Thickness(1),
+          ClipToBounds = true
+        };
+
+        try
+        {
+          Image img = new Image
+          {
+            Width = size,
+            Height = size,
+            Stretch = Stretch.UniformToFill
+          };
+          RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
+
+          ImageSource src = GetAvatarSource(username, size);
+          if (src != null)
+          {
+            img.Source = src;
+            container.Child = img;
+          }
+        }
+        catch {}
+
+        return container;
+      }
+
+      public static FrameworkElement CreateSkinAvatarBadge(string username, int size = 30, Brush statusBrush = null)
+      {
+        Grid grid = new Grid { Width = size + 4, Height = size + 4 };
+
+        FrameworkElement av = CreateSkinAvatar(username, size);
+        av.HorizontalAlignment = HorizontalAlignment.Left;
+        av.VerticalAlignment = VerticalAlignment.Top;
+        grid.Children.Add(av);
+
+        if (statusBrush != null)
+        {
+          Border dot = new Border
+          {
+            Width = 9,
+            Height = 9,
+            CornerRadius = new CornerRadius(4.5),
+            Background = statusBrush,
+            BorderBrush = UiTheme.BgCard,
+            BorderThickness = new Thickness(1.5),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom
+          };
+          grid.Children.Add(dot);
+        }
+
+        return grid;
+      }
+    }
+
     public static class UiTheme
     {
         // Warm Sand-Beige & Ivory Surfaces (Editorial 60% Canvas & Cards)
@@ -2069,6 +2294,14 @@ namespace SctAfkService
         private StackPanel panelServerList;
         private TextBlock lblServerCount;
         private StackPanel panelAccountList;
+        private Border borderInspAvatar;
+        private Border heldItemCard;
+        private Border heldItemSlotBorder;
+        private TextBlock lblHeldItemName;
+        private TextBlock lblHeldItemDurability;
+        private UniformGrid gridMainInv;
+        private UniformGrid gridHotbar;
+        private UniformGrid gridOpenWinSlots;
         private TextBlock lblAccountCount;
 
         // Inspector Header
@@ -2700,8 +2933,19 @@ namespace SctAfkService
             DockPanel inspDock = new DockPanel();
 
             StackPanel inspLeft = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            Border botAvBorder = CreateRoundLogo(44);
-            inspLeft.Children.Add(botAvBorder);
+            borderInspAvatar = new Border
+            {
+                Width = 44,
+                Height = 44,
+                CornerRadius = new CornerRadius(10),
+                Background = UiTheme.BgInput,
+                BorderBrush = UiTheme.BorderBrush,
+                BorderThickness = new Thickness(1),
+                ClipToBounds = true,
+                Margin = new Thickness(0, 0, 14, 0),
+                Child = CreateRoundLogo(44)
+            };
+            inspLeft.Children.Add(borderInspAvatar);
 
             StackPanel inspUserStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             StackPanel nameAndBadge = new StackPanel { Orientation = Orientation.Horizontal };
@@ -3076,7 +3320,7 @@ namespace SctAfkService
             StackPanel winStack = new StackPanel();
             DockPanel winHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
             StackPanel winLeft = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            lblOpenWinTitle = UiTheme.CreateText("📦 Açık Sunucu Menüsü / Sandık: Yok", 14, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 10, 0));
+            lblOpenWinTitle = UiTheme.CreateText("📦 Açık Sunucu Menüsü / Sandık: Yok", 14, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 10, 0));
             winLeft.Children.Add(lblOpenWinTitle);
             lblOpenWinSlots = UiTheme.CreateText("(0 Slot)", 12, FontWeights.Bold, UiTheme.TextMuted);
             winLeft.Children.Add(lblOpenWinSlots);
@@ -3089,31 +3333,112 @@ namespace SctAfkService
             winHeader.Children.Add(winBtns);
             winStack.Children.Add(winHeader);
 
-            winStack.Children.Add(UiTheme.CreateText("İpucu: Slota Sol Tıklama = Tıkla/Al (Button 0)  |  Slota Sağ Tıklama = Sağ Tıkla (Button 1)", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 8)));
-            wrapOpenWinSlots = new WrapPanel { Orientation = Orientation.Horizontal };
+            winStack.Children.Add(UiTheme.CreateText("İpucu: Slota Sol Tık = Tıkla/Al (Button 0)  |  Slota Sağ Tık = Tekli Al (Button 1)", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 8)));
+            
+            // Container Slots Frame (9 Columns)
+            Border winFrame = new Border
+            {
+                Background = UiTheme.BrushHex("#181716"),
+                BorderBrush = UiTheme.BrushHex("#3D3833"),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(6),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            gridOpenWinSlots = new UniformGrid { Columns = 9 };
+            winFrame.Child = gridOpenWinSlots;
+            winStack.Children.Add(winFrame);
+            wrapOpenWinSlots = new WrapPanel { Visibility = Visibility.Collapsed };
             winStack.Children.Add(wrapOpenWinSlots);
+
             winCard.Child = winStack;
             sp.Children.Add(winCard);
 
-            // 2. Bot Inventory Panel (36 Slots)
+            // 2. Bot Inventory Panel (Real Minecraft 9x4 Grid + Held Item Spotlight)
             Border invCard = UiTheme.CreateCard(new Thickness(16), new Thickness(0));
             StackPanel invStack = new StackPanel();
-            DockPanel invHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+            DockPanel invHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
             StackPanel invLeft = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            invLeft.Children.Add(UiTheme.CreateText("🎒 Bot Envanteri (36 Slot)", 14, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 12, 0)));
+            invLeft.Children.Add(UiTheme.CreateText("🎒 Bot Envanteri (36 Slot)", 14, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 12, 0)));
             lblHeldItemBadge = UiTheme.CreateText("✋ Eldeki: Boş El", 12, FontWeights.Bold, UiTheme.Green);
             invLeft.Children.Add(lblHeldItemBadge);
             DockPanel.SetDock(invLeft, Dock.Left);
             invHeader.Children.Add(invLeft);
 
             StackPanel invBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            invBtns.Children.Add(UiTheme.CreateButton("🗑️ Tümünü Yere At", "danger", delegate { SendSelectedBotAction("dropAll", null); }));
+            invBtns.Children.Add(UiTheme.CreateButton("⚔️ Eldeki Eşyayı Kullan", "outline", delegate { SendSelectedBotAction("useHeldItem", null); }, new Thickness(8, 4, 8, 4)));
+            invBtns.Children.Add(UiTheme.CreateButton("🗑️ Tümünü Yere At", "danger", delegate { SendSelectedBotAction("dropAll", null); }, new Thickness(8, 4, 8, 4)));
             invHeader.Children.Add(invBtns);
             invStack.Children.Add(invHeader);
 
-            invStack.Children.Add(UiTheme.CreateText("İpucu: Slota Sol Tıklama = Ele Al / Kuşan (equipItem)  |  Slota Sağ Tıklama = Yere At (dropItem)", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 8)));
-            wrapBotInvSlots = new WrapPanel { Orientation = Orientation.Horizontal };
+            // Held Item Spotlight Card
+            heldItemCard = new Border
+            {
+                Background = UiTheme.BgInput,
+                BorderBrush = UiTheme.BorderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(12, 9, 12, 9),
+                Margin = new Thickness(0, 0, 0, 12),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                MinWidth = 428
+            };
+            DockPanel heldDock = new DockPanel();
+            heldItemSlotBorder = new Border
+            {
+                Width = 44,
+                Height = 44,
+                Background = UiTheme.BrushHex("#242220"),
+                BorderBrush = UiTheme.BrushHex("#3D3833"),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(6)
+            };
+            DockPanel.SetDock(heldItemSlotBorder, Dock.Left);
+            heldDock.Children.Add(heldItemSlotBorder);
+
+            StackPanel heldDetails = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            lblHeldItemName = UiTheme.CreateText("Boş El (Eşya Seçilmedi)", 13, FontWeights.Bold, UiTheme.ForestGreen);
+            lblHeldItemDurability = UiTheme.CreateText("Dayanıklılık: -", 11, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 2, 0, 0));
+            heldDetails.Children.Add(lblHeldItemName);
+            heldDetails.Children.Add(lblHeldItemDurability);
+            heldDock.Children.Add(heldDetails);
+            heldItemCard.Child = heldDock;
+            invStack.Children.Add(heldItemCard);
+
+            // Main Inventory (Slots 9..35) Header & Frame
+            invStack.Children.Add(UiTheme.CreateText("📦 Ana Depolama (Slot 9 - 35)", 11.5, FontWeights.ExtraBold, UiTheme.TextDim, new Thickness(2, 4, 0, 6)));
+            Border mainInvFrame = new Border
+            {
+                Background = UiTheme.BrushHex("#181716"),
+                BorderBrush = UiTheme.BrushHex("#3D3833"),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(6),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            gridMainInv = new UniformGrid { Columns = 9 };
+            mainInvFrame.Child = gridMainInv;
+            invStack.Children.Add(mainInvFrame);
+
+            // Hotbar (Slots 36..44) Header & Frame
+            invStack.Children.Add(UiTheme.CreateText("⚡ Hızlı Erişim / Hotbar (Slot 36 - 44)", 11.5, FontWeights.ExtraBold, UiTheme.TextDim, new Thickness(2, 12, 0, 6)));
+            Border hotbarFrame = new Border
+            {
+                Background = UiTheme.BrushHex("#181716"),
+                BorderBrush = UiTheme.ForestGreen,
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(6),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            gridHotbar = new UniformGrid { Columns = 9 };
+            hotbarFrame.Child = gridHotbar;
+            invStack.Children.Add(hotbarFrame);
+
+            wrapBotInvSlots = new WrapPanel { Visibility = Visibility.Collapsed };
             invStack.Children.Add(wrapBotInvSlots);
+
+            invStack.Children.Add(UiTheme.CreateText("💡 İpucu: Slota Sol Tık = Kuşan / Ele Al (equipItem)  |  Slota Sağ Tık = Yere At (dropItem)", 11, FontWeights.Normal, UiTheme.TextMuted, new Thickness(2, 10, 0, 0)));
             invCard.Child = invStack;
             sp.Children.Add(invCard);
 
@@ -5202,16 +5527,17 @@ namespace SctAfkService
                 DockPanel.SetDock(rightBtns, Dock.Right);
                 dp.Children.Add(rightBtns);
 
-                StackPanel leftInfo = new StackPanel();
-                StackPanel topLine = new StackPanel { Orientation = Orientation.Horizontal };
-                topLine.Children.Add(UiTheme.CreateText("● ", 12, FontWeights.ExtraBold, dotBrush));
-                topLine.Children.Add(UiTheme.CreateText(uname, 12.5, FontWeights.Bold, UiTheme.AccentWhite));
-                leftInfo.Children.Add(topLine);
+                StackPanel botRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                botRow.Children.Add(McTextureHelper.CreateSkinAvatarBadge(uname, 30, dotBrush));
+
+                StackPanel leftInfo = new StackPanel { Margin = new Thickness(9, 0, 0, 0) };
+                leftInfo.Children.Add(UiTheme.CreateText(uname, 12.5, FontWeights.Bold, UiTheme.ForestGreen));
 
                 string proxyStr = JsonHelper.Str(acc, "proxy", "");
                 string subText = statusLabel + (string.IsNullOrEmpty(proxyStr) ? " • Yerel IP" : (" • Proxy: " + proxyStr));
                 leftInfo.Children.Add(UiTheme.CreateText(subText, 10.5, FontWeights.Normal, UiTheme.TextMuted));
-                dp.Children.Add(leftInfo);
+                botRow.Children.Add(leftInfo);
+                dp.Children.Add(botRow);
 
                 card.Child = dp;
                 panelAccountList.Children.Add(card);
@@ -5225,6 +5551,7 @@ namespace SctAfkService
 
             if (acc.Count == 0)
             {
+                if (borderInspAvatar != null) borderInspAvatar.Child = CreateRoundLogo(44);
                 lblInspUsername.Text = "Hesap Seçilmedi";
                 lblInspSub.Text = "Sol menüden bir hesap seçin veya + Ekle ile yeni bot oluşturun";
                 lblInspStatusText.Text = "● Çevrimdışı";
@@ -5236,7 +5563,9 @@ namespace SctAfkService
                 return;
             }
 
-            lblInspUsername.Text = JsonHelper.Str(acc, "username", "Bot");
+            string inspUname = JsonHelper.Str(acc, "username", "Bot");
+            if (borderInspAvatar != null) borderInspAvatar.Child = McTextureHelper.CreateSkinAvatar(inspUname, 44);
+            lblInspUsername.Text = inspUname;
             string email = JsonHelper.Str(acc, "email", "Yok");
             string proxy = JsonHelper.Str(acc, "proxy", "");
             string brand = JsonHelper.Str(bot, "clientBrand", JsonHelper.Str(acc, "clientBrand", "vanilla"));
@@ -5402,12 +5731,13 @@ namespace SctAfkService
             string time = JsonHelper.Str(logItem, "time", DateTime.Now.ToString("HH:mm:ss"));
             string user = JsonHelper.Str(logItem, "username", "Sistem");
             string tag = JsonHelper.Str(logItem, "tag", "BİLGİ");
-            string text = JsonHelper.CleanMinecraftCodes(JsonHelper.Str(logItem, "text", ""));
+            string text = JsonHelper.CleanMinecraftCodes(JsonHelper.Str(logItem, "text", JsonHelper.Str(logItem, "message", "")));
 
             Brush tagColor = UiTheme.TextMain;
             if (tag == "HATA" || tag == "ATILDI" || tag == "ÖLÜM" || tag == "UYARI") tagColor = UiTheme.Red;
             else if (tag == "BAĞLANTI" || tag == "SPAWN" || tag == "OTO-GİRİŞ") tagColor = UiTheme.Green;
             else if (tag.StartsWith("OTO-") || tag == "SPAWNER" || tag == "MINER-SANDIK") tagColor = UiTheme.Yellow;
+            else if (tag == "CHAT" || tag == "SOHBET" || tag == "MESAJ") tagColor = UiTheme.BrushHex("#0284C7");
 
             TextBlock tb = new TextBlock
             {
@@ -5429,9 +5759,10 @@ namespace SctAfkService
 
         private void RenderInventoryAndContainer()
         {
-            if (wrapOpenWinSlots == null || wrapBotInvSlots == null) return;
-            wrapOpenWinSlots.Children.Clear();
-            wrapBotInvSlots.Children.Clear();
+            if (gridOpenWinSlots == null || gridMainInv == null || gridHotbar == null) return;
+            gridOpenWinSlots.Children.Clear();
+            gridMainInv.Children.Clear();
+            gridHotbar.Children.Clear();
 
             Dictionary<string, object> bot = GetSelectedBot();
 
@@ -5447,10 +5778,7 @@ namespace SctAfkService
                 for (int i = 0; i < wSlots.Count; i++)
                 {
                     Dictionary<string, object> slotObj = JsonHelper.Dict(wSlots[i]);
-                    int slotNum = JsonHelper.Int(slotObj, "slot", i);
-                    string dName = JsonHelper.CleanMinecraftCodes(JsonHelper.Str(slotObj, "displayName", JsonHelper.Str(slotObj, "name", "Boş")));
-                    int count = JsonHelper.Int(slotObj, "count", 0);
-                    wrapOpenWinSlots.Children.Add(CreateSlotTile(slotNum, dName, count, true));
+                    gridOpenWinSlots.Children.Add(CreateSlotTile(slotObj, i, true, false));
                 }
             }
             else
@@ -5459,84 +5787,228 @@ namespace SctAfkService
                 lblOpenWinSlots.Text = "(0 Slot)";
             }
 
-            // 2. Held Item & Bot Inventory
+            // 2. Held Item
             Dictionary<string, object> held = JsonHelper.SubDict(bot, "heldItem");
+            int activeHandSlot = JsonHelper.Int(held, "slot", -1);
             if (held.Count > 0)
             {
-                string hName = JsonHelper.CleanMinecraftCodes(JsonHelper.Str(held, "displayName", JsonHelper.Str(held, "name", "Eşya")));
+                string hRaw = JsonHelper.Str(held, "name", "");
+                string hName = JsonHelper.CleanMinecraftCodes(JsonHelper.Str(held, "displayName", hRaw));
                 int hCount = JsonHelper.Int(held, "count", 1);
                 lblHeldItemBadge.Text = string.Format("✋ Eldeki: {0} (x{1})", hName, hCount);
+                if (lblHeldItemName != null) lblHeldItemName.Text = string.Format("{0} (x{1})", hName, hCount);
+
+                Dictionary<string, object> dura = JsonHelper.SubDict(held, "durability");
+                if (dura.Count > 0 && lblHeldItemDurability != null)
+                {
+                    int curD = JsonHelper.Int(dura, "current", 0);
+                    int maxD = JsonHelper.Int(dura, "max", 0);
+                    int pct = JsonHelper.Int(dura, "percent", 100);
+                    lblHeldItemDurability.Text = string.Format("Dayanıklılık: {0}/{1} (%{2})", curD, maxD, pct);
+                }
+                else if (lblHeldItemDurability != null)
+                {
+                    lblHeldItemDurability.Text = "Dayanıklılık: Sınırsız / N/A";
+                }
+
+                if (heldItemSlotBorder != null)
+                {
+                    heldItemSlotBorder.Child = McTextureHelper.CreateItemIcon(hRaw, 36);
+                }
             }
             else
             {
                 lblHeldItemBadge.Text = "✋ Eldeki: Boş El";
+                if (lblHeldItemName != null) lblHeldItemName.Text = "Boş El (Eşya Kuşanılmadı)";
+                if (lblHeldItemDurability != null) lblHeldItemDurability.Text = "Envanterdeki herhangi bir slota tıklayarak kuşanabilirsiniz.";
+                if (heldItemSlotBorder != null) heldItemSlotBorder.Child = null;
             }
 
+            // 3. Bot Inventory Mapping (Slot -> Item Dict)
+            Dictionary<int, Dictionary<string, object>> slotMap = new Dictionary<int, Dictionary<string, object>>();
             List<object> invItems = JsonHelper.Arr(bot, "inventory");
-            if (invItems.Count == 0)
+            for (int i = 0; i < invItems.Count; i++)
             {
-                wrapBotInvSlots.Children.Add(UiTheme.CreateText("Envanter boş veya bot çevrimiçi değil.", 12, FontWeights.Normal, UiTheme.TextMuted));
+                Dictionary<string, object> it = JsonHelper.Dict(invItems[i]);
+                int sNum = JsonHelper.Int(it, "slot", -1);
+                if (sNum >= 0) slotMap[sNum] = it;
             }
-            else
+
+            // Populate Main Inventory (Slots 9..35 = 27 Slots)
+            for (int slotId = 9; slotId <= 35; slotId++)
             {
-                for (int i = 0; i < invItems.Count; i++)
-                {
-                    Dictionary<string, object> item = JsonHelper.Dict(invItems[i]);
-                    int slotNum = JsonHelper.Int(item, "slot", i);
-                    string dName = JsonHelper.CleanMinecraftCodes(JsonHelper.Str(item, "displayName", JsonHelper.Str(item, "name", "Eşya")));
-                    int count = JsonHelper.Int(item, "count", 1);
-                    wrapBotInvSlots.Children.Add(CreateSlotTile(slotNum, dName, count, false));
-                }
+                Dictionary<string, object> it = slotMap.ContainsKey(slotId) ? slotMap[slotId] : null;
+                bool isHeld = (slotId == activeHandSlot);
+                gridMainInv.Children.Add(CreateSlotTile(it, slotId, false, isHeld));
+            }
+
+            // Populate Hotbar (Slots 36..44 = 9 Slots)
+            for (int slotId = 36; slotId <= 44; slotId++)
+            {
+                Dictionary<string, object> it = slotMap.ContainsKey(slotId) ? slotMap[slotId] : null;
+                bool isHeld = (slotId == activeHandSlot);
+                gridHotbar.Children.Add(CreateSlotTile(it, slotId, false, isHeld));
             }
         }
 
-        private UIElement CreateSlotTile(int slotNum, string itemName, int count, bool isContainerSlot)
+        private UIElement CreateSlotTile(Dictionary<string, object> itemObj, int slotNum, bool isContainerSlot, bool isHeld)
         {
-            bool isEmpty = count <= 0 || string.IsNullOrEmpty(itemName) || itemName == "Boş" || itemName == "air";
+            bool hasItem = itemObj != null && itemObj.Count > 0;
+            string rawName = hasItem ? JsonHelper.Str(itemObj, "name", "") : "";
+            string dispName = hasItem ? JsonHelper.CleanMinecraftCodes(JsonHelper.Str(itemObj, "displayName", rawName)) : "";
+            int count = hasItem ? JsonHelper.Int(itemObj, "count", 1) : 0;
+            if (rawName == "air" || rawName == "hava" || count <= 0) hasItem = false;
+
+            SolidColorBrush defaultBg = UiTheme.BrushHex("#282624");
+            SolidColorBrush hoverBg = UiTheme.BrushHex("#383431");
+            SolidColorBrush borderCol = isHeld ? UiTheme.BrushHex("#22C55E") : UiTheme.BrushHex("#3D3833");
+
             Border b = new Border
             {
-                Width = 118,
-                Height = 62,
-                Background = isEmpty ? UiTheme.BgInput : UiTheme.BgCardHover,
-                BorderBrush = isEmpty ? UiTheme.BorderBrush : UiTheme.BorderLight,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(6),
-                Margin = new Thickness(3),
-                Cursor = Cursors.Hand,
-                ToolTip = string.Format("Slot #{0}: {1} (x{2})", slotNum, isEmpty ? "Boş" : itemName, count)
+                Width = 44,
+                Height = 44,
+                Background = defaultBg,
+                BorderBrush = borderCol,
+                BorderThickness = new Thickness(isHeld ? 2 : 1.5),
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(2),
+                Cursor = hasItem ? Cursors.Hand : Cursors.Arrow
             };
 
-            int capturedSlot = slotNum;
-            b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
-            {
-                e.Handled = true;
-                if (isContainerSlot)
-                    SendSelectedBotAction("clickWindowSlot", new Dictionary<string, object> { { "slot", capturedSlot }, { "button", 0 } });
-                else
-                    SendSelectedBotAction("equipItem", new Dictionary<string, object> { { "slot", capturedSlot } });
-            };
-            b.MouseRightButtonDown += delegate(object s, MouseButtonEventArgs e)
-            {
-                e.Handled = true;
-                if (isContainerSlot)
-                    SendSelectedBotAction("clickWindowSlot", new Dictionary<string, object> { { "slot", capturedSlot }, { "button", 1 } });
-                else
-                    SendSelectedBotAction("dropItem", new Dictionary<string, object> { { "slot", capturedSlot } });
-            };
+            int capturedSlot = hasItem ? JsonHelper.Int(itemObj, "slot", slotNum) : slotNum;
 
-            StackPanel sp = new StackPanel();
-            DockPanel top = new DockPanel();
-            top.Children.Add(UiTheme.CreateText("#" + slotNum, 10, FontWeights.Bold, UiTheme.TextDim));
-            if (!isEmpty && count > 0)
+            if (hasItem)
             {
-                TextBlock cnt = UiTheme.CreateText("x" + count, 10.5, FontWeights.ExtraBold, UiTheme.Green);
-                cnt.HorizontalAlignment = HorizontalAlignment.Right;
-                top.Children.Add(cnt);
+                b.MouseEnter += delegate
+                {
+                    b.Background = hoverBg;
+                    b.BorderBrush = UiTheme.BrushHex("#F59E0B");
+                };
+                b.MouseLeave += delegate
+                {
+                    b.Background = defaultBg;
+                    b.BorderBrush = isHeld ? UiTheme.BrushHex("#22C55E") : UiTheme.BrushHex("#3D3833");
+                };
+
+                b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+                {
+                    e.Handled = true;
+                    if (isContainerSlot)
+                        SendSelectedBotAction("clickWindowSlot", new Dictionary<string, object> { { "slot", capturedSlot }, { "button", 0 } });
+                    else
+                        SendSelectedBotAction("equipItem", new Dictionary<string, object> { { "slot", capturedSlot } });
+                };
+                b.MouseRightButtonDown += delegate(object s, MouseButtonEventArgs e)
+                {
+                    e.Handled = true;
+                    if (isContainerSlot)
+                        SendSelectedBotAction("clickWindowSlot", new Dictionary<string, object> { { "slot", capturedSlot }, { "button", 1 } });
+                    else
+                        SendSelectedBotAction("dropItem", new Dictionary<string, object> { { "slot", capturedSlot } });
+                };
+
+                // Tooltip
+                StackPanel tt = new StackPanel { Margin = new Thickness(4) };
+                tt.Children.Add(UiTheme.CreateText(dispName, 12, FontWeights.Bold, UiTheme.BrushHex("#55FF55")));
+                tt.Children.Add(UiTheme.CreateText(string.Format("Adet: x{0}  •  Slot: #{1}", count, capturedSlot), 11, FontWeights.Normal, Brushes.White));
+                if (!string.IsNullOrEmpty(rawName))
+                {
+                    tt.Children.Add(UiTheme.CreateText("minecraft:" + rawName, 9.5, FontWeights.Normal, UiTheme.BrushHex("#888888")));
+                }
+
+                Dictionary<string, object> dura = JsonHelper.SubDict(itemObj, "durability");
+                if (dura.Count > 0)
+                {
+                    int curD = JsonHelper.Int(dura, "current", 0);
+                    int maxD = JsonHelper.Int(dura, "max", 0);
+                    int pct = JsonHelper.Int(dura, "percent", 100);
+                    tt.Children.Add(UiTheme.CreateText(string.Format("Dayanıklılık: {0}/{1} (%{2})", curD, maxD, pct), 10.5, FontWeights.Bold, pct > 50 ? UiTheme.BrushHex("#55FF55") : (pct > 20 ? UiTheme.BrushHex("#FFAA00") : UiTheme.BrushHex("#FF5555"))));
+                }
+
+                tt.Children.Add(UiTheme.CreateText(isContainerSlot ? "Sol Tık: Al / Tıkla  |  Sağ Tık: Tekli Al" : "Sol Tık: Kuşan / Seç  |  Sağ Tık: Yere At", 10, FontWeights.Normal, UiTheme.BrushHex("#AAAAAA"), new Thickness(0, 3, 0, 0)));
+                b.ToolTip = new ToolTip { Content = tt, Background = UiTheme.BrushHex("#181716"), BorderBrush = UiTheme.BrushHex("#555555") };
             }
-            sp.Children.Add(top);
-            sp.Children.Add(UiTheme.CreateText(isEmpty ? "Boş" : itemName, 11, isEmpty ? FontWeights.Normal : FontWeights.Bold, isEmpty ? UiTheme.TextDim : UiTheme.TextMain, new Thickness(0, 3, 0, 0)));
-            b.Child = sp;
+            else
+            {
+                // Empty slot tooltip
+                b.ToolTip = string.Format("Slot #{0} (Boş)", slotNum);
+            }
+
+            Grid grid = new Grid { Width = 40, Height = 40 };
+
+            if (hasItem)
+            {
+                // Item Texture Image
+                FrameworkElement icon = McTextureHelper.CreateItemIcon(rawName, 32);
+                grid.Children.Add(icon);
+
+                // Stack Count Badge
+                if (count > 1)
+                {
+                    TextBlock cntTb = new TextBlock
+                    {
+                        Text = count.ToString(),
+                        FontFamily = new FontFamily("Consolas"),
+                        FontSize = 11.5,
+                        FontWeight = FontWeights.Bold,
+                        Foreground = Brushes.White,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        VerticalAlignment = VerticalAlignment.Bottom,
+                        Margin = new Thickness(0, 0, 1, 0),
+                        Effect = new System.Windows.Media.Effects.DropShadowEffect
+                        {
+                            Color = Colors.Black,
+                            BlurRadius = 1,
+                            ShadowDepth = 1,
+                            Direction = 315
+                        }
+                    };
+                    grid.Children.Add(cntTb);
+                }
+
+                // Durability Bar
+                Dictionary<string, object> dura = JsonHelper.SubDict(itemObj, "durability");
+                if (dura.Count > 0)
+                {
+                    int pct = Math.Max(0, Math.Min(100, JsonHelper.Int(dura, "percent", 100)));
+                    SolidColorBrush barBrush = pct > 50 ? UiTheme.BrushHex("#22C55E") : (pct > 20 ? UiTheme.BrushHex("#EAB308") : UiTheme.BrushHex("#EF4444"));
+
+                    Border barBg = new Border
+                    {
+                        Width = 32,
+                        Height = 2.5,
+                        Background = UiTheme.BrushHex("#111827"),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Bottom,
+                        Margin = new Thickness(0, 0, 0, 1)
+                    };
+                    Border barFill = new Border
+                    {
+                        Width = Math.Max(1.0, 32.0 * (pct / 100.0)),
+                        Height = 2.5,
+                        Background = barBrush,
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    barBg.Child = barFill;
+                    grid.Children.Add(barBg);
+                }
+            }
+            else
+            {
+                // Faint slot number for empty slot
+                TextBlock emptySlotNum = new TextBlock
+                {
+                    Text = slotNum.ToString(),
+                    FontSize = 9.5,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = UiTheme.BrushHex("#3D3833"),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                grid.Children.Add(emptySlotNum);
+            }
+
+            b.Child = grid;
             return b;
         }
 
@@ -6254,7 +6726,7 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261106_native_wpf_gui_v80";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_mc_inventory_skin_v81";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
