@@ -96,3 +96,16 @@ Geliştiriciler ister `dev` ister `main` dalına push atsın, aşağıdaki sür�
    * Yeni bir web sayfası, html bileşeni veya WebView yazmayın. Tüm UI bileşenleri C# WPF ile oluşturulur.
 3. **Hesap İsimleri:**
    * Test yaparken `zaknafein_dev1`, `khero_dev1` gibi ayrı hesap adları kullanın.
+
+
+---
+
+## 🔌 7. Port Tahsisi ve Housemate Projesi ile Çakışma Önleme Protokolü
+
+Housemate projesi (`C:\Users\Çağatay\Desktop\Housemate`) ile SCT AFK Service aynı geliştirici makinesinde ve VPS üzerinde barınmaktadır. İki projenin port çakışması yaşamaması için resmi görev dağılımı:
+
+* **Port 3000:** Kesinlikle **HOUSEMATE (Next.js)** uygulamasına aittir. SCT AFK Service motoru **Port 3000'i ASLA dinlemez ve dinlemeyecektir**.
+* **Port 80:** Housemate VDS canlı web yayınına aittir.
+* **Port 3847:** SCT AFK Service eski WebView istemcileri geçiş köprüsü.
+* **Port 4890:** SCT Admin Relay (VPS Filo Köprüsü).
+* **Named Pipe (`\\.\pipe\SctAfkEngineIpc`):** SCT AFK Service Native WPF arayüzü (port kullanmaz, Windows IPC).
