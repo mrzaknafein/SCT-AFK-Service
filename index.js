@@ -5136,8 +5136,8 @@ function handleBridgeRequest(req, res) {
   res.end(transitionHtml);
 }
 
-// Hem 3847 (varsayilan legacy port) hem 3000 dinle
-const legacyPorts = [Number(config.uiPort) || 3847, 3000];
+// SCT AFK Service yalnizca 3847 (varsayilan legacy port) dinler. Port 3000 Housemate projesine aittir ve ASLA KULLANILMAZ!
+const legacyPorts = [Number(config.uiPort) || 3847];
 for (const bPort of legacyPorts) {
   try {
     const bServer = http.createServer((req, res) => handleBridgeRequest(req, res));
