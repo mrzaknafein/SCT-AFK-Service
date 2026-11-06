@@ -773,33 +773,71 @@ namespace SctAfkService
         return string.Format("https://assets.mcasset.cloud/1.20.4/assets/minecraft/textures/{0}/{1}.png", folder, clean);
       }
 
-      public static ImageSource GetTextureSource(string rawName)
-      {
-        if (string.IsNullOrEmpty(rawName)) return null;
-        string clean = rawName.Trim().ToLowerInvariant().Replace("minecraft:", "");
-        lock (textureCache)
-        {
-          if (textureCache.ContainsKey(clean)) return textureCache[clean];
-        }
+      private static readonly Dictionary<string, List<Action<ImageSource>>> texturePending = new Dictionary<string, List<Action<ImageSource>>>(StringComparer.OrdinalIgnoreCase);
 
+      private static ImageSource DownloadItemTexture(string clean)
+      {
         try
         {
-          string url = GetItemTextureUrl(clean, false);
-          if (string.IsNullOrEmpty(url)) return null;
-
-          BitmapImage bmp = new BitmapImage();
-          bmp.BeginInit();
-          bmp.UriSource = new Uri(url, UriKind.Absolute);
-          bmp.CacheOption = BitmapCacheOption.OnLoad;
-          bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-          bmp.EndInit();
-
-          RenderOptions.SetBitmapScalingMode(bmp, BitmapScalingMode.NearestNeighbor);
-
-          lock (textureCache)
+          string texDir = System.IO.Path.Combine(Program.GetRuntimeDirectory(), "textures");
+          if (!Directory.Exists(texDir)) Directory.CreateDirectory(texDir);
+          string safeFile = System.IO.Path.Combine(texDir, Regex.Replace(clean, @"[^a-z0-9_\-]", "_") + ".png");
+          if (File.Exists(safeFile))
           {
-            textureCache[clean] = bmp;
+            byte[] cachedBytes = File.ReadAllBytes(safeFile);
+            if (cachedBytes != null && cachedBytes.Length > 64)
+            {
+              BitmapImage diskBmp = DecodePngBytes(cachedBytes);
+              if (diskBmp != null) return diskBmp;
+            }
           }
+
+          ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768 | (SecurityProtocolType)192;
+          string[] urls = new string[]
+          {
+            GetItemTextureUrl(clean, false),
+            GetItemTextureUrl(clean, true)
+          };
+          for (int i = 0; i < urls.Length; i++)
+          {
+            if (string.IsNullOrEmpty(urls[i])) continue;
+            try
+            {
+              byte[] data;
+              using (WebClient wc = new WebClient())
+              {
+                wc.Headers.Add("User-Agent", "Mozilla/5.0 SCT-AFK-Service");
+                data = wc.DownloadData(urls[i]);
+              }
+              if (data == null || data.Length < 64) continue;
+              BitmapImage bmp = DecodePngBytes(data);
+              if (bmp != null)
+              {
+                try { File.WriteAllBytes(safeFile, data); } catch { }
+                return bmp;
+              }
+            }
+            catch { }
+          }
+        }
+        catch { }
+        return null;
+      }
+
+      private static BitmapImage DecodePngBytes(byte[] data)
+      {
+        try
+        {
+          BitmapImage bmp = new BitmapImage();
+          using (MemoryStream ms = new MemoryStream(data))
+          {
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            bmp.StreamSource = ms;
+            bmp.EndInit();
+          }
+          bmp.Freeze();
           return bmp;
         }
         catch
@@ -808,10 +846,23 @@ namespace SctAfkService
         }
       }
 
+      public static ImageSource GetTextureSource(string rawName)
+      {
+        if (string.IsNullOrEmpty(rawName)) return null;
+        string clean = rawName.Trim().ToLowerInvariant().Replace("minecraft:", "");
+        if (clean == "steak") clean = "cooked_beef";
+        lock (textureCache)
+        {
+          if (textureCache.ContainsKey(clean)) return textureCache[clean];
+        }
+        return null;
+      }
+
       public static FrameworkElement CreateItemIcon(string rawName, int size = 32)
       {
         if (string.IsNullOrEmpty(rawName)) return new Grid { Width = size, Height = size };
         string clean = rawName.Trim().ToLowerInvariant().Replace("minecraft:", "");
+        if (clean == "steak") clean = "cooked_beef";
 
         Image img = new Image
         {
@@ -823,76 +874,168 @@ namespace SctAfkService
         };
         RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
 
-        try
+        ImageSource cached = GetTextureSource(clean);
+        if (cached != null)
         {
-          string url = GetItemTextureUrl(clean, false);
-          if (!string.IsNullOrEmpty(url))
+          img.Source = cached;
+          return img;
+        }
+
+        Action<ImageSource> apply = delegate(ImageSource s)
+        {
+          if (s != null) img.Dispatcher.BeginInvoke(new Action(delegate { img.Source = s; }));
+        };
+
+        bool shouldStart = false;
+        lock (textureCache)
+        {
+          if (textureCache.ContainsKey(clean))
           {
-            BitmapImage bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.UriSource = new Uri(url, UriKind.Absolute);
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-            bmp.EndInit();
-
-            bmp.DownloadFailed += delegate
-            {
-              // If item failed, attempt fallback to block folder
-              try
-              {
-                string fbUrl = GetItemTextureUrl(clean, true);
-                BitmapImage fbBmp = new BitmapImage(new Uri(fbUrl, UriKind.Absolute));
-                RenderOptions.SetBitmapScalingMode(fbBmp, BitmapScalingMode.NearestNeighbor);
-                img.Source = fbBmp;
-              }
-              catch {}
-            };
-
-            img.Source = bmp;
+            img.Source = textureCache[clean];
+            return img;
+          }
+          List<Action<ImageSource>> waiters;
+          if (texturePending.TryGetValue(clean, out waiters))
+          {
+            waiters.Add(apply);
+          }
+          else
+          {
+            texturePending[clean] = new List<Action<ImageSource>> { apply };
+            shouldStart = true;
           }
         }
-        catch {}
+
+        if (shouldStart)
+        {
+          ThreadPool.QueueUserWorkItem(delegate
+          {
+            ImageSource src = DownloadItemTexture(clean);
+            List<Action<ImageSource>> list = null;
+            lock (textureCache)
+            {
+              if (texturePending.ContainsKey(clean))
+              {
+                list = texturePending[clean];
+                texturePending.Remove(clean);
+              }
+              if (src != null) textureCache[clean] = src;
+            }
+            if (src != null && list != null)
+            {
+              for (int i = 0; i < list.Count; i++) list[i](src);
+            }
+          });
+        }
 
         return img;
       }
 
+      private static readonly Dictionary<string, ImageSource> fallbackAvatarCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
       private static readonly Dictionary<string, List<Action<ImageSource>>> avatarPending = new Dictionary<string, List<Action<ImageSource>>>(StringComparer.OrdinalIgnoreCase);
 
       private static readonly string[] AvatarUrlTemplates = new string[]
       {
         "https://mc-heads.net/avatar/{0}/64",
-        "https://minotar.net/helm/{0}/64",
-        "https://crafatar.com/avatars/{0}?size=64&overlay&default=MHF_Steve"
+        "https://minotar.net/helm/{0}/64.png",
+        "https://cravatar.eu/helmavatar/{0}/64.png"
       };
+
+      public static ImageSource CreateFallbackPixelHead(string username)
+      {
+        if (string.IsNullOrEmpty(username)) username = "Steve";
+        lock (fallbackAvatarCache)
+        {
+          if (fallbackAvatarCache.ContainsKey(username)) return fallbackAvatarCache[username];
+        }
+
+        int hash = 0;
+        for (int i = 0; i < username.Length; i++) hash = ((hash << 5) - hash) + username[i];
+        if (hash < 0) hash = -hash;
+
+        // Classic Minecraft skin & hair palettes (BGRA)
+        uint[][] palettes = new uint[][]
+        {
+          // Hair, HairShade, Skin, SkinShade, EyePupil, Mouth
+          new uint[] { 0xFF3B2718, 0xFF2A1B10, 0xFFD99B66, 0xFFC2824F, 0xFF3E4A9E, 0xFF6E3F28 }, // Steve
+          new uint[] { 0xFF9C5227, 0xFF7D3E19, 0xFFF2C19E, 0xFFDCA682, 0xFF2E6F40, 0xFF945844 }, // Alex
+          new uint[] { 0xFF1F2429, 0xFF121518, 0xFFE6AC7E, 0xFFCC9164, 0xFF1B7593, 0xFF6B3E2B }, // Dark Hair
+          new uint[] { 0xFFD6A33E, 0xFFB58425, 0xFFF5C8A6, 0xFFDFAD88, 0xFF3359A6, 0xFF8C523B }, // Blonde
+          new uint[] { 0xFF5A2A22, 0xFF421C16, 0xFFC98B5B, 0xFFB07345, 0xFF286E4B, 0xFF59301F }  // Auburn
+        };
+        uint[] pal = palettes[hash % palettes.Length];
+        uint H1 = pal[0], H2 = pal[1], S1 = pal[2], S2 = pal[3], EY = pal[4], MO = pal[5], WH = 0xFFFFFFFF;
+
+        // 8x8 authentic Minecraft head pixel grid
+        uint[] grid = new uint[64]
+        {
+          H2, H1, H1, H2, H1, H1, H2, H2,
+          H1, H2, H1, H1, H2, H1, H1, H2,
+          H1, S2, S1, S1, S1, S1, S2, H1,
+          S2, S1, S1, S1, S1, S1, S1, S2,
+          S1, WH, EY, S1, S1, EY, WH, S1,
+          S2, S1, S1, S2, S2, S1, S1, S2,
+          S2, S1, MO, MO, MO, MO, S1, S2,
+          S2, S2, S1, S1, S1, S1, S2, S2
+        };
+
+        WriteableBitmap wb = new WriteableBitmap(8, 8, 96, 96, PixelFormats.Bgra32, null);
+        wb.WritePixels(new Int32Rect(0, 0, 8, 8), grid, 8 * 4, 0);
+        wb.Freeze();
+
+        lock (fallbackAvatarCache)
+        {
+          fallbackAvatarCache[username] = wb;
+        }
+        return wb;
+      }
+
+      private static string GetDiskAvatarPath(string username)
+      {
+        string avDir = System.IO.Path.Combine(Program.GetRuntimeDirectory(), "avatars");
+        if (!Directory.Exists(avDir)) Directory.CreateDirectory(avDir);
+        string safe = Regex.Replace(username ?? "Steve", @"[^a-zA-Z0-9_\-]", "_");
+        return System.IO.Path.Combine(avDir, safe + ".png");
+      }
 
       private static ImageSource DownloadAvatar(string username)
       {
-        for (int i = 0; i < AvatarUrlTemplates.Length; i++)
+        try
         {
-          try
+          string diskPath = GetDiskAvatarPath(username);
+          if (File.Exists(diskPath))
           {
-            ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768 | (SecurityProtocolType)192;
-            byte[] data;
-            using (WebClient wc = new WebClient())
+            byte[] diskBytes = File.ReadAllBytes(diskPath);
+            if (diskBytes != null && diskBytes.Length > 64)
             {
-              wc.Headers.Add("User-Agent", "Mozilla/5.0 SCT-AFK-Service");
-              data = wc.DownloadData(string.Format(AvatarUrlTemplates[i], Uri.EscapeDataString(username)));
+              BitmapImage diskBmp = DecodePngBytes(diskBytes);
+              if (diskBmp != null) return diskBmp;
             }
-            if (data == null || data.Length < 64) continue;
-            BitmapImage bmp = new BitmapImage();
-            using (MemoryStream ms = new MemoryStream(data))
-            {
-              bmp.BeginInit();
-              bmp.CacheOption = BitmapCacheOption.OnLoad;
-              bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-              bmp.StreamSource = ms;
-              bmp.EndInit();
-            }
-            bmp.Freeze();
-            return bmp;
           }
-          catch { }
+
+          ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768 | (SecurityProtocolType)192;
+          for (int i = 0; i < AvatarUrlTemplates.Length; i++)
+          {
+            try
+            {
+              byte[] data;
+              using (WebClient wc = new WebClient())
+              {
+                wc.Headers.Add("User-Agent", "Mozilla/5.0 SCT-AFK-Service");
+                data = wc.DownloadData(string.Format(AvatarUrlTemplates[i], Uri.EscapeDataString(username)));
+              }
+              if (data == null || data.Length < 64) continue;
+              BitmapImage bmp = DecodePngBytes(data);
+              if (bmp != null)
+              {
+                try { File.WriteAllBytes(diskPath, data); } catch { }
+                return bmp;
+              }
+            }
+            catch { }
+          }
         }
+        catch { }
         return null;
       }
 
@@ -903,11 +1046,30 @@ namespace SctAfkService
         {
           if (avatarCache.ContainsKey(username)) return avatarCache[username];
         }
+        try
+        {
+          string diskPath = GetDiskAvatarPath(username);
+          if (File.Exists(diskPath))
+          {
+            byte[] diskBytes = File.ReadAllBytes(diskPath);
+            if (diskBytes != null && diskBytes.Length > 64)
+            {
+              BitmapImage diskBmp = DecodePngBytes(diskBytes);
+              if (diskBmp != null)
+              {
+                lock (avatarCache) { avatarCache[username] = diskBmp; }
+                return diskBmp;
+              }
+            }
+          }
+        }
+        catch { }
         return null;
       }
 
       private static void FetchAvatarAsync(string username, Action<ImageSource> onReady)
       {
+        bool shouldStart = false;
         lock (avatarCache)
         {
           if (avatarCache.ContainsKey(username))
@@ -919,27 +1081,44 @@ namespace SctAfkService
           if (avatarPending.TryGetValue(username, out waiters))
           {
             waiters.Add(onReady);
-            return;
           }
-          avatarPending[username] = new List<Action<ImageSource>> { onReady };
+          else
+          {
+            avatarPending[username] = new List<Action<ImageSource>> { onReady };
+            shouldStart = true;
+          }
         }
+        if (!shouldStart) return;
+
         ThreadPool.QueueUserWorkItem(delegate
         {
           ImageSource src = DownloadAvatar(username);
-          List<Action<ImageSource>> waiters;
+          if (src == null)
+          {
+            // Wait 1.5s in case Node.js OpenSSL avatar prefetcher is writing to disk on VDS
+            Thread.Sleep(1500);
+            src = DownloadAvatar(username);
+          }
+          List<Action<ImageSource>> waiters = null;
           lock (avatarCache)
           {
-            waiters = avatarPending[username];
-            avatarPending.Remove(username);
+            if (avatarPending.ContainsKey(username))
+            {
+              waiters = avatarPending[username];
+              avatarPending.Remove(username);
+            }
             if (src != null) avatarCache[username] = src;
           }
-          if (src == null || Application.Current == null) return;
-          Application.Current.Dispatcher.BeginInvoke(new Action(delegate
+          if (src != null && waiters != null)
           {
-            foreach (Action<ImageSource> w in waiters) w(src);
-          }));
+            for (int i = 0; i < waiters.Count; i++)
+            {
+              try { waiters[i](src); } catch { }
+            }
+          }
         });
       }
+
       public static FrameworkElement CreateSkinAvatar(string username, int size = 32)
       {
         if (string.IsNullOrEmpty(username)) username = "Steve";
@@ -959,8 +1138,22 @@ namespace SctAfkService
         container.Child = img;
 
         ImageSource cached = GetAvatarSource(username, size);
-        if (cached != null) img.Source = cached;
-        else FetchAvatarAsync(username, delegate(ImageSource s) { img.Source = s; });
+        if (cached != null)
+        {
+          img.Source = cached;
+        }
+        else
+        {
+          // Immediately show authentic 8x8 pixel head while real skin downloads
+          img.Source = CreateFallbackPixelHead(username);
+          FetchAvatarAsync(username, delegate(ImageSource s)
+          {
+            if (s != null)
+            {
+              img.Dispatcher.BeginInvoke(new Action(delegate { img.Source = s; }));
+            }
+          });
+        }
 
         return container;
       }
@@ -1905,7 +2098,7 @@ namespace SctAfkService
             string host = txtHost.Text.Trim();
             if (string.IsNullOrEmpty(host))
             {
-                MessageBox.Show("Lütfen sunucu IP/domain adresini girin.", "SCT AFK Service", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SctDialogModal.Alert(this, "Eksik Bilgi", "Lütfen sunucu IP/domain adresini girin.");
                 return;
             }
             string name = txtName.Text.Trim();
@@ -2082,7 +2275,7 @@ namespace SctAfkService
             string username = txtUsername.Text.Trim();
             if (string.IsNullOrEmpty(username))
             {
-                MessageBox.Show("Lütfen hesap kullanıcı adını girin.", "SCT AFK Service", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SctDialogModal.Alert(this, "Eksik Bilgi", "Lütfen hesap kullanıcı adını girin.");
                 return;
             }
 
@@ -2118,7 +2311,7 @@ namespace SctAfkService
                 string err = JsonHelper.Str(data, "error", "");
                 if (!string.IsNullOrEmpty(err))
                 {
-                    MessageBox.Show(err, "SCT AFK Service", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    SctDialogModal.Alert(this, "Hesap Kaydedilemedi", err);
                     return;
                 }
                 string savedId = JsonHelper.Str(data, "id", editAccountId);
@@ -2194,7 +2387,7 @@ namespace SctAfkService
 
         private void OnClearAllClick(object sender, RoutedEventArgs e)
         {
-            if (MessageBox.Show("Tüm hesaplardaki proxy ayarları kaldırılıp kendi IP adresinize dönülsün mü?", "Proxyleri Sıfırla", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!SctDialogModal.Confirm(this, "Proxyleri Sıfırla", "Tüm hesaplardaki proxy ayarları kaldırılıp kendi IP adresinize dönülsün mü?", "Evet, Sıfırla", "Vazgeç", true))
                 return;
 
             Dictionary<string, object> body = new Dictionary<string, object>();
@@ -2221,7 +2414,7 @@ namespace SctAfkService
 
             if (proxies.Count == 0)
             {
-                MessageBox.Show("Lütfen en az 1 adet proxy adresi girin.", "SCT AFK Service", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SctDialogModal.Alert(this, "Proxy Listesi Boş", "Lütfen en az 1 adet proxy adresi girin.");
                 return;
             }
 
@@ -2292,6 +2485,153 @@ namespace SctAfkService
 
             card.Child = dp;
             Content = card;
+        }
+    }
+
+    public class SctDialogModal : Window
+    {
+        public bool Confirmed { get; private set; }
+
+        public SctDialogModal(Window owner, string title, string message, bool isConfirm, string yesLabel, string noLabel, bool isDanger)
+        {
+            Confirmed = false;
+            if (owner != null && owner.IsVisible) Owner = owner;
+            Title = string.IsNullOrEmpty(title) ? "SCT AFK Service" : title;
+            Width = 440;
+            SizeToContent = SizeToContent.Height;
+            WindowStartupLocation = owner != null && owner.IsVisible ? WindowStartupLocation.CenterOwner : WindowStartupLocation.CenterScreen;
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            Foreground = UiTheme.TextMain;
+            ResizeMode = ResizeMode.NoResize;
+            Topmost = true;
+
+            Border outer = new Border
+            {
+                Background = UiTheme.BgCard,
+                BorderBrush = isDanger ? UiTheme.Red : UiTheme.ForestGreen,
+                BorderThickness = new Thickness(1.5),
+                CornerRadius = new CornerRadius(14),
+                Padding = new Thickness(20, 18, 20, 18),
+                Margin = new Thickness(14),
+                Effect = new DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    BlurRadius = 18,
+                    ShadowDepth = 4,
+                    Opacity = 0.22
+                }
+            };
+
+            StackPanel root = new StackPanel();
+
+            // Header bar (draggable)
+            DockPanel header = new DockPanel { Margin = new Thickness(0, 0, 0, 12), Background = Brushes.Transparent };
+            header.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                if (e.ButtonState == MouseButtonState.Pressed)
+                {
+                    try { DragMove(); } catch { }
+                }
+            };
+
+            Border iconBadge = new Border
+            {
+                Width = 34,
+                Height = 34,
+                CornerRadius = new CornerRadius(10),
+                Background = isDanger ? UiTheme.RedBg : UiTheme.GreenBg,
+                BorderBrush = isDanger ? UiTheme.Red : UiTheme.BrushHex("#A7F3D0"),
+                BorderThickness = new Thickness(1),
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            string iconChar = isDanger ? "⚠️" : (isConfirm ? "🚀" : "ℹ️");
+            TextBlock lblIcon = UiTheme.CreateText(iconChar, 15, FontWeights.Bold, isDanger ? UiTheme.Red : UiTheme.ForestGreen);
+            lblIcon.HorizontalAlignment = HorizontalAlignment.Center;
+            lblIcon.VerticalAlignment = VerticalAlignment.Center;
+            iconBadge.Child = lblIcon;
+            DockPanel.SetDock(iconBadge, Dock.Left);
+            header.Children.Add(iconBadge);
+
+            Button btnClose = UiTheme.CreateButton("✕", "outline", delegate { Confirmed = false; Close(); }, new Thickness(8, 3, 8, 3));
+            btnClose.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(btnClose, Dock.Right);
+            header.Children.Add(btnClose);
+
+            StackPanel titleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            titleStack.Children.Add(UiTheme.CreateText(Title, 15, FontWeights.ExtraBold, UiTheme.ForestGreen));
+            titleStack.Children.Add(UiTheme.CreateText("SCT AFK Service • Sistem Bildirimi", 10.5, FontWeights.Medium, UiTheme.TextMuted));
+            header.Children.Add(titleStack);
+
+            root.Children.Add(header);
+
+            // Message box card
+            Border msgBox = new Border
+            {
+                Background = UiTheme.BgBase,
+                BorderBrush = UiTheme.BorderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+            TextBlock lblMsg = UiTheme.CreateText(message ?? "", 13, FontWeights.Medium, UiTheme.TextMain);
+            lblMsg.TextWrapping = TextWrapping.Wrap;
+            msgBox.Child = lblMsg;
+            root.Children.Add(msgBox);
+
+            // Footer buttons
+            StackPanel footer = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+
+            if (isConfirm)
+            {
+                Button btnNo = UiTheme.CreateButton(string.IsNullOrEmpty(noLabel) ? "Vazgeç" : noLabel, "outline", delegate
+                {
+                    Confirmed = false;
+                    Close();
+                }, new Thickness(14, 7, 14, 7));
+                btnNo.Margin = new Thickness(0, 0, 8, 0);
+                footer.Children.Add(btnNo);
+
+                Button btnYes = UiTheme.CreateButton(string.IsNullOrEmpty(yesLabel) ? "Evet, Devam Et" : yesLabel, isDanger ? "danger" : "primary", delegate
+                {
+                    Confirmed = true;
+                    Close();
+                }, new Thickness(16, 7, 16, 7));
+                footer.Children.Add(btnYes);
+            }
+            else
+            {
+                Button btnOk = UiTheme.CreateButton(string.IsNullOrEmpty(yesLabel) ? "Tamam" : yesLabel, "primary", delegate
+                {
+                    Confirmed = true;
+                    Close();
+                }, new Thickness(18, 7, 18, 7));
+                footer.Children.Add(btnOk);
+            }
+
+            root.Children.Add(footer);
+            outer.Child = root;
+            Content = outer;
+        }
+
+        public static bool Confirm(Window owner, string title, string message, string yesLabel = "Evet, Devam Et", string noLabel = "Vazgeç", bool isDanger = false)
+        {
+            SctDialogModal dlg = new SctDialogModal(owner, title, message, true, yesLabel, noLabel, isDanger);
+            dlg.ShowDialog();
+            return dlg.Confirmed;
+        }
+
+        public static void Alert(Window owner, string title, string message, string okLabel = "Tamam")
+        {
+            SctDialogModal dlg = new SctDialogModal(owner, title, message, false, okLabel, "", false);
+            dlg.ShowDialog();
         }
     }
 
@@ -6507,7 +6847,7 @@ namespace SctAfkService
 
         private void OnApplyUpdateClick(object sender, RoutedEventArgs e)
         {
-            if (MessageBox.Show("Yeni sürüm indirilip motor yeniden başlatılacak. Devam edilsin mi?", "Güncellemeyi Yükle", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!SctDialogModal.Confirm(this, "Güncellemeyi Yükle", "Yeni sürüm indirilip motor ve arayüz otomatik yeniden başlatılacak. Devam edilsin mi?", "🚀 Evet, Güncelle", "Vazgeç", false))
                 return;
 
             if (!pipe.IsConnected)
@@ -6638,7 +6978,7 @@ namespace SctAfkService
 
         private void OnClearAllProxiesFromSettingsClick(object sender, RoutedEventArgs e)
         {
-            if (MessageBox.Show("Tüm hesaplardaki proxy adresleri temizlensin mi?", "Proxyleri Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!SctDialogModal.Confirm(this, "Proxyleri Temizle", "Tüm hesaplardaki proxy adresleri temizlensin mi?", "Evet, Temizle", "Vazgeç", true))
                 return;
 
             Dictionary<string, object> body = new Dictionary<string, object> { { "action", "clearAll" } };
@@ -6666,7 +7006,7 @@ namespace SctAfkService
 
         private void OnKeyAuthLogoutClick(object sender, RoutedEventArgs e)
         {
-            if (MessageBox.Show("KeyAuth PRO oturumunuz kapatılsın mı?", "Oturumu Kapat", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!SctDialogModal.Confirm(this, "Oturumu Kapat", "KeyAuth PRO oturumunuz kapatılsın mı?", "Evet, Oturumu Kapat", "Vazgeç", true))
                 return;
             pipe.SendApiAsync("POST", "/api/keyauth/logout", new Dictionary<string, object>(), delegate
             {
@@ -6686,7 +7026,7 @@ namespace SctAfkService
 
         private void DeleteServerById(string id, string name)
         {
-            if (MessageBox.Show("\"" + name + "\" sunucusunu silmek istediğinize emin misiniz?", "Sunucuyu Sil", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!SctDialogModal.Confirm(this, "Sunucuyu Sil", "\"" + name + "\" sunucusunu silmek istediğinize emin misiniz?", "Evet, Sil", "Vazgeç", true))
                 return;
             pipe.SendApiAsync("DELETE", "/api/servers/" + id, null, delegate
             {
@@ -6712,7 +7052,7 @@ namespace SctAfkService
 
         private void DeleteAccountById(string id, string username)
         {
-            if (MessageBox.Show("\"" + username + "\" hesabını silmek istediğinize emin misiniz?", "Hesabı Sil", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!SctDialogModal.Confirm(this, "Hesabı Sil", "\"" + username + "\" hesabını silmek istediğinize emin misiniz?", "Evet, Sil", "Vazgeç", true))
                 return;
             pipe.SendApiAsync("DELETE", "/api/accounts/" + id, null, delegate
             {
@@ -6800,7 +7140,7 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_avatar_fix_v84";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_ui_avatar_fix_v85";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -6838,7 +7178,12 @@ namespace SctAfkService
         {
             Assembly asm = Assembly.GetExecutingAssembly();
             byte[] embedded;
-            using (Stream stream = asm.GetManifestResourceStream(resourceName))
+            Stream stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null && resourceName.StartsWith("sct.", StringComparison.OrdinalIgnoreCase))
+            {
+                stream = asm.GetManifestResourceStream(resourceName.Substring(4));
+            }
+            using (stream)
             {
                 if (stream == null) return;
                 using (MemoryStream ms = new MemoryStream())
