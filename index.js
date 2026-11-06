@@ -29,10 +29,26 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261103_stacked_spawners_fix_v75';
+const ENGINE_BUILD_ID = '20261106_native_wpf_gui_v80';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
-const HTML_PATH = path.join(__dirname, 'public', 'index.html');
+
+function getMigrationCandidateDirs() {
+  const dirs = [];
+  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  if (localAppData) {
+    dirs.push(path.join(localAppData, 'SCT_AFK_Service'));
+  }
+  dirs.push(path.join(__dirname, '..', '.sct-afk-engine'));
+  dirs.push(path.join(__dirname, '..', 'minecraft-afk-client'));
+  return dirs.filter((d) => {
+    try {
+      return path.resolve(d).toLowerCase() !== path.resolve(__dirname).toLowerCase();
+    } catch (e) {
+      return false;
+    }
+  });
+}
 
 // --- KEYAUTH UYGULAMA KİMLİK BİLGİLERİ ---
 const KEYAUTH_CONFIG = {
@@ -267,8 +283,19 @@ function clearLocalKeyAuthCredentials() {
 
 function loadLocalKeyAuthCredentials() {
   try {
+    if (!fs.existsSync(KEYAUTH_SAVED_PATH)) {
+      for (const dir of getMigrationCandidateDirs()) {
+        const cand = path.join(dir, 'keyauth_saved.json');
+        if (fs.existsSync(cand)) {
+          try {
+            fs.copyFileSync(cand, KEYAUTH_SAVED_PATH);
+            break;
+          } catch (e) {}
+        }
+      }
+    }
     if (!fs.existsSync(KEYAUTH_SAVED_PATH)) return null;
-    const raw = JSON.parse(fs.readFileSync(KEYAUTH_SAVED_PATH, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(KEYAUTH_SAVED_PATH, 'utf8').replace(/^\uFEFF/, ''));
     if (!raw || !raw.u || !raw.p) return null;
     return {
       username: Buffer.from(raw.u, 'base64').toString('utf8'),
@@ -374,6 +401,7 @@ function getPublicKeyAuthStatus() {
   const isPro = keyAuthSession.plan === 'pro';
   return {
     engineBuildId: ENGINE_BUILD_ID,
+    buildId: ENGINE_BUILD_ID,
     authenticated: true,
     isPro: isPro,
     username: isPro ? (keyAuthSession.username || (saved ? saved.username : 'PRO Üye')) : 'Ücretsiz Sürüm',
@@ -461,7 +489,26 @@ function loadConfig() {
   let parsed = {};
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+    }
+    const hasAccounts = Array.isArray(parsed.accounts) && parsed.accounts.length > 0;
+    const hasCustomSrv = Array.isArray(parsed.servers) && parsed.servers.some((s) => s && s.host && s.host !== 'localhost');
+    if (!hasAccounts && !hasCustomSrv) {
+      for (const dir of getMigrationCandidateDirs()) {
+        const candCfg = path.join(dir, 'config.json');
+        if (fs.existsSync(candCfg)) {
+          try {
+            const candParsed = JSON.parse(fs.readFileSync(candCfg, 'utf8').replace(/^\uFEFF/, ''));
+            const candHasAcc = Array.isArray(candParsed.accounts) && candParsed.accounts.length > 0;
+            const candHasSrv = Array.isArray(candParsed.servers) && candParsed.servers.some((s) => s && s.host && s.host !== 'localhost');
+            if (candHasAcc || candHasSrv) {
+              parsed = candParsed;
+              fs.writeFileSync(CONFIG_PATH, JSON.stringify(parsed, null, 2), 'utf8');
+              break;
+            }
+          } catch (e) {}
+        }
+      }
     }
   } catch (err) {
     console.error(chalk.red(`[HATA] config.json okunamadı: ${err.message}`));
@@ -802,13 +849,29 @@ function httpFetchUrl(urlStr, maxRedirects = 5, extraHeaders = {}) {
   });
 }
 
+function extractBuildVersionNum(buildId) {
+  if (!buildId || typeof buildId !== 'string') return 0;
+  const m = buildId.match(/_v(\d+)$/i);
+  return m ? parseInt(m[1], 10) || 0 : 0;
+}
+
+function isBuildIdNewer(candidate, baseline) {
+  if (!candidate) return false;
+  if (!baseline) return true;
+  if (candidate === baseline) return false;
+  const candNum = extractBuildVersionNum(candidate);
+  const baseNum = extractBuildVersionNum(baseline);
+  if (candNum > 0 && baseNum > 0) return candNum > baseNum;
+  return String(candidate) > String(baseline);
+}
+
 async function checkForUpdates() {
   const manifestUrl = getUpdateManifestUrl();
   try {
     const rawBuf = await httpFetchUrl(manifestUrl);
     const manifest = JSON.parse(rawBuf.toString('utf8').replace(/^\uFEFF/, '').trim());
     const remoteBuildId = manifest.buildId || manifest.version || '';
-    const hasUpdate = Boolean(remoteBuildId && remoteBuildId !== ENGINE_BUILD_ID);
+    const hasUpdate = Boolean(remoteBuildId && isBuildIdNewer(remoteBuildId, ENGINE_BUILD_ID));
 
     updateCheckState = {
       lastChecked: Date.now(),
@@ -831,6 +894,10 @@ async function checkForUpdates() {
   }
 }
 
+function getRawFileUrl(owner, repo, branch, filePath) {
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
+}
+
 async function applyHotUpdate() {
   if (updateCheckState.isUpdating) {
     throw new Error('Güncelleme işlemi zaten devam ediyor...');
@@ -844,30 +911,33 @@ async function applyHotUpdate() {
     const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
     const branch = (config.updates && config.updates.branch) || 'main';
 
-    let indexJsUrl = (manifest.files && manifest.files['index.js']) || `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/index.js`;
-    let indexHtmlUrl = (manifest.files && manifest.files['public/index.html']) || `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/public/index.html`;
+    let indexJsUrl = (manifest.files && manifest.files['index.js']) || getRawFileUrl(owner, repo, branch, 'index.js');
+    const hasManifestLauncher = Boolean(manifest.files && manifest.files['Launcher.cs']);
+    let launcherCsUrl = hasManifestLauncher
+      ? manifest.files['Launcher.cs']
+      : getRawFileUrl(owner, repo, branch, 'Launcher.cs');
 
     indexJsUrl = indexJsUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
-    indexHtmlUrl = indexHtmlUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
+    launcherCsUrl = launcherCsUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
     // GitHub raw CDN önbelleğini atla
     const cacheBust = `${indexJsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
     indexJsUrl += cacheBust;
-    indexHtmlUrl += `${indexHtmlUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    launcherCsUrl += `${launcherCsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
     addLog(null, 'GÜNCELLEME', `Yeni sürüm (${manifest.buildId || manifest.version}) indiriliyor...`, chalk.cyan);
 
     let newJsBuf = null;
-    let newHtmlBuf = null;
+    let newLauncherBuf = null;
     let newJsStr = '';
-    let newHtmlStr = '';
+    let newLauncherStr = '';
 
     try {
-      [newJsBuf, newHtmlBuf] = await Promise.all([
+      [newJsBuf, newLauncherBuf] = await Promise.all([
         httpFetchUrl(indexJsUrl),
-        httpFetchUrl(indexHtmlUrl)
+        httpFetchUrl(launcherCsUrl).catch(() => null)
       ]);
       newJsStr = newJsBuf ? newJsBuf.toString('utf8') : '';
-      newHtmlStr = newHtmlBuf ? newHtmlBuf.toString('utf8') : '';
+      newLauncherStr = newLauncherBuf ? newLauncherBuf.toString('utf8') : '';
     } catch (cdnErr) {
       addLog(null, 'GÜNCELLEME', `CDN indirme uyarısı: ${cdnErr.message}`, chalk.yellow);
     }
@@ -881,15 +951,15 @@ async function applyHotUpdate() {
       addLog(null, 'GÜNCELLEME', '⚠️ CDN önbelleği eski sürüm döndürdü. GitHub API üzerinden en güncel dosyalar doğrudan alınıyor...', chalk.yellow);
       try {
         const ghApiJs = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/index.js?ref=${encodeURIComponent(branch)}`;
-        const ghApiHtml = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/public/index.html?ref=${encodeURIComponent(branch)}`;
+        const ghApiLauncher = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/Launcher.cs?ref=${encodeURIComponent(branch)}`;
         const apiHeaders = { 'Accept': 'application/vnd.github.v3.raw' };
 
-        [newJsBuf, newHtmlBuf] = await Promise.all([
+        [newJsBuf, newLauncherBuf] = await Promise.all([
           httpFetchUrl(ghApiJs, 5, apiHeaders),
-          httpFetchUrl(ghApiHtml, 5, apiHeaders)
+          httpFetchUrl(ghApiLauncher, 5, apiHeaders).catch(() => newLauncherBuf)
         ]);
         newJsStr = newJsBuf ? newJsBuf.toString('utf8') : '';
-        newHtmlStr = newHtmlBuf ? newHtmlBuf.toString('utf8') : '';
+        newLauncherStr = newLauncherBuf ? newLauncherBuf.toString('utf8') : '';
         dlBuildMatch = newJsStr.match(/const ENGINE_BUILD_ID = '([^']+)';?/);
         dlBuildId = dlBuildMatch ? dlBuildMatch[1] : '';
       } catch (ghErr) {
@@ -897,33 +967,51 @@ async function applyHotUpdate() {
       }
     }
 
-    if (!newJsStr.includes('ENGINE_BUILD_ID') || newJsStr.length < 15000) {
-      throw new Error('İndirilen index.js dosyası geçersiz veya bozuk!');
+    if (!newJsStr.includes('ENGINE_BUILD_ID') || !newJsStr.includes('SctAfkEngineIpc') || newJsStr.length < 15000) {
+      throw new Error('İndirilen index.js dosyası geçersiz veya Native WPF IPC desteklemiyor!');
     }
-    // Sonsuz güncelleme döngüsü koruması: indirilen motor, manifestteki sürümle birebir aynı olmalı
-    if (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId) || dlBuildId === ENGINE_BUILD_ID) {
-      throw new Error(`İndirilen motor sürümü (${dlBuildId || '?'}) beklenen sürümle (${expectedBuildId}) eşleşmiyor. Güncelleme iptal edildi, birkaç dakika sonra tekrar denenecek.`);
+    // Sonsuz güncelleme ve sürüm düşürme (downgrade) koruması: indirilen motor daha yeni olmalı
+    if (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId) || !isBuildIdNewer(dlBuildId, ENGINE_BUILD_ID)) {
+      throw new Error(`İndirilen motor sürümü (${dlBuildId || '?'}) mevcut sürümden (${ENGINE_BUILD_ID}) daha yeni değil. Güncelleme iptal edildi.`);
     }
-    if (!newHtmlStr.includes('<!DOCTYPE html>') || newHtmlStr.length < 5000) {
-      throw new Error('İndirilen index.html dosyası geçersiz veya bozuk!');
+
+    const isValidLauncherSource = (str) =>
+      Boolean(str && str.length > 5000 && (str.includes('namespace SctAfkService') || str.includes('namespace SctAfkLauncher')));
+
+    if (hasManifestLauncher && !isValidLauncherSource(newLauncherStr)) {
+      throw new Error('İndirilen Launcher.cs dosyası geçersiz veya bozuk!');
     }
 
     const tmpJsPath = path.join(__dirname, 'index.js.tmp');
-    const tmpHtmlPath = path.join(path.dirname(HTML_PATH), 'index.html.tmp');
-
+    const finalJsPath = path.join(__dirname, 'index.js');
     fs.writeFileSync(tmpJsPath, newJsBuf);
-    fs.writeFileSync(tmpHtmlPath, newHtmlBuf);
+    fs.renameSync(tmpJsPath, finalJsPath);
 
-    // Atomik dosya değişimi
-    fs.renameSync(tmpJsPath, path.join(__dirname, 'index.js'));
-    fs.renameSync(tmpHtmlPath, HTML_PATH);
+    if (newLauncherBuf && isValidLauncherSource(newLauncherStr)) {
+      const tmpLauncherPath = path.join(__dirname, 'Launcher.cs.tmp');
+      const finalLauncherPath = path.join(__dirname, 'Launcher.cs');
+      fs.writeFileSync(tmpLauncherPath, newLauncherBuf);
+      fs.renameSync(tmpLauncherPath, finalLauncherPath);
+      try {
+        const nowL = new Date();
+        fs.utimesSync(finalLauncherPath, nowL, nowL);
+      } catch (e) {}
+    }
+
+    try {
+      const tmpVerPath = path.join(__dirname, 'version.json.tmp');
+      const finalVerPath = path.join(__dirname, 'version.json');
+      fs.writeFileSync(tmpVerPath, JSON.stringify(manifest, null, 2), 'utf8');
+      fs.renameSync(tmpVerPath, finalVerPath);
+    } catch (e) {}
 
     // Zaman damgasını tazele
     const now = new Date();
     try {
-      fs.utimesSync(path.join(__dirname, 'index.js'), now, now);
-      fs.utimesSync(HTML_PATH, now, now);
+      fs.utimesSync(finalJsPath, now, now);
     } catch (e) {}
+
+    rebuildPortableExe();
 
     addLog(null, 'GÜNCELLEME', 'Güncelleme başarıyla yüklendi! Sistem yeniden başlatılıyor...', chalk.green);
     broadcastSSE('server-restarting', {
@@ -938,36 +1026,33 @@ async function applyHotUpdate() {
 
     setTimeout(() => {
       try {
-        for (const clientRes of sseClients) {
+        for (const sock of ipcClients) {
           try {
-            clientRes.end();
-            if (clientRes.socket) clientRes.socket.destroy();
+            sock.destroy();
           } catch (e) {}
         }
-        sseClients.clear();
+        ipcClients.clear();
       } catch (e) {}
 
       try {
-        server.close();
+        ipcServer.close();
       } catch (e) {}
 
-      setTimeout(() => {
-        try {
-          const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
-            cwd: __dirname,
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-            env: {
-              ...process.env,
-              SCT_HOT_UPDATE_RESTART: '1'
-            }
-          });
-          child.unref();
-        } catch (e) {}
-        process.exit(0);
-      }, 200);
-    }, 650);
+      try {
+        const child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
+          cwd: __dirname,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          env: {
+            ...process.env,
+            SCT_HOT_UPDATE_RESTART: '1'
+          }
+        });
+        child.unref();
+      } catch (e) {}
+      process.exit(0);
+    }, 600);
 
     return { ok: true, buildId: dlBuildId || manifest.buildId || manifest.version };
   } finally {
@@ -978,7 +1063,7 @@ async function applyHotUpdate() {
 let config = loadConfig();
 const sessions = new Map();
 const recentLogs = [];
-const sseClients = new Set();
+const ipcClients = new Set();
 
 let exeSyncTimer = null;
 
@@ -1003,6 +1088,9 @@ function rebuildPortableExe() {
     } catch (e) {}
   }
 
+  const fwDir = path.dirname(cscPath);
+  const wpfDir = path.join(fwDir, 'WPF');
+
   for (const outExe of targetPaths) {
     const tmpExe = `${outExe}.new.exe`;
     const args = [
@@ -1011,9 +1099,16 @@ function rebuildPortableExe() {
       '/optimize+',
       `/out:${tmpExe}`,
       `/win32icon:${icoPath}`,
+      `/r:${path.join(wpfDir, 'PresentationFramework.dll')}`,
+      `/r:${path.join(wpfDir, 'PresentationCore.dll')}`,
+      `/r:${path.join(wpfDir, 'WindowsBase.dll')}`,
+      `/r:${path.join(fwDir, 'System.Xaml.dll')}`,
+      '/r:System.Web.Extensions.dll',
+      '/r:System.Core.dll',
+      '/r:System.Drawing.dll',
+      '/r:System.Windows.Forms.dll',
       `/resource:${path.join(__dirname, 'package.json')},sct.package.json`,
       `/resource:${path.join(__dirname, 'index.js')},sct.index.js`,
-      `/resource:${path.join(__dirname, 'public', 'index.html')},sct.index.html`,
       `/resource:${path.join(__dirname, 'public', 'logo.jpg')},sct.logo.jpg`,
       `/resource:${CONFIG_PATH},sct.config.json`,
       `/resource:${launcherCs},sct.Launcher.cs`,
@@ -1052,12 +1147,16 @@ function saveConfig() {
 }
 
 function broadcastSSE(type, data) {
-  const payload = `data: ${JSON.stringify({ type, data })}\n\n`;
-  for (const res of sseClients) {
+  const line = JSON.stringify({ type: 'event', event: type, data }) + '\n';
+  for (const sock of ipcClients) {
     try {
-      res.write(payload);
+      if (!sock.destroyed && sock.writable) {
+        sock.write(line);
+      } else {
+        ipcClients.delete(sock);
+      }
     } catch (e) {
-      sseClients.delete(res);
+      ipcClients.delete(sock);
     }
   }
 }
@@ -2528,7 +2627,7 @@ function flushBroadcastStateNow() {
     broadcastDebounceTimer = null;
   }
   lastStateBroadcastTime = Date.now();
-  if (sseClients.size > 0) {
+  if (ipcClients.size > 0) {
     broadcastSSE('state', getPublicState());
   }
   updateDiscordRPC();
@@ -17410,6 +17509,9 @@ function stopBot(accountId) {
 }
 
 function readJsonBody(req) {
+  if (req && req._bodyObj !== undefined) {
+    return Promise.resolve(req._bodyObj || {});
+  }
   return new Promise((resolve) => {
     let body = '';
     let tooLarge = false;
@@ -17437,205 +17539,57 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleIpcApiRequest(method, urlStr, bodyObj) {
+  const req = {
+    method: (method || 'GET').toUpperCase(),
+    url: urlStr || '/',
+    headers: { host: 'localhost' },
+    _bodyObj: bodyObj || {}
+  };
+  let resStatus = 200;
+  let resData = null;
+  let resolved = false;
+  const res = {
+    writeHead(st) {
+      resStatus = st;
+    },
+    end(str) {
+      if (resolved) return;
+      resolved = true;
+      try {
+        resData = str ? JSON.parse(str) : null;
+      } catch (_) {
+        resData = { raw: str };
+      }
+    }
+  };
+  try {
+    await routeIpcRequest(req, res);
+  } catch (err) {
+    if (!resolved) {
+      resStatus = 500;
+      resData = { error: err && err.message ? err.message : 'Internal IPC Error' };
+    }
+  }
+  return { status: resStatus, data: resData };
+}
+
+async function routeIpcRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
-
-  if (req.method === 'GET' && pathname === '/') {
-    try {
-      const html = fs.readFileSync(HTML_PATH, 'utf8');
-      res.writeHead(200, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0'
-      });
-      res.end(html);
-    } catch (err) {
-      res.writeHead(500);
-      res.end('Arayuz dosyasi okunamadi: ' + err.message);
-    }
-    return;
-  }
-
-  // Harici linkleri (Discord vb.) kullanıcının normal varsayılan tarayıcısında aç
-  if (req.method === 'GET' && pathname === '/api/open-external') {
-    const target = url.searchParams.get('url') || '';
-    if (/^https:\/\/(discord\.com|discord\.gg)\//i.test(target)) {
-      openExternalUrl(target);
-      return sendJson(res, 200, { ok: true });
-    }
-    return sendJson(res, 400, { ok: false });
-  }
-
-  if (req.method === 'GET' && pathname === '/manifest.json') {
-    return sendJson(res, 200, {
-      name: 'SCT AFK Service',
-      short_name: 'SCT AFK',
-      start_url: '/?v=20261024',
-      display: 'standalone',
-      background_color: '#0a0b0d',
-      theme_color: '#0a0b0d',
-      icons: [
-        {
-          src: '/favicon.ico?v=20261024',
-          sizes: '16x16 32x32 48x48 64x64 128x128 256x256',
-          type: 'image/x-icon',
-          purpose: 'any'
-        },
-        {
-          src: '/logo.jpg?v=20261024',
-          sizes: '256x256 512x512',
-          type: 'image/jpeg',
-          purpose: 'any maskable'
-        }
-      ]
-    });
-  }
-
-  if (req.method === 'GET' && (pathname === '/logo.jpg' || pathname === '/favicon.ico' || pathname === '/app.ico')) {
-    try {
-      if (pathname === '/favicon.ico' || pathname === '/app.ico') {
-        const icoFile = path.join(__dirname, 'app.ico');
-        if (fs.existsSync(icoFile)) {
-          const icoBuf = fs.readFileSync(icoFile);
-          res.writeHead(200, {
-            'Content-Type': 'image/x-icon',
-            'Cache-Control': 'no-cache, no-store, must-revalidate'
-          });
-          return res.end(icoBuf);
-        }
-      }
-      const logoBuf = fs.readFileSync(path.join(__dirname, 'public', 'logo.jpg'));
-      res.writeHead(200, {
-        'Content-Type': 'image/jpeg',
-        'Cache-Control': 'no-cache, no-store, must-revalidate'
-      });
-      res.end(logoBuf);
-    } catch (err) {
-      res.writeHead(404);
-      res.end();
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && pathname === '/sw.js') {
-    const swScript = `
-const FALLBACK_HTML = \`<!DOCTYPE html>
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <title>SCT AFK Service — Başlatılıyor...</title>
-  <style>
-    body {
-      margin: 0; height: 100vh; display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      background: #090a0f; color: #f8fafc;
-      font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
-      text-align: center; user-select: none;
-    }
-    .spinner {
-      width: 52px; height: 52px;
-      border: 3.5px solid rgba(59, 130, 246, 0.22);
-      border-top-color: #3b82f6;
-      border-radius: 50%;
-      animation: spin 0.85s linear infinite;
-      margin-bottom: 20px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    h2 { margin: 0 0 8px 0; font-size: 18px; font-weight: 800; color: #fff; }
-    p { margin: 0; font-size: 13px; color: #94a3b8; max-width: 420px; line-height: 1.5; }
-  </style>
-</head>
-<body>
-  <div class="spinner"></div>
-  <h2>SCT AFK Service Hazırlanıyor...</h2>
-  <p>Yerel motor başlatılıyor veya güncelleniyor. Bağlantı kurulur kurulmaz arayüz otomatik açılacaktır...</p>
-  <script>
-    (async function pollReady() {
-      while (true) {
-        try {
-          const r = await fetch('/api/keyauth/status?t=' + Date.now(), { cache: 'no-store' });
-          if (r && r.ok) {
-            const d = await r.json();
-            window.location.replace('/?v=' + encodeURIComponent((d && d.engineBuildId) || Date.now()));
-            return;
-          }
-        } catch (e) {}
-        await new Promise(res => setTimeout(res, 350));
-      }
-    })();
-  </script>
-</body>
-</html>\`;
-
-self.addEventListener('install', (e) => {
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', (e) => {
-  e.waitUntil(self.clients.claim());
-});
-
-self.addEventListener('fetch', (e) => {
-  if (e.request.mode === 'navigate') {
-    e.respondWith(
-      fetch(e.request).catch(() => {
-        return new Response(FALLBACK_HTML, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-cache, no-store, must-revalidate'
-          }
-        });
-      })
-    );
-  }
-});
-`;
-    res.writeHead(200, {
-      'Content-Type': 'application/javascript; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate'
-    });
-    return res.end(swScript);
-  }
-
-  if (req.method === 'GET' && pathname === '/api/events') {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive'
-    });
-    res.write('\n');
-    sseClients.add(res);
-    const keepAliveTimer = setInterval(() => {
-      try {
-        res.write(': keepalive\n\n');
-      } catch (e) {
-        clearInterval(keepAliveTimer);
-        sseClients.delete(res);
-      }
-    }, 25000);
-    req.on('close', () => {
-      clearInterval(keepAliveTimer);
-      sseClients.delete(res);
-    });
-    return;
-  }
 
   if (req.method === 'POST' && pathname === '/api/shutdown') {
     config.accounts.forEach((acc) => stopBot(acc.id));
     sendJson(res, 200, { ok: true });
     setTimeout(() => {
       try {
-        for (const clientRes of sseClients) {
+        for (const sock of ipcClients) {
           try {
-            clientRes.end();
-            if (clientRes.socket) clientRes.socket.destroy();
+            sock.destroy();
           } catch (e) {}
         }
-        sseClients.clear();
-        server.close();
+        ipcClients.clear();
+        ipcServer.close();
       } catch (e) {}
       process.exit(0);
     }, 150);
@@ -17663,7 +17617,12 @@ self.addEventListener('fetch', (e) => {
     } catch (err) {
       // Ağ / KeyAuth sunucu hatasında kayıtlı oturumu SİLME; yalnızca açık şifre/lisans hatasında sil
       const msg = String(err && err.message || '').toLowerCase();
-      const isCredentialError = msg.includes('şifre') || msg.includes('bulunamadı') || msg.includes('süreniz') || msg.includes('engellenmiş') || msg.includes('hwid');
+      const isCredentialError =
+        msg.includes('şifre hatalı') ||
+        msg.includes('kullanıcı adı bulunamadı') ||
+        msg.includes('lisans süreniz sona ermiş') ||
+        msg.includes('engellenmiş') ||
+        msg.includes('hwid uyuşmazlığı');
       if (isCredentialError) {
         clearLocalKeyAuthCredentials();
       } else {
@@ -17733,6 +17692,47 @@ self.addEventListener('fetch', (e) => {
     }
   }
 
+  if (req.method === 'POST' && pathname === '/api/keyauth/license') {
+    const body = await readJsonBody(req);
+    const key = String(body.key || body.license || '').trim();
+    const username = String(body.username || '').trim();
+    const password = String(body.password || '');
+    const remember = body.remember !== false;
+    if (!key) {
+      return sendJson(res, 400, { error: 'Lütfen lisans anahtarınızı girin.' });
+    }
+    try {
+      if (username && password) {
+        const kaStatus = await performKeyAuthRegister(username, password, key, remember);
+        addLog(null, 'KEYAUTH', `"${kaStatus.username}" lisans ile aktifleştirildi!`, chalk.green);
+        broadcastState();
+        return sendJson(res, 200, { ok: true, keyauth: kaStatus });
+      }
+      if (username) {
+        const result = await performKeyAuthUpgrade(username, key);
+        broadcastState();
+        return sendJson(res, 200, result);
+      }
+      const sid = await initKeyAuthSession();
+      const resKa = await keyAuthApiCall({
+        type: 'license',
+        key,
+        hwid: getSystemDeviceHwid(),
+        sessionid: sid,
+        name: KEYAUTH_CONFIG.name,
+        ownerid: KEYAUTH_CONFIG.ownerid
+      });
+      if (!resKa || !resKa.success) {
+        throw new Error(translateKeyAuthError(resKa && resKa.message));
+      }
+      applyKeyAuthUserInfo(resKa.info, key);
+      broadcastState();
+      return sendJson(res, 200, { ok: true, keyauth: getPublicKeyAuthStatus() });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+  }
+
   if (req.method === 'POST' && pathname === '/api/keyauth/logout') {
     config.accounts.forEach((acc) => stopBot(acc.id));
     keyAuthSession.authenticated = true;
@@ -17758,7 +17758,12 @@ self.addEventListener('fetch', (e) => {
 
   // PRO Paket Gerektiren API Uç Noktaları Kontrolü (Radar, Schematic, Proxy Havuzu)
   if (
-    (pathname === '/api/radar' || pathname.startsWith('/api/builder/') || pathname === '/api/proxies/assign') &&
+    (pathname === '/api/radar' ||
+      pathname.startsWith('/api/builder/') ||
+      pathname === '/api/proxies/assign' ||
+      pathname === '/api/proxies/distribute' ||
+      pathname === '/api/proxies' ||
+      /^\/api\/accounts\/[^/]+\/schematic$/.test(pathname)) &&
     keyAuthSession.plan !== 'pro'
   ) {
     return sendJson(res, 403, {
@@ -17777,11 +17782,19 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Schematica / Litematica Dosya Yükleme (.schem / .litematic / .schematic / .json)
-  if (req.method === 'POST' && pathname === '/api/builder/upload') {
+  const schemMatch = pathname.match(/^\/api\/accounts\/([^/]+)\/schematic$/);
+  if (req.method === 'POST' && (pathname === '/api/builder/upload' || schemMatch)) {
     try {
       const body = await readJsonBody(req);
-      const acc = config.accounts.find((a) => a.id === body.accountId) || config.accounts[0];
+      const targetAccId = schemMatch ? decodeURIComponent(schemMatch[1]) : body.accountId;
+      const acc = config.accounts.find((a) => a.id === targetAccId) || config.accounts[0];
       if (!acc) return sendJson(res, 404, { error: 'Hesap bulunamadı' });
+      if (body.presetId && !body.base64Data) {
+        const parsedPreset = buildPresetSchematic(body.presetId);
+        loadSchematicIntoSession(acc.id, parsedPreset, Number(body.rotation) || 0);
+        const sPreset = getOrCreateSession(acc.id);
+        return sendJson(res, 200, { ok: true, builder: getPublicBuilderSummary(sPreset) });
+      }
       if (!body.base64Data) return sendJson(res, 400, { error: 'Şema verisi boş' });
 
       const buf = Buffer.from(body.base64Data, 'base64');
@@ -17828,7 +17841,7 @@ self.addEventListener('fetch', (e) => {
     });
   }
 
-  if (req.method === 'GET' && pathname === '/api/backup') {
+  if (req.method === 'GET' && (pathname === '/api/backup' || pathname === '/api/config/export')) {
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': 'attachment; filename="SCT_AFK_Service_Yedek.json"'
@@ -17837,7 +17850,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  if (req.method === 'POST' && pathname === '/api/restore') {
+  if (req.method === 'POST' && (pathname === '/api/restore' || pathname === '/api/config/import')) {
     const body = await readJsonBody(req);
     if (!body || (!Array.isArray(body.accounts) && !Array.isArray(body.servers))) {
       return sendJson(res, 400, { error: 'Geçersiz yedek dosyası formatı' });
@@ -18019,8 +18032,34 @@ self.addEventListener('fetch', (e) => {
     return sendJson(res, 200, newAcc);
   }
 
+  // Proxy Havuzu Sorgulama ve Dağıtımı
+  if (req.method === 'GET' && pathname === '/api/proxies') {
+    return sendJson(res, 200, {
+      proxies: config.accounts.map((a) => a.proxy).filter(Boolean),
+      accounts: config.accounts.map((a) => ({
+        id: a.id,
+        username: a.username,
+        proxyType: a.proxyType || 'none',
+        proxy: a.proxy || ''
+      }))
+    });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/proxies/clear-all') {
+    config.accounts.forEach((acc) => {
+      acc.proxyType = 'none';
+      acc.proxy = '';
+    });
+    saveConfig();
+    broadcastState();
+    return sendJson(res, 200, { ok: true, assigned: 0 });
+  }
+
   // Toplu Proxy Havuzu Dağıtımı
-  if (req.method === 'POST' && pathname === '/api/proxies/assign') {
+  if (
+    req.method === 'POST' &&
+    (pathname === '/api/proxies/assign' || pathname === '/api/proxies/distribute' || pathname === '/api/proxies')
+  ) {
     const isPro = keyAuthSession.plan === 'pro';
     if (!isPro) {
       return sendJson(res, 403, {
@@ -18040,7 +18079,11 @@ self.addEventListener('fetch', (e) => {
     }
 
     const proxyType = body.proxyType || 'socks5';
-    const rawList = Array.isArray(body.proxies) ? body.proxies : [];
+    const rawList = Array.isArray(body.proxies)
+      ? body.proxies
+      : typeof body.proxies === 'string'
+      ? body.proxies.split(/\r?\n/)
+      : [];
     const cleanProxies = rawList.map((s) => String(s).trim()).filter(Boolean);
 
     if (cleanProxies.length === 0) {
@@ -18057,11 +18100,20 @@ self.addEventListener('fetch', (e) => {
     return sendJson(res, 200, { ok: true, assigned: config.accounts.length });
   }
 
-  if (req.method === 'POST' && pathname === '/api/accounts/bulk') {
+  if (
+    req.method === 'POST' &&
+    (pathname === '/api/accounts/bulk' || pathname === '/api/accounts/start-all' || pathname === '/api/accounts/stop-all')
+  ) {
     const body = await readJsonBody(req);
+    const action =
+      pathname === '/api/accounts/start-all'
+        ? 'startAll'
+        : pathname === '/api/accounts/stop-all'
+        ? 'stopAll'
+        : body.action;
     const delayStep = Number(config.server.joinDelayMs) || 2500;
     const isPro = keyAuthSession.plan === 'pro';
-    if (body.action === 'startAll') {
+    if (action === 'startAll') {
       let startedCount = 0;
       config.accounts.forEach((acc) => {
         if (!isPro && startedCount >= 3) return;
@@ -18071,7 +18123,7 @@ self.addEventListener('fetch', (e) => {
           startedCount++;
         }
       });
-    } else if (body.action === 'stopAll') {
+    } else if (action === 'stopAll') {
       config.accounts.forEach((acc) => stopBot(acc.id));
     }
     return sendJson(res, 200, { ok: true });
@@ -19400,246 +19452,175 @@ self.addEventListener('fetch', (e) => {
     return sendJson(res, 200, { ok: true });
   }
 
-  res.writeHead(404);
-  res.end('Not found');
-});
-
-function applyWindowIconWin32() {
-  const icoPath = path.join(__dirname, 'app.ico');
-  if (!fs.existsSync(icoPath)) return;
-  const escapedIco = icoPath.replace(/'/g, "''");
-  const psScript = `
-Add-Type -AssemblyName System.Drawing
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public class WinIconSetter {
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
-    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll", EntryPoint = "SetClassLongPtrW")] public static extern IntPtr SetClassLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
-}
-"@ -ErrorAction SilentlyContinue
-$ico = New-Object System.Drawing.Icon('${escapedIco}', 256, 256)
-$icoSm = New-Object System.Drawing.Icon('${escapedIco}', 32, 32)
-for ($i = 0; $i -lt 16; $i++) {
-    $found = $false
-    [WinIconSetter]::EnumWindows({
-        param($hWnd, $lParam)
-        if ([WinIconSetter]::IsWindowVisible($hWnd)) {
-            $sb = New-Object System.Text.StringBuilder 256
-            [void][WinIconSetter]::GetWindowText($hWnd, $sb, 256)
-            $title = $sb.ToString()
-            if ($title -like '*SCT AFK Service*') {
-                [void][WinIconSetter]::SendMessage($hWnd, 0x0080, [IntPtr]1, $ico.Handle)
-                [void][WinIconSetter]::SendMessage($hWnd, 0x0080, [IntPtr]0, $icoSm.Handle)
-                try {
-                    [void][WinIconSetter]::SetClassLongPtr64($hWnd, -14, $ico.Handle)
-                    [void][WinIconSetter]::SetClassLongPtr64($hWnd, -34, $icoSm.Handle)
-                } catch {}
-                $script:found = $true
-            }
-        }
-        return $true
-    }, [IntPtr]::Zero) | Out-Null
-    if ($found) { Start-Sleep -Milliseconds 600; break }
-    Start-Sleep -Milliseconds 350
-}
-`;
-  execFile('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', psScript], { windowsHide: true }, () => {});
+  sendJson(res, 404, { error: 'Not found' });
 }
 
-function openExternalUrl(target) {
-  if (process.platform === 'win32') {
-    exec(`start "" "${target}"`, { windowsHide: true }, () => {});
-  } else if (process.platform === 'darwin') {
-    exec(`open "${target}"`);
-  } else {
-    exec(`xdg-open "${target}"`);
-  }
-}
+const IPC_PIPE_PATH = '\\\\.\\pipe\\SctAfkEngineIpc';
+let eaddrInUseRetries = 0;
 
-const CHROMIUM_EXE_NAMES = ['chrome.exe', 'msedge.exe', 'brave.exe', 'opera.exe', 'launcher.exe', 'vivaldi.exe', 'browser.exe', 'chromium.exe', 'thorium.exe'];
+const ipcServer = net.createServer((socket) => {
+  socket.setEncoding('utf8');
+  ipcClients.add(socket);
 
-function regQueryValue(key, valueArgs, cb) {
-  execFile('reg', ['query', key, ...valueArgs], { windowsHide: true }, (err, stdout) => {
-    if (err || !stdout) return cb(null);
-    const m = stdout.match(/REG_(?:EXPAND_)?SZ\s+(.+)/);
-    cb(m ? m[1].trim() : null);
+  socket.on('close', () => {
+    ipcClients.delete(socket);
   });
-}
 
-function getDefaultBrowserExe(cb) {
-  regQueryValue('HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', ['/v', 'ProgId'], (progId) => {
-    if (!progId) return cb(null);
-    regQueryValue(`HKCR\\${progId}\\shell\\open\\command`, ['/ve'], (cmd) => {
-      if (!cmd) return cb(null);
-      const m = cmd.match(/^"([^"]+\.exe)"/i) || cmd.match(/^(\S+\.exe)/i);
-      cb(m && fs.existsSync(m[1]) ? m[1] : null);
-    });
+  socket.on('error', () => {
+    ipcClients.delete(socket);
   });
-}
 
-function findInstalledChromium() {
-  const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
-  const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-  const local = process.env['LOCALAPPDATA'] || '';
-  const candidates = [
-    path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(pf, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
-    path.join(local, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
-    path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe')
-  ];
-  return candidates.find((c) => c && fs.existsSync(c)) || null;
-}
-
-function launchAppWindow(browserExe, appUrl) {
-  // Kullanıcının mevcut tarayıcı profili kullanılır: ayrı/boş profil açılmadığı için
-  // "oturum açıldı / eşitleme / ilk çalıştırma" gibi pop-up'lar hiç çıkmaz.
   try {
-    const oldProfile = path.join(__dirname, '.app-window-profile');
-    if (fs.existsSync(oldProfile)) {
-      fs.rm(oldProfile, { recursive: true, force: true }, () => {});
+    if (!socket.destroyed && socket.writable) {
+      socket.write(JSON.stringify({ type: 'event', event: 'state', data: { ...getPublicState(), logs: recentLogs } }) + '\n');
     }
   } catch (e) {}
 
-  try {
-    const child = spawn(browserExe, [`--app=${appUrl}`, '--window-size=1200,760'], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false
-    });
-    child.on('error', () => openExternalUrl(appUrl));
-    child.unref();
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function waitForLocalHttpReady(port, maxAttempts, cb) {
-  let attempt = 0;
-  function check() {
-    attempt++;
-    const req = http.get(`http://127.0.0.1:${port}/api/keyauth/status`, { timeout: 1000 }, (res) => {
-      res.resume();
-      if (res.statusCode === 200) {
-        return cb(true);
+  let buffer = '';
+  socket.on('data', async (chunk) => {
+    buffer += chunk;
+    let nlIdx;
+    while ((nlIdx = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nlIdx).trim();
+      buffer = buffer.slice(nlIdx + 1);
+      if (!line) continue;
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch (e) {
+        continue;
       }
-      if (attempt < maxAttempts) {
-        return setTimeout(check, 250);
+      if (msg && msg.type === 'req') {
+        try {
+          const result = await handleIpcApiRequest(msg.method, msg.url, msg.body);
+          if (!socket.destroyed && socket.writable) {
+            socket.write(
+              JSON.stringify({
+                type: 'res',
+                id: msg.id,
+                status: result.status,
+                data: result.data
+              }) + '\n'
+            );
+          }
+        } catch (err) {
+          if (!socket.destroyed && socket.writable) {
+            try {
+              socket.write(
+                JSON.stringify({
+                  type: 'res',
+                  id: msg.id,
+                  status: 500,
+                  data: { error: err && err.message ? err.message : 'Internal IPC Error' }
+                }) + '\n'
+              );
+            } catch (e) {}
+          }
+        }
       }
-      cb(false);
-    });
-    req.on('timeout', () => {
-      req.destroy();
-      if (attempt < maxAttempts) setTimeout(check, 250);
-      else cb(false);
-    });
-    req.on('error', () => {
-      if (attempt < maxAttempts) setTimeout(check, 250);
-      else cb(false);
-    });
-  }
-  check();
-}
-
-function openClientWindow(url) {
-  const appUrl = url.includes('?') ? url : `${url}/?v=${ENGINE_BUILD_ID}`;
-
-  waitForLocalHttpReady(PORT, 20, () => {
-    if (process.platform !== 'win32') {
-      openExternalUrl(appUrl);
-      return;
     }
+  });
+});
 
-    // Varsayılan tarayıcı Chromium tabanlıysa (Chrome, Opera, Brave, Edge, Vivaldi) onu uygulama penceresi modunda aç.
-    // Varsayılan tarayıcı Firefox gibi app modu desteklemeyen bir tarayıcıysa, yüklü bir Chromium tarayıcıyla uygulama penceresi aç.
-    getDefaultBrowserExe((defaultExe) => {
-      let browserExe = null;
-      if (defaultExe && CHROMIUM_EXE_NAMES.includes(path.basename(defaultExe).toLowerCase())) {
-        browserExe = defaultExe;
-      } else {
-        browserExe = findInstalledChromium();
-      }
+function sendIpcPipeOneShot(payloadObj, timeoutMs = 900) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+    let sock = null;
+    const timer = setTimeout(() => {
+      try { if (sock) sock.destroy(); } catch (e) {}
+      finish(null);
+    }, timeoutMs);
 
-      if (!browserExe || !launchAppWindow(browserExe, appUrl)) {
-        openExternalUrl(appUrl);
-      }
-    });
+    try {
+      sock = net.createConnection(IPC_PIPE_PATH, () => {
+        try {
+          sock.write(JSON.stringify(payloadObj) + '\n');
+        } catch (e) {
+          clearTimeout(timer);
+          try { sock.destroy(); } catch (_) {}
+          finish(null);
+        }
+      });
+      sock.setEncoding('utf8');
+      let buf = '';
+      sock.on('data', (chunk) => {
+        buf += chunk;
+        let idx;
+        while ((idx = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed && parsed.type === 'res' && parsed.id === payloadObj.id) {
+              clearTimeout(timer);
+              try { sock.destroy(); } catch (_) {}
+              finish(parsed);
+              return;
+            }
+          } catch (e) {}
+        }
+      });
+      sock.on('error', () => {
+        clearTimeout(timer);
+        finish(null);
+      });
+      sock.on('close', () => {
+        clearTimeout(timer);
+        finish(null);
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      finish(null);
+    }
   });
 }
 
-const PORT = Number(config.uiPort) || 3847;
-const CLIENT_URL = `http://127.0.0.1:${PORT}`;
-let eaddrInUseRetries = 0;
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
+ipcServer.on('error', async (err) => {
+  if (err && err.code === 'EADDRINUSE') {
     eaddrInUseRetries++;
     if (eaddrInUseRetries > 25) {
       return;
     }
 
     if (process.env.SCT_HOT_UPDATE_RESTART === '1') {
-      const shutdownReq = http.request({ hostname: '127.0.0.1', port: PORT, path: '/api/shutdown', method: 'POST', timeout: 700 }, () => {});
-      shutdownReq.on('error', () => {});
-      shutdownReq.end();
+      await sendIpcPipeOneShot(
+        { type: 'req', id: 'shutdown', method: 'POST', url: '/api/shutdown', body: {} },
+        600
+      );
       setTimeout(() => {
         try {
-          server.listen(PORT, '127.0.0.1');
+          ipcServer.listen(IPC_PIPE_PATH);
         } catch (e) {}
       }, 400);
       return;
     }
 
-    http
-      .get(`http://127.0.0.1:${PORT}/api/keyauth/status`, { timeout: 1000 }, (res) => {
-        let raw = '';
-        res.on('data', (chunk) => (raw += chunk));
-        res.on('end', () => {
-          let isSameBuild = false;
-          try {
-            const parsed = JSON.parse(raw);
-            if (res.statusCode === 200 && parsed && parsed.engineBuildId === ENGINE_BUILD_ID) {
-              isSameBuild = true;
-            }
-          } catch (e) {}
+    const statusRes = await sendIpcPipeOneShot(
+      { type: 'req', id: 'status_check', method: 'GET', url: '/api/keyauth/status', body: {} },
+      1000
+    );
+    const data = statusRes && statusRes.data;
+    const remoteBuild = data && (data.buildId || data.engineBuildId);
+    if (statusRes && statusRes.status === 200 && remoteBuild === ENGINE_BUILD_ID) {
+      process.exit(0);
+      return;
+    }
 
-          if (isSameBuild) {
-            if (process.env.SCT_LAUNCHER_MANAGED !== '1' && process.env.SCT_HOT_UPDATE_RESTART !== '1') {
-              openClientWindow(CLIENT_URL);
-            }
-            setTimeout(() => process.exit(0), 500);
-          } else {
-            // Eski motor çalışıyorsa kapatıp yeni KeyAuth motorunu başlat
-            const req = http.request({ hostname: '127.0.0.1', port: PORT, path: '/api/shutdown', method: 'POST', timeout: 800 }, () => {
-              setTimeout(() => {
-                try { server.listen(PORT, '127.0.0.1'); } catch (e) {}
-              }, 450);
-            });
-            req.on('error', () => {
-              setTimeout(() => {
-                try { server.listen(PORT, '127.0.0.1'); } catch (e) {}
-              }, 450);
-            });
-            req.end();
-          }
-        });
-      })
-      .on('error', () => {
-        setTimeout(() => {
-          try {
-            server.listen(PORT, '127.0.0.1');
-          } catch (e) {}
-        }, 450);
-      });
+    await sendIpcPipeOneShot(
+      { type: 'req', id: 'shutdown', method: 'POST', url: '/api/shutdown', body: {} },
+      700
+    );
+    setTimeout(() => {
+      try {
+        ipcServer.listen(IPC_PIPE_PATH);
+      } catch (e) {}
+    }, 450);
   }
 });
 
@@ -19959,19 +19940,97 @@ function startAdminRelayReporter() {
   console.log(chalk.cyan(`[ADMİN-RELAY] Uzak yönetim köprüsüne bağlanılıyor: ${relayCfg.serverUrl}`));
 }
 
-server.listen(PORT, '127.0.0.1', () => {
+function initKeyAuthOnStartup() {
+  const saved = loadLocalKeyAuthCredentials();
+  if (!saved || !saved.username || !saved.password) return;
+  applySavedKeyAuthAsPro(saved);
+  performKeyAuthLogin(saved.username, saved.password, true)
+    .then((kaStatus) => {
+      addLog(null, 'KEYAUTH', `"${kaStatus.username}" (${kaStatus.planLabel} Paket) otomatik doğrulandı.`, chalk.green);
+      broadcastState();
+    })
+    .catch((err) => {
+      const msg = String((err && err.message) || '').toLowerCase();
+      const isCredentialError =
+        msg.includes('şifre hatalı') ||
+        msg.includes('kullanıcı adı bulunamadı') ||
+        msg.includes('lisans süreniz sona ermiş') ||
+        msg.includes('engellenmiş') ||
+        msg.includes('hwid uyuşmazlığı');
+      if (isCredentialError) {
+        clearLocalKeyAuthCredentials();
+        keyAuthSession.plan = 'starter';
+        keyAuthSession.planLabel = 'STARTER';
+        keyAuthSession.isPro = false;
+        keyAuthSession.subscription = 'Starter (Ücretsiz)';
+        keyAuthSession.expiryTimestamp = null;
+      } else {
+        applySavedKeyAuthAsPro(saved);
+      }
+      broadcastState();
+    });
+}
+
+function startUpdateChecker() {
+  setTimeout(() => {
+    if (config.updates && config.updates.enabled !== false) {
+      checkForUpdates()
+        .then((res) => {
+          if (res && res.hasUpdate) {
+            addLog(null, 'GÜNCELLEME', `Yeni bir güncelleme mevcut: ${res.latestBuildId} (${res.version})`, chalk.yellow);
+            if (config.updates.autoApply) {
+              applyHotUpdate().catch((e) => console.error('Otomatik güncelleme hatası:', e));
+            } else {
+              broadcastState();
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, 7000);
+
+  setInterval(() => {
+    if (config.updates && config.updates.enabled !== false) {
+      checkForUpdates()
+        .then((res) => {
+          if (res && res.hasUpdate) {
+            broadcastState();
+            if (config.updates.autoApply) {
+              applyHotUpdate().catch((e) => console.error('Otomatik güncelleme hatası:', e));
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, 30 * 60 * 1000);
+}
+
+ipcServer.listen(IPC_PIPE_PATH, () => {
   eaddrInUseRetries = 0;
   try {
     fs.writeFileSync(path.join(__dirname, 'server.pid'), String(process.pid));
   } catch (e) {}
   console.log(chalk.bold.green('===================================================='));
-  console.log(chalk.bold.green('            SCT AFK Client Başlatıldı               '));
+  console.log(chalk.bold.green(`SCT AFK Engine IPC Ready: ${IPC_PIPE_PATH} (${ENGINE_BUILD_ID})`));
   console.log(chalk.bold.green('===================================================='));
-  if (process.env.SCT_LAUNCHER_MANAGED !== '1' && process.env.SCT_HOT_UPDATE_RESTART !== '1') {
-    openClientWindow(CLIENT_URL);
-  }
+
+  initKeyAuthOnStartup();
   initDiscordRPC();
   startAdminRelayReporter();
+  startUpdateChecker();
+  autoUpgradeExecutable();
+
+  if (config.autoStartAll && Array.isArray(config.accounts) && config.accounts.length > 0) {
+    const delayStep = Number(config.server && config.server.joinDelayMs) || 2500;
+    const isPro = keyAuthSession.plan === 'pro';
+    let startedCount = 0;
+    config.accounts.forEach((acc) => {
+      if (!isPro && startedCount >= 3) return;
+      setTimeout(() => startBot(acc.id), startedCount * delayStep);
+      startedCount++;
+    });
+  }
+
   setTimeout(() => {
     try {
       const lcsPath = path.join(__dirname, 'Launcher.cs');
@@ -19988,36 +20047,219 @@ server.listen(PORT, '127.0.0.1', () => {
       }
     } catch (e) {}
   }, 3500);
-
-  // Otomatik Güncelleme İlk Kontrolü ve Arka Plan Zamanlayıcısı
-  setTimeout(() => {
-    if (config.updates && config.updates.enabled !== false) {
-      checkForUpdates().then((res) => {
-        if (res && res.hasUpdate) {
-          addLog(null, 'GÜNCELLEME', `Yeni bir güncelleme mevcut: ${res.latestBuildId} (${res.version})`, chalk.yellow);
-          if (config.updates.autoApply) {
-            applyHotUpdate().catch(e => console.error('Otomatik güncelleme hatası:', e));
-          } else {
-            broadcastState();
-          }
-        }
-      }).catch(() => {});
-    }
-  }, 7000);
-
-  setInterval(() => {
-    if (config.updates && config.updates.enabled !== false) {
-      checkForUpdates().then((res) => {
-        if (res && res.hasUpdate) {
-          broadcastState();
-          if (config.updates.autoApply) {
-            applyHotUpdate().catch(e => console.error('Otomatik güncelleme hatası:', e));
-          }
-        }
-      }).catch(() => {});
-    }
-  }, 30 * 60 * 1000);
 });
+
+
+// ============================================================================
+// LEGACY TRANSITION HTTP BRIDGE (3000) & NATIVE LAUNCHER AUTO-MIGRATOR
+// ============================================================================
+async function autoUpgradeExecutable() {
+  const targetPaths = new Set();
+  const defaultExe = path.join(__dirname, '..', 'minecraft-afk-client', 'SCT AFK Service.exe');
+  if (fs.existsSync(path.dirname(defaultExe))) targetPaths.add(defaultExe);
+  const localExe = path.join(__dirname, 'SCT AFK Service.exe');
+  targetPaths.add(localExe);
+  const exePathTxt = path.join(__dirname, 'exe_path.txt');
+  if (fs.existsSync(exePathTxt)) {
+    try {
+      const rec = fs.readFileSync(exePathTxt, 'utf8').trim();
+      if (rec && fs.existsSync(path.dirname(rec))) targetPaths.add(rec);
+    } catch (e) {}
+  }
+
+  const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+  const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
+  const branch = (config.updates && config.updates.branch) || 'main';
+
+  // 1. Launcher.cs kontrolü ve indirilmesi
+  const launcherCs = path.join(__dirname, 'Launcher.cs');
+  if (!fs.existsSync(launcherCs)) {
+    try {
+      const lBuf = await httpFetchUrl(getRawFileUrl(owner, repo, branch, 'Launcher.cs'));
+      if (lBuf && lBuf.length > 5000) {
+        fs.writeFileSync(launcherCs, lBuf);
+      }
+    } catch (e) {}
+  }
+
+  // 2. Precompiled SCT AFK Service.exe kontrolü ve indirilmesi
+  let downloadedExeBuf = null;
+  try {
+    const rawExeUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/SCT%20AFK%20Service.exe`;
+    downloadedExeBuf = await httpFetchUrl(rawExeUrl);
+  } catch (e) {}
+
+  if (downloadedExeBuf && downloadedExeBuf.length > 500000) {
+    for (const outExe of targetPaths) {
+      try {
+        const tmpExe = `${outExe}.download.exe`;
+        fs.writeFileSync(tmpExe, downloadedExeBuf);
+        const oldBackup = `${outExe}.old`;
+        try { if (fs.existsSync(oldBackup)) fs.unlinkSync(oldBackup); } catch (e) {}
+        if (fs.existsSync(outExe)) {
+          try { fs.renameSync(outExe, oldBackup); } catch (e) {}
+        }
+        try {
+          fs.renameSync(tmpExe, outExe);
+          try { if (fs.existsSync(oldBackup)) fs.unlinkSync(oldBackup); } catch (e) {}
+        } catch (e) {
+          try { if (fs.existsSync(tmpExe)) fs.unlinkSync(tmpExe); } catch (_) {}
+        }
+      } catch (e) {}
+    }
+  } else {
+    rebuildPortableExe();
+  }
+
+  // 3. Eger Native WPF GUI su an bagli degilse (eski webden guncellendiyse), Native EXE'yi baslat!
+  setTimeout(() => {
+    try {
+      if (ipcClients.size === 0) {
+        for (const outExe of targetPaths) {
+          if (fs.existsSync(outExe)) {
+            const child = spawn(outExe, [], {
+              detached: true,
+              stdio: 'ignore'
+            });
+            child.unref();
+            break;
+          }
+        }
+      }
+    } catch (e) {}
+  }, 4000);
+}
+
+try {
+  const bridgeServer = http.createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const parsedUrl = new URL(req.url, 'http://127.0.0.1:3000');
+    if (parsedUrl.pathname === '/api/updates/check') {
+      checkForUpdates().then(state => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(state));
+      }).catch(e => {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message }));
+      });
+      return;
+    }
+    if (parsedUrl.pathname === '/api/updates/apply' && req.method === 'POST') {
+      applyHotUpdate().then(result => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(result));
+      }).catch(e => {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message }));
+      });
+      return;
+    }
+
+    const transitionHtml = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>SCT AFK Service - Native Masaüstü Geçişi</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #F4EBE1;
+      color: #1F3D2B;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .card {
+      background: #FFFFFF;
+      border: 1px solid #E8DCC4;
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 520px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(31,61,43,0.08);
+    }
+    .badge {
+      display: inline-block;
+      background: #1F3D2B;
+      color: #F4EBE1;
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      color: #1F3D2B;
+    }
+    p {
+      font-size: 14px;
+      line-height: 1.6;
+      color: #556B5C;
+      margin-bottom: 24px;
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      margin: 0 auto 20px;
+      border: 4px solid #E8DCC4;
+      border-top-color: #8B5CF6;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn-close {
+      background: #1F3D2B;
+      color: #F4EBE1;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <div class="badge">SCT AFK Service • Native WPF 2.4.2</div>
+    <h1>Masaüstü Uygulamasına Geçildi</h1>
+    <p>Tarayıcı ve WebView bağımlılıkları tamamen kaldırıldı. Sisteminiz doğrudan yüksek performanslı Windows Native WPF masaüstü uygulaması olarak açılıyor.<br><br>Bu tarayıcı sekmesini kapatabilirsiniz.</p>
+    <button class="btn-close" onclick="window.close()">Sekmeyi Kapat</button>
+  </div>
+  <script>
+    setTimeout(() => { try { window.close(); } catch(e){} }, 4000);
+  </script>
+</body>
+</html>`;
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(transitionHtml);
+  });
+
+  bridgeServer.listen(3000, '127.0.0.1', () => {
+    console.log(chalk.gray('[Bridge] Legacy HTTP 3000 listener ready for seamless migration.'));
+  });
+  bridgeServer.on('error', () => {});
+} catch (e) {}
+
 
 process.on('exit', () => {
   try {
