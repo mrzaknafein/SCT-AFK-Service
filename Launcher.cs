@@ -6428,6 +6428,23 @@ namespace SctAfkService
 
         private void OnCheckUpdateClick(object sender, RoutedEventArgs e)
         {
+            if (!pipe.IsConnected)
+            {
+                ShowToast("Yerel motor bağlantısı yok — GitHub üzerinden otomatik motor onarımı başlatılıyor...", "info");
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    bool healed = Program.TrySelfHealEngineFromGitHub(runtimeDir);
+                    Dispatcher.BeginInvoke(new Action(delegate
+                    {
+                        if (healed)
+                            ShowToast("Motor GitHub üzerinden onarıldı ve yeniden başlatıldı!", "success");
+                        else
+                            ShowToast("Motor onarımı başarısız oldu. Lütfen internet bağlantınızı kontrol edin.", "error");
+                    }));
+                });
+                return;
+            }
+
             ShowToast("GitHub üzerinden güncellemeler denetleniyor...", "info");
             pipe.SendApiAsync("POST", "/api/updates/check", new Dictionary<string, object>(), delegate(int st, Dictionary<string, object> data)
             {
@@ -6452,6 +6469,23 @@ namespace SctAfkService
         {
             if (MessageBox.Show("Yeni sürüm indirilip motor yeniden başlatılacak. Devam edilsin mi?", "Güncellemeyi Yükle", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
                 return;
+
+            if (!pipe.IsConnected)
+            {
+                ShowToast("Doğrudan GitHub üzerinden motor güncelleniyor...", "info");
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    bool healed = Program.TrySelfHealEngineFromGitHub(runtimeDir);
+                    Dispatcher.BeginInvoke(new Action(delegate
+                    {
+                        if (healed)
+                            ShowToast("Motor başarıyla güncellendi ve başlatıldı!", "success");
+                        else
+                            ShowToast("Güncelleme indirilemedi.", "error");
+                    }));
+                });
+                return;
+            }
 
             ShowToast("Güncelleme indiriliyor, lütfen bekleyin...", "info");
             pipe.SendApiAsync("POST", "/api/updates/apply", new Dictionary<string, object>(), delegate(int st, Dictionary<string, object> data)
@@ -6726,7 +6760,7 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_engine_restore_v82";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_self_heal_v83";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -6784,7 +6818,7 @@ namespace SctAfkService
                         string diskText = File.ReadAllText(outputPath, Encoding.UTF8);
                         Match m = Regex.Match(diskText, @"const\s+ENGINE_BUILD_ID\s*=\s*'([^']+)'");
                         string diskBuildId = m.Success ? m.Groups[1].Value : "";
-                        bool hasPipeIpc = diskText.IndexOf("SctAfkEngineIpc", StringComparison.Ordinal) >= 0;
+                        bool hasPipeIpc = diskText.IndexOf("ipcServer.listen(IPC_PIPE_PATH", StringComparison.Ordinal) >= 0 && diskText.Length > 500000;
                         if (hasPipeIpc && !string.IsNullOrEmpty(diskBuildId) &&
                             (string.Equals(diskBuildId, CURRENT_ENGINE_BUILD_ID, StringComparison.OrdinalIgnoreCase) ||
                              IsBuildIdNewer(diskBuildId, CURRENT_ENGINE_BUILD_ID)))
@@ -7381,8 +7415,54 @@ namespace SctAfkService
                     catch { }
                     try { File.Delete(pidPath); } catch { }
                 }
+
+                // Also send shutdown to legacy HTTP port 3847 in case an orphan v80/v81 node process is holding it without server.pid
+                try
+                {
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:3847/api/shutdown");
+                    req.Method = "POST";
+                    req.Timeout = 700;
+                    req.ContentLength = 0;
+                    using (WebResponse resp = req.GetResponse()) { }
+                }
+                catch { }
             }
             catch { }
+        }
+
+        public static bool TrySelfHealEngineFromGitHub(string runtimeDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(runtimeDir)) runtimeDir = GetRuntimeDirectory();
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                string rawUrl = "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/index.js?t=" + DateTime.UtcNow.Ticks;
+                byte[] downloaded;
+                using (WebClient wc = new WebClient())
+                {
+                    wc.Headers.Add("User-Agent", "SCT-AFK-SelfHeal/1.0");
+                    wc.Headers.Add("Cache-Control", "no-cache");
+                    downloaded = wc.DownloadData(rawUrl);
+                }
+                if (downloaded == null || downloaded.Length < 500000) return false;
+                string jsText = Encoding.UTF8.GetString(downloaded);
+                if (jsText.IndexOf("ipcServer.listen(IPC_PIPE_PATH", StringComparison.Ordinal) < 0) return false;
+
+                KillStaleInstances(runtimeDir);
+                Thread.Sleep(350);
+
+                string targetJs = System.IO.Path.Combine(runtimeDir, "index.js");
+                File.WriteAllBytes(targetJs, downloaded);
+
+                string nodeExe = EnsureNodeInstalled();
+                if (!string.IsNullOrEmpty(nodeExe))
+                {
+                    StartHiddenServer(nodeExe, runtimeDir);
+                    return SctPipeClient.WaitForEnginePipeReady(12000);
+                }
+            }
+            catch { }
+            return false;
         }
 
         [STAThread]
@@ -7497,7 +7577,22 @@ namespace SctAfkService
             else
             {
                 server = StartHiddenServer(nodeExe, runtimeDir);
-                SctPipeClient.WaitForEnginePipeReady(18000);
+                if (!SctPipeClient.WaitForEnginePipeReady(12000))
+                {
+                    if (TrySelfHealEngineFromGitHub(runtimeDir))
+                    {
+                        try
+                        {
+                            string pidFile = System.IO.Path.Combine(runtimeDir, "server.pid");
+                            int healedPid;
+                            if (File.Exists(pidFile) && int.TryParse(File.ReadAllText(pidFile).Trim(), out healedPid))
+                            {
+                                server = Process.GetProcessById(healedPid);
+                            }
+                        }
+                        catch { }
+                    }
+                }
             }
 
             WinForms.Application.Run(new SctTrayContext(runtimeDir, nodeExe, server));
