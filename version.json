@@ -1,9 +1,9 @@
 {
-  "version": "2.4.3",
-  "buildId": "20261107_mc_inventory_skin_v81",
-  "releaseDate": "2026-11-06T21:09:20.633Z",
-  "notes": "v81 Sürümü: Gerçek Minecraft 9x4 Envanter Izgarası ve Dokuları, mc-heads Bot Oyuncu Kafa Avatarları ve Konsol Sohbet Metin Onarımı.",
-  "releaseNotes": "v81 Sürümü: Gerçek Minecraft 9x4 Envanter Izgarası ve Dokuları, mc-heads Bot Oyuncu Kafa Avatarları ve Konsol Sohbet Metin Onarımı.",
+  "version": "2.4.4",
+  "buildId": "20261107_engine_restore_v82",
+  "releaseDate": "2026-11-06T21:56:42.166Z",
+  "notes": "v82: Tam bot motoru geri yüklendi (butonlar/IPC onarımı), Minecraft envanter, skin head ve sohbet konsolu.",
+  "releaseNotes": "v82: Tam bot motoru geri yüklendi (butonlar/IPC onarımı), Minecraft envanter, skin head ve sohbet konsolu.",
   "files": {
     "index.js": "https://raw.githubusercontent.com/{OWNER}/{REPO}/main/index.js",
     "Launcher.cs": "https://raw.githubusercontent.com/{OWNER}/{REPO}/main/Launcher.cs",
