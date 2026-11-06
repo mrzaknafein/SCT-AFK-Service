@@ -1,95 +1,98 @@
-# 🛡️ SCT AFK SERVICE - GELİŞTİRİCİ VE ANTIGRAVITY REHBERİ (RULES.md)
+# 🛡️ SCT AFK SERVICE - GELİŞTİRİCİ VE ANTIGRAVITY / YAPAY ZEKA ASİSTAN REHBERİ (RULES.md)
 
-Bu belge, SCT AFK Service projesinde geliştirme yapan tüm geliştiriciler (mrzaknafein, kheromieallah) ve Google Antigravity yapay zeka asistanları için **bağlayıcı kuralları ve mimari standartları** içerir. Projede herhangi bir değişiklik yapmadan önce bu kurallara uyulmalıdır.
-
----
-
-## 📁 1. Proje Mimarisi ve Dizin Yapısı
-
-* **`.sct-afk-engine/`**: Mineflayer tabanlı Minecraft bot motoru, KeyAuth lisanslama ve yerel Web arayüzü (`http://127.0.0.1:3847`).
-* **`sct-admin-relay/`**: VPS üzerinde 7/24 çalışan merkezi filo yönetimi, telemetri ve uzaktan komut köprü sunucusu (`Port 4890`, Canlı VPS: `http://148.135.181.63:4890`).
-* **`sct-admin-app/`**: Geliştirici/Yönetici için bağımsız Windows Masaüstü uygulaması (`SCT Admin Panel.exe`, C# Native Launcher + Dahili Web Arayüzü).
-* **`minecraft-afk-client/`**: Kullanıcılara dağıtılan Windows `.exe` dosyaları, kurulum sihirbazı ve GitHub dağıtım deposu (`GITHUB_YUKLENECEKLER/`).
+> **DİKKAT (TÜM GELİŞTİRİCİLER & YAPAY ZEKA ASİSTANLARI İÇİN BAĞLAYICIDIR):**  
+> Bu belge; SCT AFK Service projesinde geliştirme yapan tüm ekip üyeleri (`mrzaknafein`, `kheromieallah`) ve projede kod yazan tüm **Yapay Zeka Asistanları (Google Antigravity, Cursor, Copilot vb.)** için **kesin ve bağlayıcı mimari standartları** içerir. Projede geliştirme yapmadan önce bu kuralları okumak ve harfiyen uygulamak zorunludur.
 
 ---
 
-## ⚠️ 2. Vulcan Anti-Cheat & Hareket Kuralları (KESİNLİKLE İHLAL EDİLEMEZ)
+## 🚀 1. ÖNEMLİ MİMARİ DEVRİM: 100% NATIVE WPF MASAÜSTÜ SİSTEMİ (v2.4.2 / v80+)
 
-Sunuculardaki (Minertown vb.) Vulcan anti-cheat sistemine yakalanmamak için aşağıdaki kurallar testlerle doğrulanmıştır ve **asla değiştirilmemelidir**:
+Proje, **20261106_native_wpf_gui_v80** sürümü itibarıyla tarayıcı, WebView2, Microsoft Edge ve HTML/CSS sarmalayıcılarından **tamamen arındırılmıştır**.
 
-1. **Blok Koyma Gecikmesi (Auto-Builder Delay):**
-   * Blok koyma gecikmesi ASLA **250ms'nin altına indirilmemelidir**!
-   * Güvenli taban aralık: **260ms - 315ms** arasındadır.
-   * *Neden:* 200ms ve altı hızlar Vulcan FastPlace (<4 tick) bayrağı üretir ve bot anında kicklenir (`[Vulcan] Unfair Advantage`).
-2. **Sprint (Koşma) Yasağı:**
-   * Otomatik inşaat (Auto-Builder) modunda ve blok yerleştirirken/kazarken `sprint: true` yapılmamalıdır (`bot.setControlState('sprint', false)`).
-   * *Neden:* Blok koyarken sprint atmak Vulcan Scaffold Type G bayrağını tetikler.
-3. **Ada Boşluk & Kenar Kontrolü (Sneak):**
-   * Botlar yalnızca fiziksel olarak ada kenarına yaklaştığında (boşluğa mesafe `< 0.22m`) sneak yapmalıdır (`isNearIslandEdge`).
-   * Düz yolda yürürken veya tarla modlarında botlar gereksiz yere sneak kilidine alınmamalıdır.
-4. **Pencere Açıkken Hareket Yasağı (InventoryMove):**
-   * Sandık, fıçı veya `/craft` menüsü açıkken (`bot.currentWindow`) bot kesinlikle hareket ettirilmemelidir. Pencere kapatıldıktan sonra yürüyüş başlatılmalıdır.
-5. **Stabil Yedek Koruması:**
-   * `.sct-afk-engine/index.js.v38_stable_backup` dosyası her zaman en güvenilir temel sürümdür. Bu dosya asla silinmemeli veya değiştirilmemelidir.
+### ⚠️ Asla Geri Dönülmeyecek Katı Kurallar:
+1. **HTML / WebView / Edge YASAĞI:**
+   * Kullanıcı arayüzü (UI) artık bir web sayfası değildir. Projeye kesinlikle WebView2, Chromium, iframe, Electron veya Edge tabanlı tarayıcı penceresi eklenmeyecektir.
+2. **Kullanıcı Arayüzü (UI) Yeri: `Launcher.cs` (C# Native WPF):**
+   * Tüm ekranlar, butonlar, istatistik kartları, hesap listeleri, ayarlar sekmesi ve konsol logları doğrudan `Launcher.cs` içerisinde **Windows Presentation Foundation (WPF)** bileşenleri (`Window`, `Grid`, `StackPanel`, `Border`, `ScrollViewer`, `TextBlock`, `TextBox`, `Button`) ile saf C# kodundan üretilmektedir (XAML dosyası bile gerekmez, tek dosyada gömülüdür).
+3. **IPC İletişim Protokolü: Windows Named Pipe:**
+   * C# WPF Arayüzü (`Launcher.cs`) ile Node.js Mineflayer Motoru (`index.js`) arasındaki haberleşme **KESİNLİKLE HTTP veya WebSocket DEĞİLDİR**.
+   * İletişim, Windows çekirdek seviyesinde ultra hızlı çalışan yerel **Named Pipe** üzerinden gerçekleşir:
+     `\\.\pipe\SctAfkEngineIpc`
+   * C# tarafında `SctPipeClient`, Node.js tarafında `ipcServer` (net.createServer) kullanılır.
+   * Mesaj formatı: JSON satırları (`\n` ile ayrılmış JSON payload: `req`, `res`, `event`).
 
 ---
 
-## 🌐 3. Merkezi Telemetri & VPS Admin Protokolü
+## 🎨 2. ARAYÜZ TASARIMI VE RENK PALETİ STANDARTLARI (PREMIUM EDITORIAL)
 
-* **Canlı VPS Relay Adresi:** `http://148.135.181.63:4890` (Port: `4890`)
-* **İstemci Yetki Anahtarı:** `SCT_CLIENT_RELAY_KEY_2026`
-* **Admin Master Şifresi:** `SCT_ADMIN_MASTER_2026!#`
-* **İstemci Telemetri Döngüsü:**
-  * İstemciler her 4 saniyede bir `startAdminRelayReporter()` üzerinden VPS'e heartbeat gönderir.
-  * İstemci `config.json` içinde `127.0.0.1` yazsa bile `DEFAULT_MASTER_RELAY_URL` doğrudan VPS IP'sine yönlendirir.
-* **Desteklenen Uzak Komutlar:**
-  * `restart_app`: İstemciyi arka planda temizce kapatıp yeniden başlatır.
-  * `stop_all` / `start_all`: Tüm botları durdurur veya sırayla başlatır.
-  * `stop_bot` / `start_bot`: Belirli bir botu durdurur veya başlatır.
-  * `send_chat`: Seçilen bota `/is`, `/spawn`, `/sat hepsi` vb. komutları gönderir.
-  * `broadcast`: Kullanıcının ekranına Cyberpunk temalı neon pop-up (`#adminBroadcastModal`) açar ve ses çalar.
-  * `request_logs`: İstemcinin son 60 terminal log satırını admin paneline akıtır.
+Tüm yeni arayüz geliştirmelerinde (yeni butonlar, sekmeler, diyaloglar veya modallar) **aşağıdaki resmi renk paleti ve tasarım kuralları** kullanılmalıdır:
 
----
+| Renk Adı | Hex Kodu | Kullanım Alanı |
+| :--- | :--- | :--- |
+| **Pencere Arka Planı** | `#FFF2EAE0` / `#FFF5ECE3` | Ana pencere zemini, sıcak kum/bej lüks doku |
+| **Kart Zeminleri (Card BG)** | `#FFFFFFFF` | İçerik kartları, kutular, panel gövdeleri |
+| **Kart Kenarlığı (Border)** | `#FFE8DCC4` / `#FFD6C5A9` | Kart sınırları, zarif çerçeveler |
+| **Forest Green (Ana Renk)** | `#FF1F3D2B` | Birincil butonlar, başlıklar, aktif sekmeler, vurgular |
+| **Sand Beige (İkincil Renk)**| `#FFE8DCC4` | İkincil butonlar, pasif rozetler, hafif zeminler |
+| **Electric Purple (Aksan)** | `#FF8B5CF6` | Pro rozetleri, özel durumlar, canlı aksanlar |
+| **Başlık & Metin (Text Dark)**| `#FF1F3D2B` / `#FF14261B` | Okunabilir ana metinler, başlıklar |
+| **Açıklama Metni (Muted)** | `#FF556B5C` / `#FF6F7E74` | Alt açıklamalar, sayaçlar, pasif etiketler |
 
-## 📦 4. Sürüm Yönetimi ve GitHub Dağıtım Kuralları (DOĞRUDAN MAIN DAĞITIMI)
-
-İstemciler güncellemeleri GitHub (`mrzaknafein/SCT-AFK-Service`) **`main`** dalı üzerinden otomatik olarak indirir. Dağıtıma güncelleme çıkarırken:
-
-1. `.sct-afk-engine/index.js` dosyasının 32. satırındaki `ENGINE_BUILD_ID` bir üst sürüme güncellenmelidir (örn: `..._v67`).
-2. `version.json` dosyasındaki `buildId` ve `version` birebir aynı yapım kimliğiyle güncellenmelidir.
-3. **KRİTİK:** `index.js` içindeki `ENGINE_BUILD_ID` ile `version.json` içindeki `buildId` **BİREBİR AYNI OLMALIDIR**. Aksi halde istemcilerin yerleşik güvenlik kontrolü güncellemeyi iptal eder!
-4. **DOĞRUDAN DAĞITIM KURALI:** Tüm değişiklikler test edildikten sonra **doğrudan `main` dalına** push edilmelidir. Kodlar `dev` dalında bekletilmez; doğrudan `main` üzerinden dağıtıma çıkar.
+### Tasarım Kuralları:
+* **Yuvarlak Logo ve Avatarlar:** Uygulama içindeki tüm logo, resim ve kullanıcı avatarları tam yuvarlak (circular) veya yumuşatılmış `CornerRadius(12-16)` kenarlı olmalıdır. Köşeli, kaba dikdörtgen resimler yasaktır.
+* **Kullanıcıdan Gizlenen Dahili Ayarlar:** GitHub repo adı, token veya dal seçimi gibi dahili teknik ayarlar son kullanıcıya gösterilmez (`Settings` sekmesinde gizli tutulur).
 
 ---
 
-## 🛠️ 5. Windows EXE Derleme Standartları
+## 📁 3. Dizin Yapısı ve Dosya Sorumlulukları
 
-Windows kullanıcıları için EXE'ler harici Node.js veya Electron kurulumu gerektirmeden bağımsız (portable) çalışır:
-
-* **SCT AFK Service.exe Derleme:**
-  ```powershell
-  Set-Location "C:\...\.sct-afk-engine"
-  & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /out:"..\minecraft-afk-client\SCT AFK Service.exe" /win32icon:app.ico /res:package.json,sct.package.json /res:index.js,sct.index.js /res:public\index.html,sct.index.html /res:public\logo.jpg,sct.logo.jpg /res:config.json,sct.config.json /res:Launcher.cs,sct.Launcher.cs /res:app.ico,sct.app.ico Launcher.cs
-  ```
-
-* **SCT Admin Panel.exe Derleme:**
-  ```powershell
-  Set-Location "C:\...\sct-admin-app"
-  powershell -ExecutionPolicy Bypass -File "build_admin_exe.ps1"
-  ```
+* **`.sct-afk-engine/index.js`**: Mineflayer tabanlı Minecraft bot motoru, KeyAuth lisanslama, otomasyonlar (Auto-Spawner, Auto-Builder, Auto-Sell) ve Named Pipe IPC sunucusu.
+* **`.sct-afk-engine/Launcher.cs`**: 100% Native WPF masaüstü arayüzü, sistem tepsisi (system tray), ses sentezleyici ve IPC istemcisi.
+* **`minecraft-afk-client/SCT AFK Service.exe`**: C# derleyicisi (`csc.exe`) ile tek parça haline getirilmiş, sıfır bağımlılıklı taşınabilir (portable) Windows uygulaması.
+* **`sct-admin-relay/`**: VPS üzerinde 7/24 çalışan merkezi filo yöneticisi (`Port 4890`, Canlı VPS: `http://148.135.181.63:4890`).
+* **`sct-admin-app/`**: Yönetici için bağımsız Windows Masaüstü uygulaması (`SCT Admin Panel.exe`, C# Native WPF).
 
 ---
 
-## 👥 6. Çoklu Geliştirici (Ortak Çalışma) & Doğrudan Dağıtım Kuralları
+## ⚠️ 4. Vulcan Anti-Cheat & Hareket Kuralları (KESİNLİKLE DEĞİŞTİRİLEMEZ)
 
-1. **Tek ve Doğrudan Dağıtım Dalı (`main`):**
-   * **Tüm geliştirmeler (yeni özellikler, iyileştirmeler ve hata düzeltmeleri) DOĞRUDAN `main` dalına commit/push edilir.**
-   * `dev` dalı artık bekleme veya geliştirme havuzu olarak KULLANILMAZ; geliştirmeler `dev`e atılmaz.
-   * Arkadaşınızın (kheromieallah) veya sizin yapacağınız geliştirmeler doğrudan `main`e gönderildiği an, sahadaki tüm kullanıcılar ve botlar yeni sürümü anında alıp dağıtımdan çalıştırır.
-2. **Sürüm Kimliği (Build ID) Eşitleme Zorunluluğu:**
-   * Yapılan her geliştirmede `index.js` (Satır 32) ve `version.json` içindeki `buildId` artırılıp eşitlenerek `main`e pushlanmalıdır.
+Sunuculardaki (Minertown vb.) Vulcan anti-cheat sistemine yakalanmamak için aşağıdaki kurallar zorunludur:
+1. **Blok Koyma Gecikmesi (Auto-Builder Delay):** ASLA **250ms'nin altına indirilmemelidir**! Güvenli aralık: **260ms - 315ms**. (200ms altı Vulcan FastPlace bayrağı üretir).
+2. **Sprint (Koşma) Yasağı:** İnşaat, blok koyma veya kazma sırasında bot sprint atmamalıdır (`bot.setControlState('sprint', false)`).
+3. **Pencere Açıkken Hareket Yasağı (InventoryMove):** Sandık, fıçı veya `/craft` açıkken bot yürütülmemelidir.
+4. **Stabil Yedek Koruması:** `index.js.v38_stable_backup` dosyası her zaman en güvenilir temel sürümdür, silinmemelidir.
+
+---
+
+## 🔄 5. Sürüm Yönetimi, GitHub Dağıtımı & Çift Dal Senkronizasyonu (`main` & `dev`)
+
+Geliştiriciler ister `dev` ister `main` dalına push atsın, aşağıdaki sürüm kurallarına uyulmalıdır:
+
+1. **Sürüm Kimliği (Build ID) Eşitleme Kuralı:**
+   * `.sct-afk-engine/index.js` içindeki `const ENGINE_BUILD_ID = '...';` (Örn: `20261106_native_wpf_gui_v80`)
+   * `.sct-afk-engine/Launcher.cs` içindeki `public const string CURRENT_ENGINE_BUILD_ID = "...";`
+   * `version.json` içindeki `buildId`
+   Bu 3 değer **BİREBİR AYNI OLMALIDIR**.
+2. **Dağıtım Dosyaları:**
+   * `version.json` içindeki `files` haritasında hem yeni sistem (`Launcher.cs`, `SCT AFK Service.exe`), hem de eski istemcilerin geçişi için (`index.js`, `public/index.html`) tanımlı olmalıdır.
+3. **Çift Dal Uyumu:**
+   * `dev` dalında test edilen özellikler tamamlandığında `main` dalına da aktarılmalı veya `deploy_v80_native_wpf.js` benzeri bir script ile her iki dal da senkronize tutulmalıdır.
+4. **Taşınabilir EXE Derleme Komutu:**
+   ```powershell
+   $fw = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
+   $wpf = "$fw\WPF"
+   & "$fw\csc.exe" /nologo /target:winexe /optimize+ /out:"..\minecraft-afk-client\SCT AFK Service.exe" /win32icon:app.ico /r:"$wpf\PresentationFramework.dll" /r:"$wpf\PresentationCore.dll" /r:"$wpf\WindowsBase.dll" /r:"$fw\System.Xaml.dll" /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /res:package.json,sct.package.json /res:index.js,sct.index.js /res:public\logo.jpg,sct.logo.jpg /res:config.json,sct.config.json /res:Launcher.cs,sct.Launcher.cs /res:app.ico,sct.app.ico Launcher.cs
+   ```
+
+---
+
+## 🤝 6. Diğer Geliştirici & Agent İle Ortak Çalışma İlkeleri
+
+1. **Yeni Bir Bot Özelliği Eklerken:**
+   * Mantığı `index.js` içerisine yazın.
+   * Gerekli ayar veya komutları `config.json` şemasına ekleyin.
+   * WPF Arayüzünde buton veya ayar gerekiyorsa, bunu `Launcher.cs` içine ekleyin ve `SctPipeClient.SendIpcRequest(...)` ile motora bildirin.
+2. **Asla Yerel Port 3000 Web UI Yazmayın:**
+   * Yeni bir web sayfası, html bileşeni veya WebView yazmayın. Tüm UI bileşenleri C# WPF ile oluşturulur.
 3. **Hesap İsimleri:**
-   * Test ederken her geliştirici farklı bot hesap adları (örn: `zaknafein_dev1`, `khero_dev1`) kullanmalıdır. Aynı isimle giriş yapılırsa sunucu diğer geliştiricinin botunu oyundan kickler.
-4. **VPS Yönetimi:**
-   * Her iki geliştirici de kendi bilgisayarında `SCT Admin Panel.exe` açarak aynı VPS (`148.135.181.63:4890`) üzerinden tüm filoyu ortaklaşa canlı takip edebilir.
+   * Test yaparken `zaknafein_dev1`, `khero_dev1` gibi ayrı hesap adları kullanın.
