@@ -29,7 +29,8 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_hotupdate_exe_fix_v86';
+const ENGINE_BUILD_ID = '20261107_modular_ui_chat_fix_v87';
+const ENGINE_VERSION = '2.4.9';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
@@ -877,8 +878,9 @@ async function checkForUpdates() {
       lastChecked: Date.now(),
       hasUpdate,
       latestBuildId: remoteBuildId,
-      version: manifest.version || '2.2.0',
-      releaseNotes: manifest.releaseNotes || '',
+      version: manifest.version || ENGINE_VERSION,
+      releaseNotes: manifest.notes || manifest.releaseNotes || '',
+      changelog: Array.isArray(manifest.changelog) ? manifest.changelog : [],
       error: null,
       manifestUrl
     };
@@ -19445,20 +19447,61 @@ async function routeIpcRequest(req, res) {
           broadcastState();
           return sendJson(res, 200, { ok: true });
         }
+        case 'manualAuth': {
+          const authType = body && body.type === 'register' ? 'register' : 'login';
+          if (!s.bot || s.status !== 'online') {
+            return sendJson(res, 400, { error: 'Bu işlem için botun çevrimiçi olması gerekir.' });
+          }
+          if (!acc.password) {
+            return sendJson(res, 400, { error: 'Bu hesap için kayıtlı şifre bulunamadı. Lütfen hesap ayarlarından şifre ekleyin.' });
+          }
+          const cmd = authType === 'register'
+            ? buildSmartRegisterCommand('', acc)
+            : ((config.autoAuth && config.autoAuth.loginCommand) || '/login {password}')
+                .replace(/\{password\}/g, acc.password)
+                .replace(/\{email\}/g, acc.email || '');
+          addLog(accId, 'SEN', cmd, chalk.cyanBright);
+          if (s.bot._client && s.bot._client.state === 'play') {
+            try { s.bot.chat(cmd); } catch (e) { sendChatSafely(accId, cmd, 0); }
+          } else {
+            sendChatSafely(accId, cmd, 0);
+          }
+          break;
+        }
         case 'login':
-          if (s.bot && acc.password) {
+          if (!s.bot || s.status !== 'online') {
+            return sendJson(res, 400, { error: 'Giriş komutu göndermek için botun çevrimiçi olması gerekir.' });
+          }
+          if (!acc.password) {
+            return sendJson(res, 400, { error: 'Bu hesap için kayıtlı şifre bulunamadı.' });
+          }
+          {
             const cmd = ((config.autoAuth && config.autoAuth.loginCommand) || '/login {password}')
               .replace(/\{password\}/g, acc.password)
               .replace(/\{email\}/g, acc.email || '');
             addLog(accId, 'SEN', cmd, chalk.cyanBright);
-            s.bot.chat(cmd);
+            if (s.bot._client && s.bot._client.state === 'play') {
+              try { s.bot.chat(cmd); } catch (e) { sendChatSafely(accId, cmd, 0); }
+            } else {
+              sendChatSafely(accId, cmd, 0);
+            }
           }
           break;
         case 'register':
-          if (s.bot && acc.password) {
+          if (!s.bot || s.status !== 'online') {
+            return sendJson(res, 400, { error: 'Kayıt komutu göndermek için botun çevrimiçi olması gerekir.' });
+          }
+          if (!acc.password) {
+            return sendJson(res, 400, { error: 'Bu hesap için kayıtlı şifre bulunamadı.' });
+          }
+          {
             const cmd = buildSmartRegisterCommand('', acc);
             addLog(accId, 'SEN', cmd, chalk.cyanBright);
-            s.bot.chat(cmd);
+            if (s.bot._client && s.bot._client.state === 'play') {
+              try { s.bot.chat(cmd); } catch (e) { sendChatSafely(accId, cmd, 0); }
+            } else {
+              sendChatSafely(accId, cmd, 0);
+            }
           }
           break;
       }
@@ -19584,24 +19627,54 @@ async function routeIpcRequest(req, res) {
     const msg = String(body.message || '').trim();
     if (!msg) return sendJson(res, 400, { error: 'Boş mesaj' });
 
+    const dispatchChatToBot = (accId, sessionObj) => {
+      if (!sessionObj || !sessionObj.bot || sessionObj.status !== 'online') return false;
+      if (sessionObj.bot._client && sessionObj.bot._client.state === 'play') {
+        try {
+          sessionObj.bot.chat(msg);
+        } catch (err) {
+          sendChatSafely(accId, msg, 0);
+        }
+      } else {
+        sendChatSafely(accId, msg, 0);
+      }
+      addLog(accId, 'SEN', msg, chalk.cyanBright);
+      return true;
+    };
+
     if (body.accountId === 'all') {
+      let sentCount = 0;
       for (const acc of config.accounts) {
         const s = sessions.get(acc.id);
-        if (s && s.bot && s.status === 'online') {
-          s.bot.chat(msg);
-          addLog(acc.id, 'SEN', msg, chalk.cyanBright);
+        if (dispatchChatToBot(acc.id, s)) {
+          sentCount++;
         }
       }
+      if (sentCount === 0) {
+        return sendJson(res, 400, { ok: false, error: 'Aktif çevrimiçi bot bulunamadı. Lütfen önce bir bot başlatın.' });
+      }
+      return sendJson(res, 200, { ok: true, sentCount });
     } else {
-      const s = sessions.get(body.accountId);
+      let targetAccId = body.accountId;
+      let s = targetAccId ? sessions.get(targetAccId) : null;
+      if (!s || !s.bot || s.status !== 'online') {
+        for (const acc of config.accounts) {
+          const cand = sessions.get(acc.id);
+          if (cand && cand.bot && cand.status === 'online') {
+            targetAccId = acc.id;
+            s = cand;
+            break;
+          }
+        }
+      }
       if (s && s.bot && s.status === 'online') {
-        s.bot.chat(msg);
-        addLog(body.accountId, 'SEN', msg, chalk.cyanBright);
+        dispatchChatToBot(targetAccId, s);
+        return sendJson(res, 200, { ok: true, accountId: targetAccId });
       } else {
-        addLog(body.accountId, 'UYARI', 'Bot çevrimiçi olmadığı için mesaj gönderilemedi.', chalk.yellow);
+        addLog(targetAccId || null, 'UYARI', 'Bot çevrimiçi olmadığı için mesaj gönderilemedi.', chalk.yellow);
+        return sendJson(res, 400, { ok: false, error: 'Aktif çevrimiçi bot bulunamadı. Lütfen önce bir bot başlatın.' });
       }
     }
-    return sendJson(res, 200, { ok: true });
   }
 
   sendJson(res, 404, { error: 'Not found' });

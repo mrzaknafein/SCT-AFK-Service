@@ -31,8 +31,8 @@ using Drawing = System.Drawing;
 [assembly: AssemblyDescription("SCT AFK Service - Native WPF Multi-Account & Automation Control Panel")]
 [assembly: AssemblyCompany("SCT AFK Service")]
 [assembly: AssemblyProduct("SCT AFK Service")]
-[assembly: AssemblyVersion("2.4.0.0")]
-[assembly: AssemblyFileVersion("2.4.0.0")]
+[assembly: AssemblyVersion("2.4.9.0")]
+[assembly: AssemblyFileVersion("2.4.9.0")]
 
 namespace SctAfkService
 {
@@ -1204,10 +1204,10 @@ namespace SctAfkService
         public static readonly SolidColorBrush SandBeigeHover = BrushHex("#DFCFB2");
         public static readonly SolidColorBrush SandBeigeBg = BrushHex("#F5EFE4");
 
-        public static readonly SolidColorBrush ElectricPurple = BrushHex("#8B5CF6");
-        public static readonly SolidColorBrush ElectricPurpleHover = BrushHex("#7C3AED");
-        public static readonly SolidColorBrush ElectricPurpleSoft = BrushHex("#EDE9FE");
-        public static readonly SolidColorBrush ElectricPurpleBorder = BrushHex("#C4B5FD");
+        public static readonly SolidColorBrush ElectricPurple = BrushHex("#1F5C3A");
+        public static readonly SolidColorBrush ElectricPurpleHover = BrushHex("#17472C");
+        public static readonly SolidColorBrush ElectricPurpleSoft = BrushHex("#EBF3EE");
+        public static readonly SolidColorBrush ElectricPurpleBorder = BrushHex("#BBD4C3");
         public static readonly SolidColorBrush PureWhite = BrushHex("#FFFDF9");
 
         // Editorial High-Contrast Typography (Deep Forest Green Ink on Warm Ivory)
@@ -1224,8 +1224,8 @@ namespace SctAfkService
         public static readonly SolidColorBrush YellowBg = BrushHex("#FEF3C7");
         public static readonly SolidColorBrush Red = BrushHex("#C83E3E");
         public static readonly SolidColorBrush RedBg = BrushHex("#FDF2F2");
-        public static readonly SolidColorBrush Indigo = BrushHex("#6D28D9");
-        public static readonly SolidColorBrush IndigoBg = BrushHex("#EDE9FE");
+        public static readonly SolidColorBrush Indigo = BrushHex("#1F5C3A");
+        public static readonly SolidColorBrush IndigoBg = BrushHex("#EBF3EE");
 
         public static SolidColorBrush BrushHex(string hex)
         {
@@ -1357,11 +1357,35 @@ namespace SctAfkService
             bd.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
             bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
 
+            FrameworkElementFactory innerGrid = new FrameworkElementFactory(typeof(Grid));
             FrameworkElementFactory sv = new FrameworkElementFactory(typeof(ScrollViewer));
             sv.Name = "PART_ContentHost";
             sv.SetValue(FrameworkElement.MarginProperty, new Thickness(2, 0, 2, 0));
-            bd.AppendChild(sv);
+            innerGrid.AppendChild(sv);
+
+            if (!string.IsNullOrEmpty(tooltip))
+            {
+                FrameworkElementFactory ph = new FrameworkElementFactory(typeof(TextBlock));
+                ph.Name = "PlaceholderText";
+                ph.SetValue(TextBlock.TextProperty, tooltip);
+                ph.SetValue(TextBlock.ForegroundProperty, TextDim);
+                ph.SetValue(TextBlock.FontSizeProperty, 12.0);
+                ph.SetValue(FrameworkElement.MarginProperty, new Thickness(13, 0, 11, 0));
+                ph.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+                ph.SetValue(UIElement.IsHitTestVisibleProperty, false);
+                ph.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+                innerGrid.AppendChild(ph);
+            }
+
+            bd.AppendChild(innerGrid);
             tpl.VisualTree = bd;
+
+            if (!string.IsNullOrEmpty(tooltip))
+            {
+                Trigger emptyTrig = new Trigger { Property = TextBox.TextProperty, Value = "" };
+                emptyTrig.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "PlaceholderText"));
+                tpl.Triggers.Add(emptyTrig);
+            }
 
             Trigger hoverTrig = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
             hoverTrig.Setters.Add(new Setter(Border.BorderBrushProperty, ForestGreen, "InputBorder"));
@@ -1373,6 +1397,8 @@ namespace SctAfkService
             tpl.Triggers.Add(focusTrig);
 
             tb.Template = tpl;
+            tb.Focusable = true;
+            tb.IsReadOnly = false;
             if (!double.IsNaN(width)) tb.Width = width;
             if (!string.IsNullOrEmpty(tooltip)) tb.ToolTip = tooltip;
             return tb;
@@ -2656,6 +2682,7 @@ namespace SctAfkService
         // TopBar & Banners
         private TextBlock lblTopServerBadge;
         private TextBlock lblTopOnlineBadge;
+        private Button btnTopSettings;
         private Border bannerHotUpdate;
         private TextBlock lblHotUpdateInfo;
         private Border overlayReconnect;
@@ -2720,6 +2747,9 @@ namespace SctAfkService
         private WrapPanel wrapBotInvSlots;
 
         // Tab 3: Farm & Eylemler
+        private int activeFarmSubTabIndex = 0;
+        private readonly List<Button> farmSubTabBtns = new List<Button>();
+        private readonly List<UIElement> farmSubTabPanes = new List<UIElement>();
         private TextBlock lblFarmCounters;
         private readonly Dictionary<string, Button> autoModeToggleBtns = new Dictionary<string, Button>();
         private Button btnSpawnerNow;
@@ -2808,6 +2838,9 @@ namespace SctAfkService
         private readonly List<RadarHitCell> radarHitCells = new List<RadarHitCell>();
 
         // Tab 7: Genel Ayarlar (9 Categories)
+        private int activeSettingsSubTabIndex = 0;
+        private readonly List<Button> settingsSubTabBtns = new List<Button>();
+        private readonly List<UIElement> settingsSubTabPanes = new List<UIElement>();
         private TextBox txtSetHost;
         private TextBox txtSetPort;
         private ComboBox cmbSetVersion;
@@ -3095,6 +3128,8 @@ namespace SctAfkService
             topRight.Children.Add(onlinePill);
 
             topRight.Children.Add(UiTheme.CreateButton("🔄 Güncelleme Kontrol", "outline", OnCheckUpdateClick));
+            btnTopSettings = UiTheme.CreateButton("⚙️ Genel Ayarlar", "outline", delegate { SwitchMainTab(6); });
+            topRight.Children.Add(btnTopSettings);
             topDock.Children.Add(topRight);
             topBar.Child = topDock;
             DockPanel.SetDock(topBar, Dock.Top);
@@ -3379,7 +3414,7 @@ namespace SctAfkService
             DockPanel.SetDock(inspBorder, Dock.Top);
             rightDock.Children.Add(inspBorder);
 
-            // 2. Navigation Bar for 7 Tabs (Floating Pill Bar)
+            // 2. Navigation Bar for 6 Bot Tabs (Settings moved to Top-Right Header)
             Border tabsBar = new Border
             {
                 Background = Brushes.Transparent,
@@ -3393,8 +3428,7 @@ namespace SctAfkService
                 "🌾 Farm & Eylemler",
                 "🏗️ Oto-İnşa (PRO)",
                 "🛡️ Koruma (PRO)",
-                "📡 Radar & Hareket (PRO)",
-                "⚙️ Genel Ayarlar"
+                "📡 Radar & Hareket (PRO)"
             };
             for (int i = 0; i < tabTitles.Length; i++)
             {
@@ -3471,12 +3505,15 @@ namespace SctAfkService
                 "🌾 Farm & Eylemler",
                 "🏗️ Oto-İnşa (PRO)",
                 "🛡️ Koruma (PRO)",
-                "📡 Radar & Hareket (PRO)",
-                "⚙️ Genel Ayarlar"
+                "📡 Radar & Hareket (PRO)"
             };
-            for (int i = 0; i < tabButtons.Count; i++)
+            for (int i = 0; i < tabButtons.Count && i < tabTitles.Length; i++)
             {
                 UiTheme.SetButtonVariant(tabButtons[i], tabTitles[i], i == index ? "primary" : "outline");
+            }
+            if (btnTopSettings != null)
+            {
+                UiTheme.SetButtonVariant(btnTopSettings, "⚙️ Genel Ayarlar", index == 6 ? "primary" : "outline");
             }
 
             bool isProTab = (index == 3 || index == 4 || index == 5);
@@ -3533,34 +3570,34 @@ namespace SctAfkService
                 Padding = new Thickness(16, 10, 16, 10)
             };
             DockPanel topBarDock = new DockPanel();
-            StackPanel leftTopInfo = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            StackPanel rightTopBtns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            rightTopBtns.Children.Add(UiTheme.CreateButton("🔑 /login Gönder", "outline", delegate { SendSelectedBotAction("login", new Dictionary<string, object> { { "type", "login" } }); }, new Thickness(9, 4, 9, 4)));
+            rightTopBtns.Children.Add(UiTheme.CreateButton("📝 /register Gönder", "outline", delegate { SendSelectedBotAction("register", new Dictionary<string, object> { { "type", "register" } }); }, new Thickness(9, 4, 9, 4)));
+            rightTopBtns.Children.Add(UiTheme.CreateButton("🗑️ Temizle", "danger", delegate { logs.Clear(); RenderConsoleLogs(); }, new Thickness(9, 4, 9, 4)));
+            DockPanel.SetDock(rightTopBtns, Dock.Right);
+            topBarDock.Children.Add(rightTopBtns);
+
+            WrapPanel leftTopInfo = new WrapPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             leftTopInfo.Children.Add(UiTheme.CreateIconBox("💬", false));
-            leftTopInfo.Children.Add(UiTheme.CreateText("CANLI KONSOL ", 13, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 10, 0)));
+            leftTopInfo.Children.Add(UiTheme.CreateText("CANLI KONSOL ", 13, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 8, 0)));
             Border balBadge = new Border
             {
                 Background = UiTheme.GreenBg,
                 BorderBrush = UiTheme.BrushHex("#A7F3D0"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 3, 10, 3),
-                Margin = new Thickness(0, 0, 10, 0)
+                Padding = new Thickness(9, 3, 9, 3),
+                Margin = new Thickness(0, 0, 8, 0)
             };
             lblChatBalance = UiTheme.CreateText("💰 Bakiye: -", 11.5, FontWeights.Bold, UiTheme.Green);
             balBadge.Child = lblChatBalance;
             leftTopInfo.Children.Add(balBadge);
 
-            chkShowAllLogs = UiTheme.CreateCheckBox("Tüm hesapların kayıtlarını göster", true);
+            chkShowAllLogs = UiTheme.CreateCheckBox("Tüm hesaplar", true);
             chkShowAllLogs.Checked += delegate { RenderConsoleLogs(); };
             chkShowAllLogs.Unchecked += delegate { RenderConsoleLogs(); };
             leftTopInfo.Children.Add(chkShowAllLogs);
-            DockPanel.SetDock(leftTopInfo, Dock.Left);
             topBarDock.Children.Add(leftTopInfo);
-
-            StackPanel rightTopBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            rightTopBtns.Children.Add(UiTheme.CreateButton("🔑 /login Gönder", "outline", delegate { SendSelectedBotAction("manualAuth", new Dictionary<string, object> { { "type", "login" } }); }, new Thickness(9, 4, 9, 4)));
-            rightTopBtns.Children.Add(UiTheme.CreateButton("📝 /register Gönder", "outline", delegate { SendSelectedBotAction("manualAuth", new Dictionary<string, object> { { "type", "register" } }); }, new Thickness(9, 4, 9, 4)));
-            rightTopBtns.Children.Add(UiTheme.CreateButton("🗑️ Temizle", "danger", delegate { logs.Clear(); RenderConsoleLogs(); }, new Thickness(9, 4, 9, 4)));
-            topBarDock.Children.Add(rightTopBtns);
             consoleTop.Child = topBarDock;
             DockPanel.SetDock(consoleTop, Dock.Top);
             leftDock.Children.Add(consoleTop);
@@ -3584,9 +3621,13 @@ namespace SctAfkService
             chatGrid.Children.Add(cmbChatTarget);
 
             txtChatInput = UiTheme.CreateInput("", "Sohbet mesajı veya /komut yazıp Enter'a basın...");
-            txtChatInput.KeyDown += delegate(object s, KeyEventArgs e)
+            txtChatInput.PreviewKeyDown += delegate(object s, KeyEventArgs e)
             {
-                if (e.Key == Key.Enter) SendChatMessageFromBar();
+                if (e.Key == Key.Enter)
+                {
+                    e.Handled = true;
+                    SendChatMessageFromBar();
+                }
             };
             Grid.SetColumn(txtChatInput, 2);
             chatGrid.Children.Add(txtChatInput);
@@ -3677,14 +3718,37 @@ namespace SctAfkService
 
         private void SendChatMessageFromBar()
         {
+            if (txtChatInput == null) return;
             string msg = txtChatInput.Text.Trim();
-            if (string.IsNullOrEmpty(msg)) return;
-            bool toAll = cmbChatTarget.SelectedIndex == 1;
+            if (string.IsNullOrEmpty(msg))
+            {
+                ShowToast("Lütfen gönderilecek bir mesaj veya komut yazın.", "info");
+                txtChatInput.Focus();
+                return;
+            }
+            bool toAll = cmbChatTarget != null && cmbChatTarget.SelectedIndex == 1;
             Dictionary<string, object> body = new Dictionary<string, object>();
             body["accountId"] = toAll ? "all" : (selectedAccountId ?? "");
             body["message"] = msg;
             txtChatInput.Text = "";
-            pipe.SendApiAsync("POST", "/api/chat", body);
+            txtChatInput.Focus();
+            pipe.SendApiAsync("POST", "/api/chat", body, delegate(int st, Dictionary<string, object> res)
+            {
+                string err = JsonHelper.Str(res, "error", "");
+                if (!string.IsNullOrEmpty(err))
+                {
+                    ShowToast(err, "error");
+                }
+                else
+                {
+                    string usedAccId = JsonHelper.Str(res, "accountId", "");
+                    if (!string.IsNullOrEmpty(usedAccId) && usedAccId != selectedAccountId && !toAll)
+                    {
+                        selectedAccountId = usedAccId;
+                        RenderAll(true);
+                    }
+                }
+            });
         }
 
         // =====================================================================
@@ -3827,15 +3891,14 @@ namespace SctAfkService
         }
 
         // =====================================================================
-        // TAB 3: FARM & EYLEMLER
+        // TAB 3: FARM & EYLEMLER (4 MODÜLER ALT SEKME)
         // =====================================================================
         private UIElement BuildTab3FarmActions()
         {
-            ScrollViewer sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(16) };
-            StackPanel sp = new StackPanel();
+            DockPanel rootDock = new DockPanel { Margin = new Thickness(16, 8, 16, 14) };
 
-            // 1. Live Farm Counters Bar
-            Border statBar = UiTheme.CreateCard(new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 12));
+            // 1. Live Farm Counters Bar (Fixed Top)
+            Border statBar = UiTheme.CreateCard(new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 10));
             DockPanel statDock = new DockPanel();
             Button btnResetStats = UiTheme.CreateButton("🔄 Sıfırla", "outline", delegate { SendSelectedBotAction("resetStats", null); }, new Thickness(10, 4, 10, 4));
             DockPanel.SetDock(btnResetStats, Dock.Right);
@@ -3843,11 +3906,40 @@ namespace SctAfkService
             lblFarmCounters = UiTheme.CreateText("⛏️ Kazılan Blok: 0  |  ⚔️ Kesilen Mob: 0  |  🌾 Hasat: 0  |  🌱 Çapalanan: 0  |  🌿 Ekilen: 0  |  💰 Çiftçi Satış: 0  |  🛠️ Tamir: 0  |  📦 Sandık: 0  |  🛡️ Captcha: 0", 12, FontWeights.Bold, UiTheme.AccentWhite);
             statDock.Children.Add(lblFarmCounters);
             statBar.Child = statDock;
-            sp.Children.Add(statBar);
+            DockPanel.SetDock(statBar, Dock.Top);
+            rootDock.Children.Add(statBar);
 
-            // 2. 12 Automation Mode Cards
-            sp.Children.Add(UiTheme.CreateText("⚡ OTOMASYON MODLARI (12 AKTİF MODÜL)", 12.5, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(2, 0, 0, 8)));
-            UniformGrid modesGrid = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 14) };
+            // 2. Sub-Tab Navigation Pill Bar (4 Modules)
+            Border subTabBar = UiTheme.CreateSubCard(new Thickness(10, 7, 10, 7), new Thickness(0, 0, 0, 10));
+            WrapPanel subTabWrap = new WrapPanel { Orientation = Orientation.Horizontal };
+            string[] farmSubTitles = new string[]
+            {
+                "⚡ Otomasyon Modları (12 Modül)",
+                "📋 Bot Kuralları & Hızlı Eylemler",
+                "🏭 Gelişmiş Farm & Spawner",
+                "🎃 Balkabağı Feneri (Jack o'Lantern)"
+            };
+            farmSubTabBtns.Clear();
+            for (int i = 0; i < farmSubTitles.Length; i++)
+            {
+                int subIdx = i;
+                Button sBtn = UiTheme.CreateButton(farmSubTitles[i], i == 0 ? "primary" : "outline", delegate { SwitchFarmSubTab(subIdx); }, new Thickness(13, 6, 13, 6));
+                farmSubTabBtns.Add(sBtn);
+                subTabWrap.Children.Add(sBtn);
+            }
+            subTabBar.Child = subTabWrap;
+            DockPanel.SetDock(subTabBar, Dock.Top);
+            rootDock.Children.Add(subTabBar);
+
+            // 3. Sub-Tab Content Host inside ScrollViewer
+            ScrollViewer sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid subHost = new Grid();
+            farmSubTabPanes.Clear();
+
+            // --- SUB-TAB 0: 12 Automation Mode Cards ---
+            StackPanel pane0 = new StackPanel();
+            pane0.Children.Add(UiTheme.CreateText("⚡ OTOMASYON MODLARI (12 AKTİF MODÜL)", 12.5, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(2, 0, 0, 8)));
+            UniformGrid modesGrid = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 8) };
 
             AddAutomationModeCard(modesGrid, "toggleAutoMine", "⛏️ Otomatik Blok Kırma", "Baktığı yöndeki blokları sürekli kazar.", null, null);
             AddAutomationModeCard(modesGrid, "toggleAutoAttack", "⚔️ Otomatik Mob Kesme", "Yakındaki moblara otomatik saldırır.", null, null);
@@ -3855,20 +3947,23 @@ namespace SctAfkService
             AddAutomationModeCard(modesGrid, "toggleAutoTill", "🌱 Otomatik Tarla Çapalama", "Toprak bloklarını çapa ile tarlaya çevirir.", null, null);
             AddAutomationModeCard(modesGrid, "toggleAutoPlant", "🌿 Otomatik Tarla Ekimi", "Çapalanmış tarlalara tohum eker.", null, null);
             AddAutomationModeCard(modesGrid, "toggleAutoFarmerSell", "💰 Otomatik Çiftçi Satıcı", "Belirli aralıkla /çiftçi üzerinden satış yapar.", "⚡ Şimdi Sat", delegate { SendSelectedBotAction("farmerSellNow", null); });
-            AddAutomationModeCard(modesGrid, "toggleAutoMinerChestSell", "🪨 Miner Sandık Cobblestone Satıcı", "Miner sandığındaki taşları otomatik satar.", "⚡ Şimdi Sat", delegate { SendSelectedBotAction("minerChestSellNow", null); });
+            AddAutomationModeCard(modesGrid, "toggleAutoMinerChestSell", "⛏️ Miner Sandık Cobblestone Satıcı", "Miner sandığındaki taşları otomatik satar.", "⚡ Şimdi Sat", delegate { SendSelectedBotAction("minerChestSellNow", null); });
             AddAutomationModeCard(modesGrid, "toggleAutoSpawnerRoutine", "🏭 Sınırsız Spawner Demir & Poppy Modu", "Spawnerlardan demir ve poppy toplayıp satar.", "⚡ Şimdi Başlat", delegate { SendSelectedBotAction("spawnerRoutineNow", null); }, true, false);
             AddAutomationModeCard(modesGrid, "toggleAutoJackOLantern", "🎃 Otomatik Balkabağı Feneri", "Balkabağı oyup meşale ile Jack o'Lantern üretir.", "⚡ Şimdi Başlat", delegate { SendSelectedBotAction("jackOLanternNow", null); }, false, true);
             AddAutomationModeCard(modesGrid, "toggleAutoRightClick", "🖱️ Otomatik Sağ Tıklama", "Baktığı bloğa/eşyaya sürekli sağ tıklar.", null, null);
             AddAutomationModeCard(modesGrid, "toggleAutoChest", "📦 Otomatik Sandık Boşaltma", "Envanter dolunca yakındaki sandığa aktarır.", null, null);
             AddAutomationModeCard(modesGrid, "toggleSneak", "🦵 Eğilme Kilidi (Sneak)", "Botu sürekli eğilmiş (Shift) modda tutar.", null, null);
 
-            sp.Children.Add(modesGrid);
+            pane0.Children.Add(modesGrid);
+            farmSubTabPanes.Add(pane0);
 
-            // 3. 8 Bot Rule CheckBoxes
-            Border rulesCard = UiTheme.CreateCard(new Thickness(14), new Thickness(0, 0, 0, 12));
+            // --- SUB-TAB 1: Bot Behavior Rules & Quick Actions ---
+            StackPanel pane1 = new StackPanel();
+            Border rulesCard = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
             StackPanel rulesStack = new StackPanel();
-            rulesStack.Children.Add(UiTheme.CreateText("📋 BOT DAVRANIŞ KURALLARI", 12, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
-            UniformGrid rulesGrid = new UniformGrid { Columns = 4 };
+            rulesStack.Children.Add(UiTheme.CreateText("📋 BOT DAVRANIŞ KURALLARI (SEÇİLİ HESAP)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 6)));
+            rulesStack.Children.Add(UiTheme.CreateText("Bu kurallar seçili botun kazım, hasat, tamir, sandık ve doğrulama reflekslerini canlı olarak yönetir.", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 10)));
+            UniformGrid rulesGrid = new UniformGrid { Columns = 2 };
             AddBotRuleCheckBox(rulesGrid, "autoReconnect", "🔄 Otomatik Yeniden Bağlan");
             AddBotRuleCheckBox(rulesGrid, "autoPickup", "🧲 Yerdeki Eşyaları Topla");
             AddBotRuleCheckBox(rulesGrid, "autoDepositChest", "📦 Dolunca Sandığa Aktar");
@@ -3879,12 +3974,12 @@ namespace SctAfkService
             AddBotRuleCheckBox(rulesGrid, "farmerAutoSell", "💰 Çiftçi Otomatik Satış");
             rulesStack.Children.Add(rulesGrid);
             rulesCard.Child = rulesStack;
-            sp.Children.Add(rulesCard);
+            pane1.Children.Add(rulesCard);
 
-            // 4. Quick Actions Row
-            Border quickCard = UiTheme.CreateCard(new Thickness(14), new Thickness(0, 0, 0, 12));
+            Border quickCard = UiTheme.CreateCard(new Thickness(16), new Thickness(0));
             StackPanel quickStack = new StackPanel();
-            quickStack.Children.Add(UiTheme.CreateText("🚀 HIZLI EYLEMLER & KOMUTLAR", 12, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            quickStack.Children.Add(UiTheme.CreateText("🚀 HIZLI EYLEMLER & SUNUCU KOMUTLARI", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 6)));
+            quickStack.Children.Add(UiTheme.CreateText("Seçili bota anlık fiziksel hareket veya hızlı sunucu komutu gönderir.", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 10)));
             WrapPanel quickWrap = new WrapPanel();
             quickWrap.Children.Add(UiTheme.CreateButton("⬆️ Zıpla", "outline", delegate { SendSelectedBotAction("jump", null); }));
             quickWrap.Children.Add(UiTheme.CreateButton("👋 Kol Salla", "outline", delegate { SendSelectedBotAction("swing", null); }));
@@ -3897,28 +3992,46 @@ namespace SctAfkService
             quickWrap.Children.Add(UiTheme.CreateButton("👨‍🌾 /çiftçi", "indigo", delegate { SendQuickCommand("/çiftçi"); }));
             quickStack.Children.Add(quickWrap);
             quickCard.Child = quickStack;
-            sp.Children.Add(quickCard);
+            pane1.Children.Add(quickCard);
+            farmSubTabPanes.Add(pane1);
 
-            // 5. Advanced Farm Settings Section
-            Border advCard = UiTheme.CreateCard(new Thickness(16), new Thickness(0));
+            // --- SUB-TAB 2: Advanced Farm & Spawner Settings ---
+            StackPanel pane2 = new StackPanel();
+            Border advCard = UiTheme.CreateCard(new Thickness(18), new Thickness(0));
             StackPanel advStack = new StackPanel();
-            advStack.Children.Add(UiTheme.CreateText("⚙️ GELİŞMİŞ FARM, SPAWNER & BALKABAĞI FENERİ AYARLARI", 12.5, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 10)));
+            advStack.Children.Add(UiTheme.CreateText("🏭 GELİŞMİŞ FARM, TAMİR & SINIRSIZ SPAWNER YAPILANDIRMASI", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 6)));
+            advStack.Children.Add(UiTheme.CreateText("Alet tamir eşiği, çiftçi/miner satış periyotları ve spawner odası demir/poppy toplama döngüsü ayarları.", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 12)));
 
-            UniformGrid advGrid1 = new UniformGrid { Columns = 4, Margin = new Thickness(0, 0, 0, 10) };
+            UniformGrid advGrid1 = new UniformGrid { Columns = 2, Margin = new Thickness(0, 0, 0, 10) };
             txtAdvRepairCmd = AddLabeledInput(advGrid1, "Tamir Komutu", "/tamir");
             txtAdvRepairPct = AddLabeledInput(advGrid1, "Tamir Eşiği (%)", "15");
             txtAdvFarmerSec = AddLabeledInput(advGrid1, "Çiftçi Satış Süresi (sn)", "120");
             txtAdvMinerSec = AddLabeledInput(advGrid1, "Miner Sandık Süresi (sn)", "10");
             advStack.Children.Add(advGrid1);
 
-            UniformGrid advGrid2 = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 10) };
+            UniformGrid advGrid2 = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 14) };
             txtAdvSpawnerSec = AddLabeledInput(advGrid2, "Spawner Tur Süresi (sn)", "30");
             txtAdvSpawnerCount = AddLabeledInput(advGrid2, "Spawner Sayısı (0=Oto)", "0");
             txtAdvSpawnerCoords = AddLabeledInput(advGrid2, "Özel Spawner Koordinatları (X Y Z; ...)", "");
             advStack.Children.Add(advGrid2);
 
-            advStack.Children.Add(UiTheme.CreateText("🎃 Balkabağı Feneri (Jack o'Lantern) 8 Parametreli Üretim Yapılandırması", 12, FontWeights.Bold, UiTheme.Yellow, new Thickness(0, 4, 0, 6)));
-            UniformGrid jackGrid = new UniformGrid { Columns = 4, Margin = new Thickness(0, 0, 0, 10) };
+            StackPanel advBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            advBtns.Children.Add(UiTheme.CreateButton("⚡ Şimdi Spawner Turu Başlat", "outline", delegate { SendSelectedBotAction("spawnerRoutineNow", null); }));
+            advBtns.Children.Add(UiTheme.CreateButton("💾 Farm & Spawner Ayarlarını Kaydet", "primary", OnSaveAdvancedFarmSettingsClick));
+            advStack.Children.Add(advBtns);
+
+            advCard.Child = advStack;
+            pane2.Children.Add(advCard);
+            farmSubTabPanes.Add(pane2);
+
+            // --- SUB-TAB 3: Jack o'Lantern (Balkabağı Feneri) 8-Param Production ---
+            StackPanel pane3 = new StackPanel();
+            Border jackCard = UiTheme.CreateCard(new Thickness(18), new Thickness(0));
+            StackPanel jackStack = new StackPanel();
+            jackStack.Children.Add(UiTheme.CreateText("🎃 BALKABAĞI FENERİ (JACK O'LANTERN) 8 PARAMETRELİ ÜRETİM MODÜLÜ", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 6)));
+            jackStack.Children.Add(UiTheme.CreateText("Sandıklardan balkabağı, meşale ve makas malzemelerini alarak oyma noktasında otomatik Jack o'Lantern üretir.", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 12)));
+
+            UniformGrid jackGrid = new UniformGrid { Columns = 2, Margin = new Thickness(0, 0, 0, 14) };
             txtJackInterval = AddLabeledInput(jackGrid, "Kontrol Süresi (sn)", "20");
             txtJackBatch = AddLabeledInput(jackGrid, "Parti Boyutu (1-64)", "32");
             txtJackPumpkinChest = AddLabeledInput(jackGrid, "Balkabağı Sandığı (X Y Z)", "");
@@ -3927,18 +4040,46 @@ namespace SctAfkService
             txtJackIronChest = AddLabeledInput(jackGrid, "Demir Sandığı (Makas İçin)", "");
             txtJackStickChest = AddLabeledInput(jackGrid, "Çubuk/Kömür Sandığı", "");
             txtJackCarveSpot = AddLabeledInput(jackGrid, "Oyma Noktası (X Y Z)", "");
-            advStack.Children.Add(jackGrid);
+            jackStack.Children.Add(jackGrid);
 
-            StackPanel advBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            advBtns.Children.Add(UiTheme.CreateButton("📍 Önümdeki Bloğu Al (Oyma Noktası)", "outline", OnSetCarveSpotFrontClick));
-            advBtns.Children.Add(UiTheme.CreateButton("💾 Gelişmiş Farm Ayarlarını Kaydet", "primary", OnSaveAdvancedFarmSettingsClick));
-            advStack.Children.Add(advBtns);
+            StackPanel jackBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            jackBtns.Children.Add(UiTheme.CreateButton("📍 Önümdeki Bloğu Al (Oyma Noktası)", "outline", OnSetCarveSpotFrontClick));
+            jackBtns.Children.Add(UiTheme.CreateButton("💾 Balkabağı Feneri Ayarlarını Kaydet", "primary", OnSaveAdvancedFarmSettingsClick));
+            jackStack.Children.Add(jackBtns);
 
-            advCard.Child = advStack;
-            sp.Children.Add(advCard);
+            jackCard.Child = jackStack;
+            pane3.Children.Add(jackCard);
+            farmSubTabPanes.Add(pane3);
 
-            sv.Content = sp;
-            return sv;
+            for (int i = 0; i < farmSubTabPanes.Count; i++)
+            {
+                farmSubTabPanes[i].Visibility = i == 0 ? Visibility.Visible : Visibility.Collapsed;
+                subHost.Children.Add(farmSubTabPanes[i]);
+            }
+
+            sv.Content = subHost;
+            rootDock.Children.Add(sv);
+            return rootDock;
+        }
+
+        private void SwitchFarmSubTab(int subIdx)
+        {
+            activeFarmSubTabIndex = subIdx;
+            string[] farmSubTitles = new string[]
+            {
+                "⚡ Otomasyon Modları (12 Modül)",
+                "📋 Bot Kuralları & Hızlı Eylemler",
+                "🏭 Gelişmiş Farm & Spawner",
+                "🎃 Balkabağı Feneri (Jack o'Lantern)"
+            };
+            for (int i = 0; i < farmSubTabBtns.Count && i < farmSubTitles.Length; i++)
+            {
+                UiTheme.SetButtonVariant(farmSubTabBtns[i], farmSubTitles[i], i == subIdx ? "primary" : "outline");
+            }
+            for (int i = 0; i < farmSubTabPanes.Count; i++)
+            {
+                farmSubTabPanes[i].Visibility = i == subIdx ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
 
         private void AddAutomationModeCard(Panel parent, string actionKey, string title, string desc, string secondaryText, RoutedEventHandler secondaryClick, bool isSpawner = false, bool isJack = false)
@@ -5154,16 +5295,16 @@ namespace SctAfkService
         }
 
         // =====================================================================
-        // TAB 7: GENEL AYARLAR (ALL 9 CATEGORIES)
+        // TAB 7: GENEL AYARLAR (5 MODÜLER ALT SEKME + SÜRÜM & YENİLİKLER)
         // =====================================================================
         private UIElement BuildTab7Settings()
         {
-            DockPanel dock = new DockPanel { Margin = new Thickness(16) };
+            DockPanel dock = new DockPanel { Margin = new Thickness(16, 8, 16, 14) };
 
             // Bottom Save Bar
             Border footerBar = UiTheme.CreateCard(new Thickness(14, 10, 14, 10), new Thickness(0, 10, 0, 0));
             DockPanel footerDock = new DockPanel();
-            footerDock.Children.Add(UiTheme.CreateText("Tüm 9 genel ayar kategorisi yerel motor (config.json) ile senkronizedir.", 12, FontWeights.Medium, UiTheme.TextMuted));
+            footerDock.Children.Add(UiTheme.CreateText("Tüm genel ayar modülleri yerel motor (config.json) ile senkronizedir.", 12, FontWeights.Medium, UiTheme.TextMuted));
             StackPanel footerBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             footerBtns.Children.Add(UiTheme.CreateButton("🔄 Değişiklikleri Sıfırla", "outline", delegate { PopulateSettingsInputsFromState(); }));
             footerBtns.Children.Add(UiTheme.CreateButton("💾 Tüm Genel Ayarları Kaydet", "primary", OnSaveAllGeneralSettingsClick, new Thickness(16, 8, 16, 8)));
@@ -5172,13 +5313,40 @@ namespace SctAfkService
             DockPanel.SetDock(footerBar, Dock.Bottom);
             dock.Children.Add(footerBar);
 
+            // Top Sub-Tab Navigation Pill Bar (5 Modules)
+            Border subTabBar = UiTheme.CreateSubCard(new Thickness(10, 7, 10, 7), new Thickness(0, 0, 0, 10));
+            WrapPanel subTabWrap = new WrapPanel { Orientation = Orientation.Horizontal };
+            string[] setSubTitles = new string[]
+            {
+                "🌐 Sunucu & Bağlantı",
+                "🔑 Oto-Auth (Giriş/Kayıt)",
+                "🔔 Bildirimler & Ses",
+                "🎮 Discord RPC & Yedekleme",
+                "🚀 Sürüm & Yenilikler"
+            };
+            settingsSubTabBtns.Clear();
+            for (int i = 0; i < setSubTitles.Length; i++)
+            {
+                int subIdx = i;
+                Button sBtn = UiTheme.CreateButton(setSubTitles[i], i == 0 ? "primary" : "outline", delegate { SwitchSettingsSubTab(subIdx); }, new Thickness(13, 6, 13, 6));
+                settingsSubTabBtns.Add(sBtn);
+                subTabWrap.Children.Add(sBtn);
+            }
+            subTabBar.Child = subTabWrap;
+            DockPanel.SetDock(subTabBar, Dock.Top);
+            dock.Children.Add(subTabBar);
+
             ScrollViewer sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            StackPanel sp = new StackPanel();
+            Grid subHost = new Grid();
+            settingsSubTabPanes.Clear();
+
+            // --- SUB-TAB 0: Sunucu, Anti-AFK & Çoklu Bot İş Birliği ---
+            StackPanel pane0 = new StackPanel();
 
             // Category 1: Sunucu Ayarları
             Border c1 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
             StackPanel sp1 = new StackPanel();
-            sp1.Children.Add(UiTheme.CreateText("1. 🌐 SUNUCU AYARLARI (HOST, PORT, SÜRÜM)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            sp1.Children.Add(UiTheme.CreateText("🌐 SUNUCU AYARLARI (HOST, PORT, SÜRÜM)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
             UniformGrid g1 = new UniformGrid { Columns = 4 };
             txtSetHost = AddLabeledInput(g1, "Sunucu Adresi (Host)", "localhost");
             txtSetPort = AddLabeledInput(g1, "Port", "25565");
@@ -5190,30 +5358,12 @@ namespace SctAfkService
             txtSetCustomVer = AddLabeledInput(g1, "Özel Sürüm (custom ise)", "");
             sp1.Children.Add(g1);
             c1.Child = sp1;
-            sp.Children.Add(c1);
-
-            // Category 2: Otomatik Giriş (autoAuth)
-            Border c2 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
-            StackPanel sp2 = new StackPanel();
-            sp2.Children.Add(UiTheme.CreateText("2. 🔑 OTOMATİK GİRİŞ & KAYIT (AUTO-AUTH)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
-            StackPanel authChecks = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
-            chkSetAuthEnabled = UiTheme.CreateCheckBox("Otomatik Giriş/Kayıt Sistemi Aktif", true);
-            chkSetAuthSmart = UiTheme.CreateCheckBox("Akıllı Sohbet Algılama (/login & /register istemini bekle)", true);
-            authChecks.Children.Add(chkSetAuthEnabled);
-            authChecks.Children.Add(chkSetAuthSmart);
-            sp2.Children.Add(authChecks);
-            UniformGrid g2 = new UniformGrid { Columns = 3 };
-            txtSetAuthDelay = AddLabeledInput(g2, "Giriş Gecikmesi (ms)", "1500");
-            txtSetLoginCmd = AddLabeledInput(g2, "Login Komut Şablonu", "/login {password}");
-            txtSetRegCmd = AddLabeledInput(g2, "Register Komut Şablonu", "/register {password} {email}");
-            sp2.Children.Add(g2);
-            c2.Child = sp2;
-            sp.Children.Add(c2);
+            pane0.Children.Add(c1);
 
             // Category 3: Anti-AFK & Yeniden Bağlanma
             Border c3 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
             StackPanel sp3 = new StackPanel();
-            sp3.Children.Add(UiTheme.CreateText("3. 🔄 ANTI-AFK & OTOMATİK YENİDEN BAĞLANMA", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            sp3.Children.Add(UiTheme.CreateText("🔄 ANTI-AFK & OTOMATİK YENİDEN BAĞLANMA", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
             UniformGrid g3 = new UniformGrid { Columns = 2 };
             StackPanel spAfk = new StackPanel { Margin = new Thickness(4) };
             chkSetAfkEnabled = UiTheme.CreateCheckBox("Anti-AFK Hareket Döngüsü Etkin", true);
@@ -5232,12 +5382,54 @@ namespace SctAfkService
             g3.Children.Add(spRec);
             sp3.Children.Add(g3);
             c3.Child = sp3;
-            sp.Children.Add(c3);
+            pane0.Children.Add(c3);
 
-            // Category 4: Discord Webhook
+            // Category 7: Çoklu Bot Ortak Çalışma
+            Border c7 = UiTheme.CreateCard(new Thickness(16), new Thickness(0));
+            StackPanel sp7 = new StackPanel();
+            sp7.Children.Add(UiTheme.CreateText("🤝 ÇOKLU BOT ORTAK ÇALIŞMA & İŞ PAYLAŞIMI (MULTI-BOT COOP)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            UniformGrid coopChecks = new UniformGrid { Columns = 5 };
+            chkSetCoopEnabled = UiTheme.CreateCheckBox("Ortak Çalışma Aktif", true);
+            chkSetCoopBuilder = UiTheme.CreateCheckBox("Oto-İnşa Senkron", true);
+            chkSetCoopTill = UiTheme.CreateCheckBox("Çapalama Senkron", true);
+            chkSetCoopPlant = UiTheme.CreateCheckBox("Ekim Senkron", true);
+            chkSetCoopChest = UiTheme.CreateCheckBox("Sandık Sırası (Mutex)", true);
+            coopChecks.Children.Add(chkSetCoopEnabled);
+            coopChecks.Children.Add(chkSetCoopBuilder);
+            coopChecks.Children.Add(chkSetCoopTill);
+            coopChecks.Children.Add(chkSetCoopPlant);
+            coopChecks.Children.Add(chkSetCoopChest);
+            sp7.Children.Add(coopChecks);
+            c7.Child = sp7;
+            pane0.Children.Add(c7);
+            settingsSubTabPanes.Add(pane0);
+
+            // --- SUB-TAB 1: Otomatik Giriş & Kayıt (Auto-Auth) ---
+            StackPanel pane1 = new StackPanel();
+            Border c2 = UiTheme.CreateCard(new Thickness(18), new Thickness(0));
+            StackPanel sp2 = new StackPanel();
+            sp2.Children.Add(UiTheme.CreateText("🔑 OTOMATİK GİRİŞ & KAYIT (AUTO-AUTH) ŞABLONLARI", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 6)));
+            sp2.Children.Add(UiTheme.CreateText("Botlar sunucuya bağlandığında sohbet istemini algılayarak veya belirlenen gecikmeyle otomatik /login ve /register komutlarını gönderir.", 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 0, 0, 12)));
+            StackPanel authChecks = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+            chkSetAuthEnabled = UiTheme.CreateCheckBox("Otomatik Giriş/Kayıt Sistemi Aktif", true);
+            chkSetAuthSmart = UiTheme.CreateCheckBox("Akıllı Sohbet Algılama (/login & /register istemini bekle)", true);
+            authChecks.Children.Add(chkSetAuthEnabled);
+            authChecks.Children.Add(chkSetAuthSmart);
+            sp2.Children.Add(authChecks);
+            UniformGrid g2 = new UniformGrid { Columns = 3 };
+            txtSetAuthDelay = AddLabeledInput(g2, "Giriş Gecikmesi (ms)", "1500");
+            txtSetLoginCmd = AddLabeledInput(g2, "Login Komut Şablonu", "/login {password}");
+            txtSetRegCmd = AddLabeledInput(g2, "Register Komut Şablonu", "/register {password} {email}");
+            sp2.Children.Add(g2);
+            c2.Child = sp2;
+            pane1.Children.Add(c2);
+            settingsSubTabPanes.Add(pane1);
+
+            // --- SUB-TAB 2: Bildirimler & Ses (Webhook + Ses Sentezleyici + Masaüstü) ---
+            StackPanel pane2 = new StackPanel();
             Border c4 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
             StackPanel sp4 = new StackPanel();
-            sp4.Children.Add(UiTheme.CreateText("4. 💬 DISCORD WEBHOOK BİLDİRİMLERİ", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            sp4.Children.Add(UiTheme.CreateText("💬 DISCORD WEBHOOK BİLDİRİMLERİ", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
             chkSetWebhookEnabled = UiTheme.CreateCheckBox("Discord Webhook Bildirimlerini Etkinleştir", false);
             sp4.Children.Add(chkSetWebhookEnabled);
             DockPanel whRow = new DockPanel { Margin = new Thickness(0, 6, 0, 8) };
@@ -5252,19 +5444,18 @@ namespace SctAfkService
             chkSetWhDisconnect = UiTheme.CreateCheckBox("Bağlantı Kopması", true);
             chkSetWhPanic = UiTheme.CreateCheckBox("Panik Çıkışı", true);
             chkSetWhDeath = UiTheme.CreateCheckBox("Bot Ölümü", true);
-            chkSetWhCaptcha = UiTheme.CreateCheckBox("Captcha Уyarısı", true);
+            chkSetWhCaptcha = UiTheme.CreateCheckBox("Captcha Uyarısı", true);
             whChecks.Children.Add(chkSetWhDisconnect);
             whChecks.Children.Add(chkSetWhPanic);
             whChecks.Children.Add(chkSetWhDeath);
             whChecks.Children.Add(chkSetWhCaptcha);
             sp4.Children.Add(whChecks);
             c4.Child = sp4;
-            sp.Children.Add(c4);
+            pane2.Children.Add(c4);
 
-            // Category 5: Sesli & Masaüstü Bildirimler
-            Border c5 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
+            Border c5 = UiTheme.CreateCard(new Thickness(16), new Thickness(0));
             StackPanel sp5 = new StackPanel();
-            sp5.Children.Add(UiTheme.CreateText("5. 🔊 YEREL SESLİ SENTEZLEYİCİ & MASAÜSTÜ BİLDİRİMLERİ", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            sp5.Children.Add(UiTheme.CreateText("🔊 YEREL SESLİ SENTEZLEYİCİ & MASAÜSTÜ BİLDİRİMLERİ", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
             chkSetSoundEnabled = UiTheme.CreateCheckBox("Sesli Uyarıları Etkinleştir (RIFF/WAV Sentezleyici)", true);
             sp5.Children.Add(chkSetSoundEnabled);
 
@@ -5323,12 +5514,14 @@ namespace SctAfkService
             deskChecks.Children.Add(chkSetDeskCaptcha);
             sp5.Children.Add(deskChecks);
             c5.Child = sp5;
-            sp.Children.Add(c5);
+            pane2.Children.Add(c5);
+            settingsSubTabPanes.Add(pane2);
 
-            // Category 6: Discord Rich Presence (discordRpc)
+            // --- SUB-TAB 3: Discord Rich Presence & Yedekleme ---
+            StackPanel pane3 = new StackPanel();
             Border c6 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
             StackPanel sp6 = new StackPanel();
-            sp6.Children.Add(UiTheme.CreateText("6. 🎮 DISCORD RICH PRESENCE (PROFİL AKTİVİTESİ)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
+            sp6.Children.Add(UiTheme.CreateText("🎮 DISCORD RICH PRESENCE (PROFİL AKTİVİTESİ)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
             chkSetRpcEnabled = UiTheme.CreateCheckBox("Discord Rich Presence (RPC) Durum Gösterimini Etkinleştir", true);
             sp6.Children.Add(chkSetRpcEnabled);
 
@@ -5374,50 +5567,135 @@ namespace SctAfkService
             txtSetRpcBtn2Url = AddLabeledInput(rpcInputs, "Buton 2 URL", "");
             sp6.Children.Add(rpcInputs);
             c6.Child = sp6;
-            sp.Children.Add(c6);
+            pane3.Children.Add(c6);
 
-            // Category 7: Çoklu Bot Ortak Çalışma
-            Border c7 = UiTheme.CreateCard(new Thickness(16), new Thickness(0, 0, 0, 12));
-            StackPanel sp7 = new StackPanel();
-            sp7.Children.Add(UiTheme.CreateText("7. 🤝 ÇOKLU BOT ORTAK ÇALIŞMA & İŞ PAYLAŞIMI (MULTI-BOT COOP)", 13, FontWeights.ExtraBold, UiTheme.AccentWhite, new Thickness(0, 0, 0, 8)));
-            UniformGrid coopChecks = new UniformGrid { Columns = 5 };
-            chkSetCoopEnabled = UiTheme.CreateCheckBox("Ortak Çalışma Aktif", true);
-            chkSetCoopBuilder = UiTheme.CreateCheckBox("Oto-İnşa Senkron", true);
-            chkSetCoopTill = UiTheme.CreateCheckBox("Çapalama Senkron", true);
-            chkSetCoopPlant = UiTheme.CreateCheckBox("Ekim Senkron", true);
-            chkSetCoopChest = UiTheme.CreateCheckBox("Sandık Sırası (Mutex)", true);
-            coopChecks.Children.Add(chkSetCoopEnabled);
-            coopChecks.Children.Add(chkSetCoopBuilder);
-            coopChecks.Children.Add(chkSetCoopTill);
-            coopChecks.Children.Add(chkSetCoopPlant);
-            coopChecks.Children.Add(chkSetCoopChest);
-            sp7.Children.Add(coopChecks);
-            c7.Child = sp7;
-            sp.Children.Add(c7);
-
-            // Category 8 (Hidden from end users, initialized as internal state)
-            lblSetUpdateCurBuild = new TextBlock();
-            lblSetUpdateStatus = new TextBlock();
-            txtSetRepoOwner = new TextBox { Text = "mrzaknafein" };
-            txtSetRepoName = new TextBox { Text = "SCT-AFK-Service" };
-            txtSetRepoBranch = new TextBox { Text = "main" };
-            chkSetUpdateAutoApply = new CheckBox { IsChecked = false };
-
-            // Category 8: Yedekleme, Geri Yükleme & Ağ Temizliği
             Border c9 = UiTheme.CreateCard(new Thickness(16), new Thickness(0));
             StackPanel sp9 = new StackPanel();
-            sp9.Children.Add(UiTheme.CreateText("8. 💾 YEDEKLEME, GERİ YÜKLEME & AĞ TEMİZLİĞİ", 13, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 0, 8)));
+            sp9.Children.Add(UiTheme.CreateText("💾 YEDEKLEME, GERİ YÜKLEME & AĞ TEMİZLİĞİ", 13, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 0, 8)));
             WrapPanel backupBtns = new WrapPanel();
             backupBtns.Children.Add(UiTheme.CreateButton("📥 Ayarları Dışa Aktar (JSON)", "outline", OnExportConfigClick));
             backupBtns.Children.Add(UiTheme.CreateButton("📤 Ayarları İçe Aktar (JSON)", "outline", OnImportConfigClick));
             backupBtns.Children.Add(UiTheme.CreateButton("🗑️ Tüm Proxyleri Temizle", "danger", OnClearAllProxiesFromSettingsClick));
             sp9.Children.Add(backupBtns);
             c9.Child = sp9;
-            sp.Children.Add(c9);
+            pane3.Children.Add(c9);
+            settingsSubTabPanes.Add(pane3);
 
-            sv.Content = sp;
+            // --- SUB-TAB 4: Sürüm & Yenilikler (Version Info & Changelog) ---
+            txtSetRepoOwner = new TextBox { Text = "mrzaknafein" };
+            txtSetRepoName = new TextBox { Text = "SCT-AFK-Service" };
+            txtSetRepoBranch = new TextBox { Text = "main" };
+            chkSetUpdateAutoApply = new CheckBox { IsChecked = false };
+
+            StackPanel pane4 = new StackPanel();
+            Border verHeroCard = UiTheme.CreateCard(new Thickness(18), new Thickness(0, 0, 0, 12));
+            DockPanel verHeroDock = new DockPanel();
+            StackPanel verBtns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+            verBtns.Children.Add(UiTheme.CreateButton("🔄 Şimdi Güncelleme Kontrol Et", "outline", OnCheckUpdateClick));
+            verBtns.Children.Add(UiTheme.CreateButton("⚡ Güncellemeyi Yükle / Onar", "primary", OnApplyUpdateClick));
+            DockPanel.SetDock(verBtns, Dock.Right);
+            verHeroDock.Children.Add(verBtns);
+
+            StackPanel verInfoStack = new StackPanel();
+            verInfoStack.Children.Add(UiTheme.CreateText("🚀 AKTİF UYGULAMA SÜRÜMÜ: " + Program.CURRENT_APP_VERSION + " (Native WPF Desktop)", 14, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 0, 4)));
+            lblSetUpdateCurBuild = UiTheme.CreateText("Motor Yapı Numarası (Build ID): " + Program.CURRENT_ENGINE_BUILD_ID, 12, FontWeights.SemiBold, UiTheme.Indigo, new Thickness(0, 0, 0, 4));
+            verInfoStack.Children.Add(lblSetUpdateCurBuild);
+            lblSetUpdateStatus = UiTheme.CreateText("✓ Sisteminiz en güncel dağıtım sürümünde çalışıyor.", 12, FontWeights.Bold, UiTheme.Green);
+            verInfoStack.Children.Add(lblSetUpdateStatus);
+            verHeroDock.Children.Add(verInfoStack);
+            verHeroCard.Child = verHeroDock;
+            pane4.Children.Add(verHeroCard);
+
+            Border changelogCard = UiTheme.CreateCard(new Thickness(18), new Thickness(0));
+            StackPanel clStack = new StackPanel();
+            clStack.Children.Add(UiTheme.CreateText("📋 SON SÜRÜMLERLE GELEN YENİLİKLER (CHANGELOG)", 13.5, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 0, 10)));
+
+            AddChangelogReleaseBox(clStack, "v2.4.9 — Yapı v87 (Güncel Sürüm)", "07.11.2026 • Modüler Arayüz & Konsol Sohbet Onarımı", new string[]
+            {
+                "• Konsol sekmesinde mesaj yazamama (Native WPF klavye döngüsü) ve çevrimdışı hesap seçiliyken mesaj gitmeme sorunu tamamen çözüldü.",
+                "• Konsol /login ve /register hızlı gönderim butonları ve akıllı çevrimiçi bot yönlendirmesi eklendi.",
+                "• Genel Ayarlar sekmesi sağ üst bara (Güncelleme Kontrol yanına) taşındı ve 5 modüler alt sekmeye ayrıldı.",
+                "• Farm & Eylemler sekmesi 4 modüler alt sekmeye (Otomasyon Modları, Bot Kuralları & Hızlı Eylemler, Gelişmiş Farm & Spawner, Balkabağı Feneri) ayrıldı.",
+                "• Ayarlar içerisine 'Sürüm & Yenilikler' modülü eklendi; aktif sürüm ve detaylı güncelleme geçmişi listelendi.",
+                "• Sistem Tepsisi (Sağ Alt Tray) sağ tık menüsü ve Güncelleme Onay pencereleri Warm Ivory & Deep Forest Green uygulama temasına uyarlandı."
+            }, true);
+
+            AddChangelogReleaseBox(clStack, "v2.4.8 — Yapı v86", "07.11.2026 • VDS Hot-Update & EXE Yenileme", new string[]
+            {
+                "• VDS üzerinde ikon dosyası eksik olduğunda bile Hot-Update EXE derlemesinin kesintisiz tamamlanması sağlandı.",
+                "• UTF-16LE buildId kontrolü ile güncelleme sonrası eski arayüz sürecinin otomatik yenilenmesi eklendi."
+            }, false);
+
+            AddChangelogReleaseBox(clStack, "v2.4.7 — Yapı v85", "07.11.2026 • Yerel Minecraft Avatar & Özel Diyalog Modalları", new string[]
+            {
+                "• %100 yerel (offline) deterministik Minecraft 8x8 piksel skin/avatar oluşturucu eklendi (VDS üzerinde harici API bağımlılığı kaldırıldı).",
+                "• Tüm klasik Windows uyarı pencereleri özel tasarım SctDialogModal bileşenine geçirildi."
+            }, false);
+
+            AddChangelogReleaseBox(clStack, "v2.4.6 — Yapı v84", "07.11.2026 • Kendiliğinden Onarım (Self-Heal) & Yerel Disk Önyükleme", new string[]
+            {
+                "• config.json ve keyauth_saved.json yerel diskten anında önyüklenerek çevrimdışı durumda bile hesapların görünmesi sağlandı.",
+                "• Named Pipe motor bağlantısı koptuğunda GitHub üzerinden otomatik motor onarımı (Self-Heal) eklendi."
+            }, false);
+
+            changelogCard.Child = clStack;
+            pane4.Children.Add(changelogCard);
+            settingsSubTabPanes.Add(pane4);
+
+            for (int i = 0; i < settingsSubTabPanes.Count; i++)
+            {
+                settingsSubTabPanes[i].Visibility = i == 0 ? Visibility.Visible : Visibility.Collapsed;
+                subHost.Children.Add(settingsSubTabPanes[i]);
+            }
+
+            sv.Content = subHost;
             dock.Children.Add(sv);
             return dock;
+        }
+
+        private void AddChangelogReleaseBox(StackPanel parent, string verTitle, string subMeta, string[] bullets, bool isLatest)
+        {
+            Border box = UiTheme.CreateSubCard(new Thickness(14, 11, 14, 11), new Thickness(0, 0, 0, 8));
+            if (isLatest)
+            {
+                box.BorderBrush = UiTheme.ForestGreen;
+                box.BorderThickness = new Thickness(1.5);
+            }
+            StackPanel sp = new StackPanel();
+            DockPanel head = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+            head.Children.Add(UiTheme.CreateText(verTitle, 12.5, FontWeights.ExtraBold, isLatest ? UiTheme.ForestGreen : UiTheme.TextMain));
+            TextBlock metaTxt = UiTheme.CreateText(subMeta, 11, FontWeights.SemiBold, UiTheme.Indigo);
+            metaTxt.HorizontalAlignment = HorizontalAlignment.Right;
+            head.Children.Add(metaTxt);
+            sp.Children.Add(head);
+
+            for (int i = 0; i < bullets.Length; i++)
+            {
+                sp.Children.Add(UiTheme.CreateText(bullets[i], 11.5, FontWeights.Normal, UiTheme.TextMuted, new Thickness(0, 2, 0, 2)));
+            }
+            box.Child = sp;
+            parent.Children.Add(box);
+        }
+
+        private void SwitchSettingsSubTab(int subIdx)
+        {
+            activeSettingsSubTabIndex = subIdx;
+            string[] setSubTitles = new string[]
+            {
+                "🌐 Sunucu & Bağlantı",
+                "🔑 Oto-Auth (Giriş/Kayıt)",
+                "🔔 Bildirimler & Ses",
+                "🎮 Discord RPC & Yedekleme",
+                "🚀 Sürüm & Yenilikler"
+            };
+            for (int i = 0; i < settingsSubTabBtns.Count && i < setSubTitles.Length; i++)
+            {
+                UiTheme.SetButtonVariant(settingsSubTabBtns[i], setSubTitles[i], i == subIdx ? "primary" : "outline");
+            }
+            for (int i = 0; i < settingsSubTabPanes.Count; i++)
+            {
+                settingsSubTabPanes[i].Visibility = i == subIdx ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
 
         // =====================================================================
@@ -5683,14 +5961,35 @@ namespace SctAfkService
                 selectedAccountId = null;
                 return;
             }
-            if (!string.IsNullOrEmpty(selectedAccountId))
+            Dictionary<string, object> bots = JsonHelper.SubDict(appState, "bots");
+            string firstOnlineId = null;
+            bool currentExists = false;
+            bool currentOnline = false;
+
+            for (int i = 0; i < accounts.Count; i++)
             {
-                for (int i = 0; i < accounts.Count; i++)
+                string aid = JsonHelper.Str(accounts[i], "id", "");
+                if (string.IsNullOrEmpty(aid)) continue;
+                Dictionary<string, object> b = JsonHelper.SubDict(bots, aid);
+                bool isOnline = JsonHelper.Str(b, "status", "") == "online";
+                if (isOnline && string.IsNullOrEmpty(firstOnlineId)) firstOnlineId = aid;
+                if (aid == selectedAccountId)
                 {
-                    if (JsonHelper.Str(accounts[i], "id", "") == selectedAccountId) return;
+                    currentExists = true;
+                    currentOnline = isOnline;
                 }
             }
-            selectedAccountId = JsonHelper.Str(accounts[0], "id", "");
+
+            if (currentExists)
+            {
+                if (!currentOnline && !string.IsNullOrEmpty(firstOnlineId))
+                {
+                    selectedAccountId = firstOnlineId;
+                }
+                return;
+            }
+
+            selectedAccountId = !string.IsNullOrEmpty(firstOnlineId) ? firstOnlineId : JsonHelper.Str(accounts[0], "id", "");
         }
 
         private void RenderAll(bool includeFullLogs)
@@ -5889,6 +6188,11 @@ namespace SctAfkService
                 Button btnToggle = UiTheme.CreateButton(capturedRunning ? "⏹" : "▶", capturedRunning ? "danger" : "success", delegate(object sender, RoutedEventArgs e)
                 {
                     e.Handled = true;
+                    if (!capturedRunning)
+                    {
+                        selectedAccountId = capturedAid;
+                        RenderAll(true);
+                    }
                     SendBotActionById(capturedAid, capturedRunning ? "stop" : "start", null);
                 }, new Thickness(7, 3, 7, 3));
                 Button btnEdit = UiTheme.CreateButton("✎", "outline", delegate(object sender, RoutedEventArgs e)
@@ -6847,7 +7151,13 @@ namespace SctAfkService
 
         private void OnApplyUpdateClick(object sender, RoutedEventArgs e)
         {
-            if (!SctDialogModal.Confirm(this, "Güncellemeyi Yükle", "Yeni sürüm indirilip motor ve arayüz otomatik yeniden başlatılacak. Devam edilsin mi?", "🚀 Evet, Güncelle", "Vazgeç", false))
+            Dictionary<string, object> updates = JsonHelper.SubDict(appState, "updates");
+            string latestVer = JsonHelper.Str(updates, "latestVersion", Program.CURRENT_APP_VERSION);
+            string latestBuild = JsonHelper.Str(updates, "latestBuildId", Program.CURRENT_ENGINE_BUILD_ID);
+            string confirmMsg = string.Format(
+                "Yeni sürüm ({0} • {1}) indirilip arka plan motoru ve uygulama arayüzü otomatik olarak yeniden başlatılacak.\n\nAktif bot bağlantıları güncelleme sonrasında kaldığı yerden devam edecektir. Onaylıyor musunuz?",
+                latestVer, latestBuild);
+            if (!SctDialogModal.Confirm(this, "Güncellemeyi Yükle", confirmMsg, "🚀 Evet, Güncelle", "Vazgeç", false))
                 return;
 
             if (!pipe.IsConnected)
@@ -7140,7 +7450,8 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_hotupdate_exe_fix_v86";
+        public const string CURRENT_APP_VERSION = "v2.4.9";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_modular_ui_chat_fix_v87";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -7413,8 +7724,8 @@ namespace SctAfkService
                 FormBorderStyle = WinForms.FormBorderStyle.FixedDialog;
                 ControlBox = false;
                 ShowInTaskbar = true;
-                BackColor = Drawing.Color.FromArgb(15, 31, 22);
-                ForeColor = Drawing.Color.FromArgb(232, 220, 196);
+                BackColor = Drawing.Color.FromArgb(250, 246, 238);
+                ForeColor = Drawing.Color.FromArgb(26, 77, 46);
                 TopMost = true;
 
                 lbl = new WinForms.Label
@@ -7423,6 +7734,8 @@ namespace SctAfkService
                     Dock = WinForms.DockStyle.Fill,
                     TextAlign = Drawing.ContentAlignment.MiddleCenter,
                     Font = new Drawing.Font("Segoe UI", 10, Drawing.FontStyle.Bold),
+                    ForeColor = Drawing.Color.FromArgb(26, 77, 46),
+                    BackColor = Drawing.Color.FromArgb(250, 246, 238),
                     Padding = new WinForms.Padding(10)
                 };
                 Controls.Add(lbl);
@@ -7576,8 +7889,8 @@ namespace SctAfkService
                     ? "Bilgisayarınızdaki Node.js sürümü (v" + nodeMajor + ") çok eski. SCT AFK Service için Node.js " + MinNodeMajor + " veya üzeri gereklidir.\n\nNode.js LTS otomatik olarak indirilip kurulsun mu?"
                     : "SCT AFK Service'in çalışabilmesi için Node.js gereklidir ve bilgisayarınızda bulunamadı.\n\nNode.js LTS otomatik olarak indirilip kurulsun mu? (Yaklaşık 30 MB)";
 
-                WinForms.DialogResult dr = WinForms.MessageBox.Show(question, "SCT AFK Service - Node.js Gerekli", WinForms.MessageBoxButtons.YesNo, WinForms.MessageBoxIcon.Question);
-                if (dr == WinForms.DialogResult.Yes)
+                bool confirmInstall = SctDialogModal.Confirm(null, "SCT AFK Service - Node.js Gerekli", question, "🚀 Evet, Otomatik Kur", "Vazgeç", false);
+                if (confirmInstall)
                 {
                     bool ok = false;
                     RunWithSplash("Node.js hazırlanıyor...", delegate(Action<string> status) { ok = InstallNodeJsAutomatic(status); });
@@ -7666,9 +7979,11 @@ namespace SctAfkService
             string npmCmd = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(nodeExe), "npm.cmd");
             if (!File.Exists(npmCmd))
             {
-                WinForms.MessageBox.Show(
+                SctDialogModal.Alert(
+                    null,
+                    "SCT AFK Service - NPM Bulunamadı",
                     "Node.js kurulu fakat 'npm' bulunamadı.\nLütfen Node.js'i https://nodejs.org adresinden yeniden kurun.",
-                    "SCT AFK Service", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+                    "Tamam");
                 return false;
             }
 
@@ -7695,10 +8010,12 @@ namespace SctAfkService
             }
 
             string tail = ReadLogTail(logPath, 700);
-            WinForms.MessageBox.Show(
+            SctDialogModal.Alert(
+                null,
+                "SCT AFK Service - Bileşen Hatası",
                 "Uygulama bileşenleri indirilemedi.\nLütfen internet bağlantınızı kontrol edip uygulamayı tekrar açın.\n\n" +
                 (string.IsNullOrEmpty(tail) ? "" : "Ayrıntı:\n" + tail),
-                "SCT AFK Service", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+                "Tamam");
             return false;
         }
 
@@ -7888,11 +8205,11 @@ namespace SctAfkService
                 }
                 catch (Exception ex)
                 {
-                    WinForms.MessageBox.Show(
+                    SctDialogModal.Alert(
+                        null,
+                        "SCT AFK Service - Başlatma Hatası",
                         "SCT AFK Service başlatılırken bir hata oluştu:\n" + ex.Message,
-                        "SCT AFK Service",
-                        WinForms.MessageBoxButtons.OK,
-                        WinForms.MessageBoxIcon.Error
+                        "Tamam"
                     );
                 }
             }
@@ -7900,14 +8217,19 @@ namespace SctAfkService
 
         private static void RunLauncher()
         {
+            if (Application.Current == null)
+            {
+                new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            }
+
             string nodeExe = EnsureNodeInstalled();
             if (string.IsNullOrEmpty(nodeExe))
             {
-                WinForms.MessageBox.Show(
+                SctDialogModal.Alert(
+                    null,
+                    "SCT AFK Service - Node.js Gerekli",
                     "Node.js otomatik kurulamadı.\nLütfen https://nodejs.org adresinden 'LTS' sürümünü indirip kurun, ardından SCT AFK Service'i tekrar açın.",
-                    "SCT AFK Service",
-                    WinForms.MessageBoxButtons.OK,
-                    WinForms.MessageBoxIcon.Warning
+                    "Tamam"
                 );
                 try { Process.Start("https://nodejs.org/en/download"); } catch { }
                 return;
@@ -7980,21 +8302,24 @@ namespace SctAfkService
                 }
             }
 
-            WinForms.Application.Run(new SctTrayContext(runtimeDir, nodeExe, server));
+            using (SctTrayContext trayCtx = new SctTrayContext(runtimeDir, nodeExe, server))
+            {
+                Application.Current.Run();
+            }
         }
 
         // =====================================================================
-        // SYSTEM TRAY CONTEXT & MENU RENDERER
+        // SYSTEM TRAY CONTEXT & MENU RENDERER (WARM IVORY & FOREST GREEN)
         // =====================================================================
-        public class DarkMenuColorTable : WinForms.ProfessionalColorTable
+        public class WarmIvoryMenuColorTable : WinForms.ProfessionalColorTable
         {
-            private Drawing.Color bgColor = Drawing.Color.FromArgb(15, 31, 22);
-            private Drawing.Color hoverColor = Drawing.Color.FromArgb(39, 77, 54);
-            private Drawing.Color borderColor = Drawing.Color.FromArgb(46, 87, 63);
-            private Drawing.Color separatorColor = Drawing.Color.FromArgb(46, 87, 63);
+            private Drawing.Color bgColor = Drawing.Color.FromArgb(250, 246, 238);
+            private Drawing.Color hoverColor = Drawing.Color.FromArgb(237, 230, 218);
+            private Drawing.Color borderColor = Drawing.Color.FromArgb(212, 203, 190);
+            private Drawing.Color separatorColor = Drawing.Color.FromArgb(212, 203, 190);
 
             public override Drawing.Color MenuBorder { get { return borderColor; } }
-            public override Drawing.Color MenuItemBorder { get { return borderColor; } }
+            public override Drawing.Color MenuItemBorder { get { return Drawing.Color.FromArgb(26, 77, 46); } }
             public override Drawing.Color ToolStripDropDownBackground { get { return bgColor; } }
             public override Drawing.Color ImageMarginGradientBegin { get { return bgColor; } }
             public override Drawing.Color ImageMarginGradientMiddle { get { return bgColor; } }
@@ -8006,7 +8331,7 @@ namespace SctAfkService
             public override Drawing.Color MenuItemPressedGradientMiddle { get { return hoverColor; } }
             public override Drawing.Color MenuItemPressedGradientEnd { get { return hoverColor; } }
             public override Drawing.Color SeparatorDark { get { return separatorColor; } }
-            public override Drawing.Color SeparatorLight { get { return separatorColor; } }
+            public override Drawing.Color SeparatorLight { get { return bgColor; } }
         }
 
         public class SctTrayContext : WinForms.ApplicationContext
@@ -8034,34 +8359,41 @@ namespace SctAfkService
                 WinForms.ContextMenuStrip menu = new WinForms.ContextMenuStrip();
                 menu.ShowImageMargin = false;
                 menu.ShowCheckMargin = false;
-                menu.BackColor = Drawing.Color.FromArgb(15, 31, 22);
-                menu.ForeColor = Drawing.Color.FromArgb(232, 220, 196);
+                menu.BackColor = Drawing.Color.FromArgb(250, 246, 238);
+                menu.ForeColor = Drawing.Color.FromArgb(26, 77, 46);
                 menu.Font = new Drawing.Font("Segoe UI", 9.5f, Drawing.FontStyle.Regular);
-                menu.Renderer = new WinForms.ToolStripProfessionalRenderer(new DarkMenuColorTable());
+                menu.Padding = new WinForms.Padding(4, 6, 4, 6);
+                menu.Renderer = new WinForms.ToolStripProfessionalRenderer(new WarmIvoryMenuColorTable());
 
-                WinForms.ToolStripLabel titleItem = new WinForms.ToolStripLabel("SCT AFK Service (Native WPF)");
+                WinForms.ToolStripLabel titleItem = new WinForms.ToolStripLabel("✦ SCT AFK Service (" + CURRENT_APP_VERSION + ")");
                 titleItem.Font = new Drawing.Font("Segoe UI", 9.5f, Drawing.FontStyle.Bold);
-                titleItem.ForeColor = Drawing.Color.FromArgb(232, 220, 196);
+                titleItem.ForeColor = Drawing.Color.FromArgb(26, 77, 46);
+                titleItem.Padding = new WinForms.Padding(6, 4, 6, 4);
                 menu.Items.Add(titleItem);
                 menu.Items.Add(new WinForms.ToolStripSeparator());
 
-                WinForms.ToolStripMenuItem openItem = new WinForms.ToolStripMenuItem("💻  Kontrol Panelini Aç", null, delegate { RestoreMainWindow(); });
+                WinForms.ToolStripMenuItem openItem = new WinForms.ToolStripMenuItem("▸  Kontrol Panelini Aç", null, delegate { RestoreMainWindow(); });
                 openItem.Font = new Drawing.Font("Segoe UI", 9.5f, Drawing.FontStyle.Bold);
-                openItem.ForeColor = Drawing.Color.FromArgb(232, 220, 196);
+                openItem.ForeColor = Drawing.Color.FromArgb(26, 77, 46);
+                openItem.Padding = new WinForms.Padding(4, 3, 4, 3);
                 menu.Items.Add(openItem);
 
-                WinForms.ToolStripMenuItem dirItem = new WinForms.ToolStripMenuItem("📁  Veri Klasörünü Aç", null, delegate { OpenDataFolder(); });
-                dirItem.ForeColor = Drawing.Color.FromArgb(244, 239, 230);
+                WinForms.ToolStripMenuItem dirItem = new WinForms.ToolStripMenuItem("❖  Veri Klasörünü Aç", null, delegate { OpenDataFolder(); });
+                dirItem.ForeColor = Drawing.Color.FromArgb(44, 62, 53);
+                dirItem.Padding = new WinForms.Padding(4, 3, 4, 3);
                 menu.Items.Add(dirItem);
 
-                WinForms.ToolStripMenuItem restartItem = new WinForms.ToolStripMenuItem("🔄  Motoru Yeniden Başlat", null, delegate { RestartService(); });
-                restartItem.ForeColor = Drawing.Color.FromArgb(244, 239, 230);
+                WinForms.ToolStripMenuItem restartItem = new WinForms.ToolStripMenuItem("↻  Motoru Yeniden Başlat", null, delegate { RestartService(); });
+                restartItem.ForeColor = Drawing.Color.FromArgb(44, 62, 53);
+                restartItem.Padding = new WinForms.Padding(4, 3, 4, 3);
                 menu.Items.Add(restartItem);
 
                 menu.Items.Add(new WinForms.ToolStripSeparator());
 
-                WinForms.ToolStripMenuItem exitItem = new WinForms.ToolStripMenuItem("❌  Çıkış (Botları Kapat)", null, delegate { ExitApplication(); });
-                exitItem.ForeColor = Drawing.Color.FromArgb(239, 68, 68);
+                WinForms.ToolStripMenuItem exitItem = new WinForms.ToolStripMenuItem("✕  Çıkış (Botları Kapat)", null, delegate { ExitApplication(); });
+                exitItem.Font = new Drawing.Font("Segoe UI", 9.5f, Drawing.FontStyle.Bold);
+                exitItem.ForeColor = Drawing.Color.FromArgb(192, 57, 43);
+                exitItem.Padding = new WinForms.Padding(4, 3, 4, 3);
                 menu.Items.Add(exitItem);
 
                 string icoPath = System.IO.Path.Combine(runtimeDir, "app.ico");
@@ -8166,6 +8498,7 @@ namespace SctAfkService
                     trayIcon.Visible = false;
                     trayIcon.Dispose();
                     Process.Start(WinForms.Application.ExecutablePath);
+                    try { if (Application.Current != null) Application.Current.Shutdown(); } catch { }
                     ExitThread();
                 }
                 catch { }
