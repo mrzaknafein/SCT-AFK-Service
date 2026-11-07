@@ -31,8 +31,8 @@ using Drawing = System.Drawing;
 [assembly: AssemblyDescription("SCT AFK Service - Native WPF Multi-Account & Automation Control Panel")]
 [assembly: AssemblyCompany("SCT AFK Service")]
 [assembly: AssemblyProduct("SCT AFK Service")]
-[assembly: AssemblyVersion("2.4.9.0")]
-[assembly: AssemblyFileVersion("2.4.9.0")]
+[assembly: AssemblyVersion("2.5.0.0")]
+[assembly: AssemblyFileVersion("2.5.0.0")]
 
 namespace SctAfkService
 {
@@ -2837,7 +2837,10 @@ namespace SctAfkService
         }
         private readonly List<RadarHitCell> radarHitCells = new List<RadarHitCell>();
 
-        // Tab 7: Genel Ayarlar (9 Categories)
+        // Tab 7: Genel Ayarlar (Separate Standalone Window + 5 Modular Sub-Tabs)
+        private UIElement settingsRootPane;
+        private Window settingsWindow;
+        private TextBlock lblSetSaveStatus;
         private int activeSettingsSubTabIndex = 0;
         private readonly List<Button> settingsSubTabBtns = new List<Button>();
         private readonly List<UIElement> settingsSubTabPanes = new List<UIElement>();
@@ -3128,7 +3131,7 @@ namespace SctAfkService
             topRight.Children.Add(onlinePill);
 
             topRight.Children.Add(UiTheme.CreateButton("🔄 Güncelleme Kontrol", "outline", OnCheckUpdateClick));
-            btnTopSettings = UiTheme.CreateButton("⚙️ Genel Ayarlar", "outline", delegate { SwitchMainTab(6); });
+            btnTopSettings = UiTheme.CreateButton("⚙️ Genel Ayarlar", "outline", delegate { OpenGeneralSettingsWindow(); });
             topRight.Children.Add(btnTopSettings);
             topDock.Children.Add(topRight);
             topBar.Child = topDock;
@@ -3450,7 +3453,7 @@ namespace SctAfkService
             tabPanes.Add(BuildTab4AutoBuilder());
             tabPanes.Add(BuildTab5Defense());
             tabPanes.Add(BuildTab6Radar());
-            tabPanes.Add(BuildTab7Settings());
+            settingsRootPane = BuildTab7Settings();
 
             for (int i = 0; i < tabPanes.Count; i++)
             {
@@ -3511,10 +3514,6 @@ namespace SctAfkService
             {
                 UiTheme.SetButtonVariant(tabButtons[i], tabTitles[i], i == index ? "primary" : "outline");
             }
-            if (btnTopSettings != null)
-            {
-                UiTheme.SetButtonVariant(btnTopSettings, "⚙️ Genel Ayarlar", index == 6 ? "primary" : "outline");
-            }
 
             bool isProTab = (index == 3 || index == 4 || index == 5);
             bool showLock = isProTab && !IsProUser();
@@ -3543,10 +3542,90 @@ namespace SctAfkService
             {
                 FetchRadarSnapshot();
             }
-            else if (index == 6)
+        }
+
+        private void OpenGeneralSettingsWindow()
+        {
+            if (settingsWindow != null && settingsWindow.IsVisible)
             {
-                PopulateSettingsInputsFromState();
+                if (settingsWindow.WindowState == WindowState.Minimized)
+                    settingsWindow.WindowState = WindowState.Normal;
+                settingsWindow.Activate();
+                return;
             }
+
+            if (settingsRootPane == null)
+                settingsRootPane = BuildTab7Settings();
+
+            PopulateSettingsInputsFromState();
+            if (lblSetSaveStatus != null)
+            {
+                lblSetSaveStatus.Text = "Tüm genel ayar modülleri yerel motor (config.json) ile senkronizedir.";
+                lblSetSaveStatus.Foreground = UiTheme.TextMuted;
+            }
+
+            Border existingParent = settingsRootPane != null ? VisualTreeHelper.GetParent(settingsRootPane) as Border : null;
+            if (existingParent != null) existingParent.Child = null;
+
+            Window win = new Window
+            {
+                Owner = this,
+                Title = "SCT AFK Service — Genel Ayarlar (" + Program.CURRENT_APP_VERSION + ")",
+                Width = 980,
+                Height = 700,
+                MinWidth = 820,
+                MinHeight = 560,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Background = UiTheme.BgBase,
+                Foreground = UiTheme.TextMain,
+                Icon = this.Icon
+            };
+
+            DockPanel rootDock = new DockPanel { Background = UiTheme.BgBase };
+
+            Border headerBar = new Border
+            {
+                Background = UiTheme.BgSidebar,
+                BorderBrush = UiTheme.BorderBrush,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Padding = new Thickness(18, 12, 18, 12)
+            };
+            DockPanel headerDock = new DockPanel();
+            Button btnCloseWin = UiTheme.CreateButton("✕ Pencereyi Kapat", "outline", delegate { win.Close(); }, new Thickness(13, 6, 13, 6));
+            DockPanel.SetDock(btnCloseWin, Dock.Right);
+            headerDock.Children.Add(btnCloseWin);
+
+            StackPanel headerLeft = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            headerLeft.Children.Add(UiTheme.CreateIconBox("⚙️", true));
+            StackPanel headerTitles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            headerTitles.Children.Add(UiTheme.CreateText("GENEL AYARLAR & SÜRÜM YÖNETİMİ", 14.5, FontWeights.ExtraBold, UiTheme.ForestGreen));
+            headerTitles.Children.Add(UiTheme.CreateText("Sunucu Bağlantısı, Otomatik Giriş, Bildirimler, Discord RPC ve Sürüm Geçmişi", 11.5, FontWeights.Normal, UiTheme.TextMuted));
+            headerLeft.Children.Add(headerTitles);
+            headerDock.Children.Add(headerLeft);
+
+            headerBar.Child = headerDock;
+            DockPanel.SetDock(headerBar, Dock.Top);
+            rootDock.Children.Add(headerBar);
+
+            Border contentHost = new Border { Padding = new Thickness(0, 6, 0, 0) };
+            contentHost.Child = settingsRootPane;
+            rootDock.Children.Add(contentHost);
+
+            win.Content = rootDock;
+            settingsWindow = win;
+
+            if (btnTopSettings != null)
+                UiTheme.SetButtonVariant(btnTopSettings, "⚙️ Genel Ayarlar", "primary");
+
+            win.Closed += delegate
+            {
+                contentHost.Child = null;
+                settingsWindow = null;
+                if (btnTopSettings != null)
+                    UiTheme.SetButtonVariant(btnTopSettings, "⚙️ Genel Ayarlar", "outline");
+            };
+
+            win.ShowDialog();
         }
 
         // =====================================================================
@@ -5304,11 +5383,14 @@ namespace SctAfkService
             // Bottom Save Bar
             Border footerBar = UiTheme.CreateCard(new Thickness(14, 10, 14, 10), new Thickness(0, 10, 0, 0));
             DockPanel footerDock = new DockPanel();
-            footerDock.Children.Add(UiTheme.CreateText("Tüm genel ayar modülleri yerel motor (config.json) ile senkronizedir.", 12, FontWeights.Medium, UiTheme.TextMuted));
             StackPanel footerBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             footerBtns.Children.Add(UiTheme.CreateButton("🔄 Değişiklikleri Sıfırla", "outline", delegate { PopulateSettingsInputsFromState(); }));
             footerBtns.Children.Add(UiTheme.CreateButton("💾 Tüm Genel Ayarları Kaydet", "primary", OnSaveAllGeneralSettingsClick, new Thickness(16, 8, 16, 8)));
+            DockPanel.SetDock(footerBtns, Dock.Right);
             footerDock.Children.Add(footerBtns);
+            lblSetSaveStatus = UiTheme.CreateText("Tüm genel ayar modülleri yerel motor (config.json) ile senkronizedir.", 12, FontWeights.SemiBold, UiTheme.TextMuted);
+            lblSetSaveStatus.VerticalAlignment = VerticalAlignment.Center;
+            footerDock.Children.Add(lblSetSaveStatus);
             footerBar.Child = footerDock;
             DockPanel.SetDock(footerBar, Dock.Bottom);
             dock.Children.Add(footerBar);
@@ -5610,7 +5692,13 @@ namespace SctAfkService
             StackPanel clStack = new StackPanel();
             clStack.Children.Add(UiTheme.CreateText("📋 SON SÜRÜMLERLE GELEN YENİLİKLER (CHANGELOG)", 13.5, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 0, 10)));
 
-            AddChangelogReleaseBox(clStack, "v2.4.9 — Yapı v87 (Güncel Sürüm)", "07.11.2026 • Modüler Arayüz & Konsol Sohbet Onarımı", new string[]
+            AddChangelogReleaseBox(clStack, "v2.5.0 — Yapı v88 (Güncel Sürüm)", "07.11.2026 • Bağımsız Genel Ayarlar Penceresi", new string[]
+            {
+                "• Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden tamamen ayrılarak bağımsız, özel temalı bir pencere (Modal Window) haline getirildi.",
+                "• Bot kontrol sekmeleri (Konsol, Envanter, Farm, Oto-İnşa, Koruma, Radar) ile Genel Ayarlar alt sekmelerinin alt alta çakışması önlendi."
+            }, true);
+
+            AddChangelogReleaseBox(clStack, "v2.4.9 — Yapı v87", "07.11.2026 • Modüler Arayüz & Konsol Sohbet Onarımı", new string[]
             {
                 "• Konsol sekmesinde mesaj yazamama (Native WPF klavye döngüsü) ve çevrimdışı hesap seçiliyken mesaj gitmeme sorunu tamamen çözüldü.",
                 "• Konsol /login ve /register hızlı gönderim butonları ve akıllı çevrimiçi bot yönlendirmesi eklendi.",
@@ -5618,7 +5706,7 @@ namespace SctAfkService
                 "• Farm & Eylemler sekmesi 4 modüler alt sekmeye (Otomasyon Modları, Bot Kuralları & Hızlı Eylemler, Gelişmiş Farm & Spawner, Balkabağı Feneri) ayrıldı.",
                 "• Ayarlar içerisine 'Sürüm & Yenilikler' modülü eklendi; aktif sürüm ve detaylı güncelleme geçmişi listelendi.",
                 "• Sistem Tepsisi (Sağ Alt Tray) sağ tık menüsü ve Güncelleme Onay pencereleri Warm Ivory & Deep Forest Green uygulama temasına uyarlandı."
-            }, true);
+            }, false);
 
             AddChangelogReleaseBox(clStack, "v2.4.8 — Yapı v86", "07.11.2026 • VDS Hot-Update & EXE Yenileme", new string[]
             {
@@ -7091,6 +7179,11 @@ namespace SctAfkService
 
             pipe.SendApiAsync("POST", "/api/config", payload, delegate
             {
+                if (lblSetSaveStatus != null)
+                {
+                    lblSetSaveStatus.Text = "✓ Tüm genel ayarlar başarıyla kaydedildi! (" + DateTime.Now.ToString("HH:mm:ss") + ")";
+                    lblSetSaveStatus.Foreground = UiTheme.Green;
+                }
                 ShowToast("✓ Tüm genel ayarlar başarıyla kaydedildi!", "success");
             });
         }
@@ -7157,8 +7250,13 @@ namespace SctAfkService
             string confirmMsg = string.Format(
                 "Yeni sürüm ({0} • {1}) indirilip arka plan motoru ve uygulama arayüzü otomatik olarak yeniden başlatılacak.\n\nAktif bot bağlantıları güncelleme sonrasında kaldığı yerden devam edecektir. Onaylıyor musunuz?",
                 latestVer, latestBuild);
-            if (!SctDialogModal.Confirm(this, "Güncellemeyi Yükle", confirmMsg, "🚀 Evet, Güncelle", "Vazgeç", false))
+            Window dialogOwner = (settingsWindow != null && settingsWindow.IsVisible) ? settingsWindow : (Window)this;
+            if (!SctDialogModal.Confirm(dialogOwner, "Güncellemeyi Yükle", confirmMsg, "🚀 Evet, Güncelle", "Vazgeç", false))
                 return;
+            if (settingsWindow != null && settingsWindow.IsVisible)
+            {
+                try { settingsWindow.Close(); } catch { }
+            }
 
             if (!pipe.IsConnected)
             {
@@ -7450,8 +7548,8 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_APP_VERSION = "v2.4.9";
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_modular_ui_chat_fix_v87";
+        public const string CURRENT_APP_VERSION = "v2.5.0";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_separate_settings_win_v88";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

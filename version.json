@@ -1,40 +1,13 @@
 {
-  "buildId": "20261107_modular_ui_chat_fix_v87",
-  "files": {
-    "index.js": "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/index.js",
-    "Launcher.cs": "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/Launcher.cs"
-  },
-  "version": "2.4.9",
-  "releasedAt": "2026-11-07T03:15:00.000Z",
-  "notes": "v2.4.9 (v87): Konsol sohbet yazma ve komut gönderme hatası giderildi (Native WPF klavye döngüsü + akıllı çevrimiçi bot seçimi), Sağ Üst Genel Ayarlar erişimi eklendi, Genel Ayarlar (5 modül) ve Farm & Eylemler (4 modül) sekmeleri modüler alt sekmelere ayrıldı, Sürüm & Yenilikler (Changelog) paneli eklendi, Sistem Tepsisi (Tray) sağ tık menüsü ve Güncelleme Onay penceresi Warm Ivory & Forest Green temasına uyarlandı.",
+  "version": "2.5.0",
+  "buildId": "20261107_separate_settings_win_v88",
+  "releasedAt": "2026-11-07T03:50:00Z",
+  "notes": "v2.5.0: Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden tamamen ayrılarak bağımsız, özel temalı bir pencere haline getirildi; konsol sohbet ve modüler arayüz iyileştirmeleri tamamlandı.",
   "changelog": [
-    {
-      "version": "v2.4.9 (v87)",
-      "date": "07.11.2026",
-      "items": [
-        "Konsol sekmesinde mesaj yazamama (WPF modeless klavye odaklama) ve çevrimdışı bot seçiliyken mesaj gitmeme sorunu tamamen çözüldü.",
-        "Konsol /login ve /register hızlı gönderim butonları ve akıllı çevrimiçi bot yönlendirmesi düzeltildi.",
-        "Genel Ayarlar butonu sağ üst bara (Güncelleme Kontrol yanına) taşındı ve kendi içinde 5 modüler alt sekmeye ayrıldı.",
-        "Farm & Eylemler sekmesi kendi içinde 4 modüler alt sekmeye (Otomasyon Modları, Bot Kuralları & Hızlı Eylemler, Gelişmiş Farm & Spawner, Balkabağı Feneri) ayrıldı.",
-        "Ayarlar içerisine 'Sürüm & Yenilikler' sekmesi eklendi; aktif sürüm, motor yapı numarası ve detaylı sürüm notları (Changelog) listelendi.",
-        "Sistem Tepsisi (Sağ Alt Tray) sağ tık menüsü ve Güncelleme Onay pencereleri Warm Ivory & Deep Forest Green uygulama temasına uyarlandı."
-      ]
-    },
-    {
-      "version": "v2.4.8 (v86)",
-      "date": "07.11.2026",
-      "items": [
-        "VDS üzerinde ikon dosyası eksik olduğunda bile Hot-Update EXE derlemesinin kesintisiz tamamlanması sağlandı.",
-        "UTF-16LE buildId kontrolü ile güncelleme sonrası eski arayüz sürecinin otomatik yenilenmesi eklendi."
-      ]
-    },
-    {
-      "version": "v2.4.7 (v85)",
-      "date": "07.11.2026",
-      "items": [
-        "100% yerel (offline) deterministik Minecraft 8x8 piksel skin/avatar oluşturucu eklendi (VDS üzerinde harici API bağımlılığı kaldırıldı).",
-        "Tüm klasik Windows uyarı pencereleri özel tasarım SctDialogModal bileşenine geçirildi."
-      ]
-    }
+    "Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden ayrılarak bağımsız, özel temalı bir pencere (Modal Window) olarak açılacak şekilde yenilendi.",
+    "Bot kontrol sekmeleri (Konsol, Envanter, Farm, Oto-İnşa, Koruma, Radar) ile Genel Ayarlar alt sekmelerinin alt alta karışık görünmesi tamamen önlendi.",
+    "Konsol sekmesinde mesaj yazamama (Native WPF klavye döngüsü) ve çevrimdışı hesap seçiliyken mesaj gitmeme sorunu tamamen çözüldü.",
+    "Farm & Eylemler sekmesi 4 modüler alt sekmeye, Genel Ayarlar penceresi ise 5 modüler alt sekmeye (Sürüm & Yenilikler dahil) ayrıldı.",
+    "Sistem Tepsisi (Sağ Alt Tray) sağ tık menüsü ve Güncelleme Onay pencereleri Warm Ivory & Deep Forest Green uygulama temasına uyarlandı."
   ]
 }

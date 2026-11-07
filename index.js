@@ -29,8 +29,8 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_modular_ui_chat_fix_v87';
-const ENGINE_VERSION = '2.4.9';
+const ENGINE_BUILD_ID = '20261107_separate_settings_win_v88';
+const ENGINE_VERSION = '2.5.0';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
