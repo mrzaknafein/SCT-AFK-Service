@@ -1,13 +1,13 @@
 {
-  "version": "2.5.0",
-  "buildId": "20261107_separate_settings_win_v88",
-  "releasedAt": "2026-11-07T03:50:00Z",
-  "notes": "v2.5.0: Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden tamamen ayrılarak bağımsız, özel temalı bir pencere haline getirildi; konsol sohbet ve modüler arayüz iyileştirmeleri tamamlandı.",
+  "version": "2.5.1",
+  "buildId": "20261107_zero_cache_hotupdate_v89",
+  "releasedAt": "2026-11-07T04:08:00Z",
+  "notes": "v2.5.1: GitHub Fastly CDN 5 dakikalık önbellek gecikmesini tamamen sıfırlayan doğrudan GitHub REST API (Zero-Cache) Hot-Update mimarisi eklendi; tüm istemcilerde güncellemelerin anında görünmesi ve arayüzün eksiksiz derlenmesi sağlandı.",
   "changelog": [
-    "Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden ayrılarak bağımsız, özel temalı bir pencere (Modal Window) olarak açılacak şekilde yenilendi.",
-    "Bot kontrol sekmeleri (Konsol, Envanter, Farm, Oto-İnşa, Koruma, Radar) ile Genel Ayarlar alt sekmelerinin alt alta karışık görünmesi tamamen önlendi.",
-    "Konsol sekmesinde mesaj yazamama (Native WPF klavye döngüsü) ve çevrimdışı hesap seçiliyken mesaj gitmeme sorunu tamamen çözüldü.",
-    "Farm & Eylemler sekmesi 4 modüler alt sekmeye, Genel Ayarlar penceresi ise 5 modüler alt sekmeye (Sürüm & Yenilikler dahil) ayrıldı.",
-    "Sistem Tepsisi (Sağ Alt Tray) sağ tık menüsü ve Güncelleme Onay pencereleri Warm Ivory & Deep Forest Green uygulama temasına uyarlandı."
+    "GitHub Fastly CDN 5 dakikalık önbellek gecikmesi, doğrudan GitHub REST API (application/vnd.github.v3.raw) entegrasyonu ile tamamen sıfırlandı.",
+    "Güncelleme kontrolü artık hem yerel Node.js motoru hem de doğrudan C# istemcisi üzerinden çift katmanlı olarak anında sorgulanıyor.",
+    "Hot-Update sırasında Launcher.cs arayüz kodunun önbellekte kalıp eski arayüzle derlenmesi sorunu tamamen giderildi.",
+    "Eski yapılandırmalarda 'dev' dalında kalan istemciler otomatik olarak ana dağıtım dalına ('main') geçirildi.",
+    "Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden ayrılarak bağımsız, özel temalı bir pencere (Modal Window) olarak açılacak şekilde yenilendi."
   ]
 }

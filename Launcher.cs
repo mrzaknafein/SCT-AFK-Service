@@ -31,8 +31,8 @@ using Drawing = System.Drawing;
 [assembly: AssemblyDescription("SCT AFK Service - Native WPF Multi-Account & Automation Control Panel")]
 [assembly: AssemblyCompany("SCT AFK Service")]
 [assembly: AssemblyProduct("SCT AFK Service")]
-[assembly: AssemblyVersion("2.5.0.0")]
-[assembly: AssemblyFileVersion("2.5.0.0")]
+[assembly: AssemblyVersion("2.5.1.0")]
+[assembly: AssemblyFileVersion("2.5.1.0")]
 
 namespace SctAfkService
 {
@@ -2966,6 +2966,7 @@ namespace SctAfkService
             Loaded += delegate
             {
                 LoadInitialState(false);
+                CheckUpdatesWithDirectApiFallback(true);
             };
         }
 
@@ -3563,6 +3564,7 @@ namespace SctAfkService
                 lblSetSaveStatus.Text = "Tüm genel ayar modülleri yerel motor (config.json) ile senkronizedir.";
                 lblSetSaveStatus.Foreground = UiTheme.TextMuted;
             }
+            CheckUpdatesWithDirectApiFallback(true);
 
             Border existingParent = settingsRootPane != null ? VisualTreeHelper.GetParent(settingsRootPane) as Border : null;
             if (existingParent != null) existingParent.Child = null;
@@ -5692,11 +5694,19 @@ namespace SctAfkService
             StackPanel clStack = new StackPanel();
             clStack.Children.Add(UiTheme.CreateText("📋 SON SÜRÜMLERLE GELEN YENİLİKLER (CHANGELOG)", 13.5, FontWeights.ExtraBold, UiTheme.ForestGreen, new Thickness(0, 0, 0, 10)));
 
-            AddChangelogReleaseBox(clStack, "v2.5.0 — Yapı v88 (Güncel Sürüm)", "07.11.2026 • Bağımsız Genel Ayarlar Penceresi", new string[]
+            AddChangelogReleaseBox(clStack, "v2.5.1 — Yapı v89 (Güncel Sürüm)", "07.11.2026 • Sıfır Önbellek (Zero-Cache) Anında Hot-Update", new string[]
+            {
+                "• GitHub Fastly CDN 5 dakikalık önbellek gecikmesi, doğrudan GitHub REST API (application/vnd.github.v3.raw) entegrasyonu ile tamamen sıfırlandı.",
+                "• Güncelleme kontrolü artık hem yerel motor hem de doğrudan C# istemcisi üzerinden çift katmanlı olarak anında sorgulanıyor.",
+                "• Hot-Update sırasında Launcher.cs arayüz kodunun önbellekte kalıp eski arayüzle derlenmesi sorunu tamamen giderildi.",
+                "• Eski yapılandırmalarda 'dev' dalında kalan istemciler otomatik olarak ana dağıtım dalına ('main') geçirildi."
+            }, true);
+
+            AddChangelogReleaseBox(clStack, "v2.5.0 — Yapı v88", "07.11.2026 • Bağımsız Genel Ayarlar Penceresi", new string[]
             {
                 "• Genel Ayarlar sekmesi ana penceredeki bot otomasyon sekmelerinden tamamen ayrılarak bağımsız, özel temalı bir pencere (Modal Window) haline getirildi.",
                 "• Bot kontrol sekmeleri (Konsol, Envanter, Farm, Oto-İnşa, Koruma, Radar) ile Genel Ayarlar alt sekmelerinin alt alta çakışması önlendi."
-            }, true);
+            }, false);
 
             AddChangelogReleaseBox(clStack, "v2.4.9 — Yapı v87", "07.11.2026 • Modüler Arayüz & Konsol Sohbet Onarımı", new string[]
             {
@@ -6151,6 +6161,11 @@ namespace SctAfkService
                 string latestBuild = JsonHelper.Str(updates, "latestBuildId", "");
                 lblHotUpdateInfo.Text = "🚀 Yeni Güncelleme Mevcut! (" + latestBuild + ")";
                 bannerHotUpdate.Visibility = Visibility.Visible;
+                if (lblSetUpdateStatus != null && !string.IsNullOrEmpty(latestBuild))
+                {
+                    lblSetUpdateStatus.Text = "● Yeni Sürüm Bulundu: " + latestBuild;
+                    lblSetUpdateStatus.Foreground = UiTheme.Yellow;
+                }
             }
         }
 
@@ -7203,43 +7218,95 @@ namespace SctAfkService
             });
         }
 
+        private void CheckUpdatesWithDirectApiFallback(bool silent)
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    string manifestJson = Program.FetchGitHubTextZeroCache("version.json");
+                    if (!string.IsNullOrEmpty(manifestJson))
+                    {
+                        Dictionary<string, object> manifest = JsonHelper.DeserializeDict(manifestJson);
+                        string remoteBuild = JsonHelper.Str(manifest, "buildId", "").Trim();
+                        string remoteVer = JsonHelper.Str(manifest, "version", "").Trim();
+                        if (!string.IsNullOrEmpty(remoteBuild) && Program.IsBuildIdNewer(remoteBuild, Program.CURRENT_ENGINE_BUILD_ID))
+                        {
+                            Dispatcher.BeginInvoke(new Action(delegate
+                            {
+                                Dictionary<string, object> upDict = JsonHelper.SubDict(appState, "updates");
+                                upDict["hasUpdate"] = true;
+                                upDict["latestBuildId"] = remoteBuild;
+                                if (!string.IsNullOrEmpty(remoteVer)) upDict["latestVersion"] = remoteVer;
+                                appState["updates"] = upDict;
+
+                                lblHotUpdateInfo.Text = "🚀 Yeni Güncelleme Mevcut! (" + remoteBuild + ")";
+                                bannerHotUpdate.Visibility = Visibility.Visible;
+                                if (lblSetUpdateStatus != null)
+                                {
+                                    lblSetUpdateStatus.Text = "● Yeni Sürüm Bulundu: " + (!string.IsNullOrEmpty(remoteVer) ? ("v" + remoteVer.TrimStart('v') + " • ") : "") + remoteBuild;
+                                    lblSetUpdateStatus.Foreground = UiTheme.Yellow;
+                                }
+                                if (!silent) ShowToast("Yeni güncelleme mevcut: " + remoteBuild, "success");
+                            }));
+                            return;
+                        }
+                    }
+                }
+                catch { }
+
+                if (!pipe.IsConnected)
+                {
+                    if (!silent)
+                    {
+                        Dispatcher.BeginInvoke(new Action(delegate
+                        {
+                            ShowToast("Yerel motor bağlantısı yok — GitHub üzerinden otomatik motor onarımı başlatılıyor...", "info");
+                        }));
+                        bool healed = Program.TrySelfHealEngineFromGitHub(runtimeDir);
+                        Dispatcher.BeginInvoke(new Action(delegate
+                        {
+                            if (healed)
+                                ShowToast("Motor GitHub üzerinden onarıldı ve yeniden başlatıldı!", "success");
+                            else
+                                ShowToast("Motor onarımı başarısız oldu. Lütfen internet bağlantınızı kontrol edin.", "error");
+                        }));
+                    }
+                    return;
+                }
+
+                pipe.SendApiAsync("POST", "/api/updates/check", new Dictionary<string, object>(), delegate(int st, Dictionary<string, object> data)
+                {
+                    bool hasUp = JsonHelper.Bool(data, "hasUpdate", false);
+                    string latest = JsonHelper.Str(data, "latestBuildId", "");
+                    if (hasUp && !string.IsNullOrEmpty(latest) && Program.IsBuildIdNewer(latest, Program.CURRENT_ENGINE_BUILD_ID))
+                    {
+                        lblHotUpdateInfo.Text = "🚀 Yeni Güncelleme Mevcut! (" + latest + ")";
+                        bannerHotUpdate.Visibility = Visibility.Visible;
+                        if (lblSetUpdateStatus != null)
+                        {
+                            lblSetUpdateStatus.Text = "● Yeni Sürüm Bulundu: " + latest;
+                            lblSetUpdateStatus.Foreground = UiTheme.Yellow;
+                        }
+                        if (!silent) ShowToast("Yeni güncelleme mevcut: " + latest, "success");
+                    }
+                    else
+                    {
+                        if (lblSetUpdateStatus != null)
+                        {
+                            lblSetUpdateStatus.Text = "✓ Sisteminiz en güncel dağıtım sürümünde çalışıyor.";
+                            lblSetUpdateStatus.Foreground = UiTheme.Green;
+                        }
+                        if (!silent) ShowToast("Tebrikler, en son sürümü kullanıyorsunuz!", "success");
+                    }
+                });
+            });
+        }
+
         private void OnCheckUpdateClick(object sender, RoutedEventArgs e)
         {
-            if (!pipe.IsConnected)
-            {
-                ShowToast("Yerel motor bağlantısı yok — GitHub üzerinden otomatik motor onarımı başlatılıyor...", "info");
-                ThreadPool.QueueUserWorkItem(delegate
-                {
-                    bool healed = Program.TrySelfHealEngineFromGitHub(runtimeDir);
-                    Dispatcher.BeginInvoke(new Action(delegate
-                    {
-                        if (healed)
-                            ShowToast("Motor GitHub üzerinden onarıldı ve yeniden başlatıldı!", "success");
-                        else
-                            ShowToast("Motor onarımı başarısız oldu. Lütfen internet bağlantınızı kontrol edin.", "error");
-                    }));
-                });
-                return;
-            }
-
             ShowToast("GitHub üzerinden güncellemeler denetleniyor...", "info");
-            pipe.SendApiAsync("POST", "/api/updates/check", new Dictionary<string, object>(), delegate(int st, Dictionary<string, object> data)
-            {
-                bool hasUp = JsonHelper.Bool(data, "hasUpdate", false);
-                string latest = JsonHelper.Str(data, "latestBuildId", "");
-                if (hasUp)
-                {
-                    lblHotUpdateInfo.Text = "🚀 Yeni Güncelleme Mevcut! (" + latest + ")";
-                    bannerHotUpdate.Visibility = Visibility.Visible;
-                    if (lblSetUpdateStatus != null) lblSetUpdateStatus.Text = "● Yeni Sürüm Bulundu: " + latest;
-                    ShowToast("Yeni güncelleme mevcut: " + latest, "success");
-                }
-                else
-                {
-                    if (lblSetUpdateStatus != null) lblSetUpdateStatus.Text = "✓ Sisteminiz en güncel sürümde çalışıyor.";
-                    ShowToast("Tebrikler, en son sürümü kullanıyorsunuz!", "success");
-                }
-            });
+            CheckUpdatesWithDirectApiFallback(false);
         }
 
         private void OnApplyUpdateClick(object sender, RoutedEventArgs e)
@@ -7281,7 +7348,25 @@ namespace SctAfkService
                 string err = JsonHelper.Str(data, "error", "");
                 if (!string.IsNullOrEmpty(err))
                 {
-                    ShowToast("Güncelleme hatası: " + err, "error");
+                    // Eğer eski motor CDN önbelleğine takıldığı için hata döndürdüyse doğrudan C# Zero-Cache Self-Heal ile güncelle
+                    ShowToast("Doğrudan GitHub API üzerinden sıfır önbellek güncellemesi uygulanıyor...", "info");
+                    if (overlayReconnect != null)
+                    {
+                        lblReconnectStatus.Text = "🚀 Güncelleme doğrudan GitHub API üzerinden indiriliyor...";
+                        overlayReconnect.Visibility = Visibility.Visible;
+                    }
+                    ThreadPool.QueueUserWorkItem(delegate
+                    {
+                        bool healed = Program.TrySelfHealEngineFromGitHub(runtimeDir);
+                        Dispatcher.BeginInvoke(new Action(delegate
+                        {
+                            if (!healed)
+                            {
+                                if (overlayReconnect != null) overlayReconnect.Visibility = Visibility.Collapsed;
+                                ShowToast("Güncelleme hatası: " + err, "error");
+                            }
+                        }));
+                    });
                 }
                 else
                 {
@@ -7548,8 +7633,8 @@ namespace SctAfkService
     // =========================================================================
     static class Program
     {
-        public const string CURRENT_APP_VERSION = "v2.5.0";
-        public const string CURRENT_ENGINE_BUILD_ID = "20261107_separate_settings_win_v88";
+        public const string CURRENT_APP_VERSION = "v2.5.1";
+        public const string CURRENT_ENGINE_BUILD_ID = "20261107_zero_cache_hotupdate_v89";
         private const int MinNodeMajor = 18;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -8230,29 +8315,85 @@ namespace SctAfkService
             catch { }
         }
 
+        public static byte[] DownloadGitHubFileZeroCache(string repoRelativePath)
+        {
+            ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+            string[] urls = new string[]
+            {
+                "https://api.github.com/repos/mrzaknafein/SCT-AFK-Service/contents/" + repoRelativePath + "?ref=main&t=" + DateTime.UtcNow.Ticks,
+                "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/" + repoRelativePath + "?t=" + DateTime.UtcNow.Ticks
+            };
+            for (int i = 0; i < urls.Length; i++)
+            {
+                try
+                {
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(urls[i]);
+                    req.Method = "GET";
+                    req.UserAgent = "SCT-AFK-ZeroCache/2.5.1";
+                    req.Headers.Add("Cache-Control", "no-cache, no-store, must-revalidate");
+                    req.Headers.Add("Pragma", "no-cache");
+                    if (urls[i].IndexOf("api.github.com", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        req.Accept = "application/vnd.github.v3.raw";
+                    }
+                    req.Timeout = 15000;
+                    using (WebResponse resp = req.GetResponse())
+                    using (Stream s = resp.GetResponseStream())
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        byte[] buf = new byte[16384];
+                        int read;
+                        while ((read = s.Read(buf, 0, buf.Length)) > 0)
+                        {
+                            ms.Write(buf, 0, read);
+                        }
+                        byte[] data = ms.ToArray();
+                        if (data != null && data.Length > 20) return data;
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        public static string FetchGitHubTextZeroCache(string repoRelativePath)
+        {
+            byte[] bytes = DownloadGitHubFileZeroCache(repoRelativePath);
+            if (bytes == null || bytes.Length == 0) return "";
+            return Encoding.UTF8.GetString(bytes);
+        }
+
         public static bool TrySelfHealEngineFromGitHub(string runtimeDir)
         {
             try
             {
                 if (string.IsNullOrEmpty(runtimeDir)) runtimeDir = GetRuntimeDirectory();
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-                string rawUrl = "https://raw.githubusercontent.com/mrzaknafein/SCT-AFK-Service/main/index.js?t=" + DateTime.UtcNow.Ticks;
-                byte[] downloaded;
-                using (WebClient wc = new WebClient())
-                {
-                    wc.Headers.Add("User-Agent", "SCT-AFK-SelfHeal/1.0");
-                    wc.Headers.Add("Cache-Control", "no-cache");
-                    downloaded = wc.DownloadData(rawUrl);
-                }
+                byte[] downloaded = DownloadGitHubFileZeroCache("index.js");
                 if (downloaded == null || downloaded.Length < 500000) return false;
                 string jsText = Encoding.UTF8.GetString(downloaded);
                 if (jsText.IndexOf("ipcServer.listen(IPC_PIPE_PATH", StringComparison.Ordinal) < 0) return false;
+
+                byte[] launcherBytes = DownloadGitHubFileZeroCache("Launcher.cs");
+                byte[] versionBytes = DownloadGitHubFileZeroCache("version.json");
 
                 KillStaleInstances(runtimeDir);
                 Thread.Sleep(350);
 
                 string targetJs = System.IO.Path.Combine(runtimeDir, "index.js");
                 File.WriteAllBytes(targetJs, downloaded);
+
+                if (launcherBytes != null && launcherBytes.Length > 100000)
+                {
+                    string lText = Encoding.UTF8.GetString(launcherBytes);
+                    if (lText.IndexOf("namespace SctAfkService", StringComparison.Ordinal) >= 0)
+                    {
+                        File.WriteAllBytes(System.IO.Path.Combine(runtimeDir, "Launcher.cs"), launcherBytes);
+                    }
+                }
+                if (versionBytes != null && versionBytes.Length > 20)
+                {
+                    File.WriteAllBytes(System.IO.Path.Combine(runtimeDir, "version.json"), versionBytes);
+                }
 
                 string nodeExe = EnsureNodeInstalled();
                 if (!string.IsNullOrEmpty(nodeExe))

@@ -29,8 +29,8 @@ process.on('unhandledRejection', (reason) => {
   } catch (e) {}
 });
 
-const ENGINE_BUILD_ID = '20261107_separate_settings_win_v88';
-const ENGINE_VERSION = '2.5.0';
+const ENGINE_BUILD_ID = '20261107_zero_cache_hotupdate_v89';
+const ENGINE_VERSION = '2.5.1';
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const KEYAUTH_SAVED_PATH = path.join(__dirname, 'keyauth_saved.json');
 
@@ -770,6 +770,15 @@ function loadConfig() {
       manifestUrl: ''
     };
     updated = true;
+  } else {
+    if (parsed.updates.branch !== 'main') {
+      parsed.updates.branch = 'main';
+      updated = true;
+    }
+    if (parsed.updates.manifestUrl && parsed.updates.manifestUrl.includes('/dev/')) {
+      parsed.updates.manifestUrl = '';
+      updated = true;
+    }
   }
 
   if (!Array.isArray(parsed.builderPresets)) {
@@ -805,13 +814,45 @@ let updateCheckState = {
 };
 
 function getUpdateManifestUrl() {
-  if (config.updates && config.updates.manifestUrl && config.updates.manifestUrl.trim()) {
+  if (config.updates && config.updates.manifestUrl && config.updates.manifestUrl.trim() && !config.updates.manifestUrl.includes('/dev/')) {
     return config.updates.manifestUrl.trim();
   }
   const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
   const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
-  const branch = (config.updates && config.updates.branch) || 'main';
-  return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}/version.json`;
+  const branch = 'main';
+  return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}/version.json?t=${Date.now()}`;
+}
+
+async function fetchManifestBypassCdn() {
+  const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+  const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
+  const branch = 'main';
+  const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/version.json?ref=${encodeURIComponent(branch)}&t=${Date.now()}`;
+  const rawUrl = getUpdateManifestUrl();
+
+  const parseSafe = (buf) => {
+    if (!buf) return null;
+    try {
+      const m = JSON.parse(buf.toString('utf8').replace(/^\uFEFF/, '').trim());
+      return m && (m.buildId || m.version) ? m : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const [apiBuf, rawBuf] = await Promise.all([
+    httpFetchUrl(apiUrl, 5, { 'Accept': 'application/vnd.github.v3.raw' }).catch(() => null),
+    httpFetchUrl(rawUrl, 5).catch(() => null)
+  ]);
+
+  const mApi = parseSafe(apiBuf);
+  const mRaw = parseSafe(rawBuf);
+  if (mApi && mRaw) {
+    return isBuildIdNewer(mRaw.buildId, mApi.buildId) ? mRaw : mApi;
+  }
+  if (mApi) return mApi;
+  if (mRaw) return mRaw;
+  throw new Error('GitHub üzerinden sürüm bilgisi (version.json) alınamadı.');
 }
 
 function httpFetchUrl(urlStr, maxRedirects = 5, extraHeaders = {}) {
@@ -869,8 +910,7 @@ function isBuildIdNewer(candidate, baseline) {
 async function checkForUpdates() {
   const manifestUrl = getUpdateManifestUrl();
   try {
-    const rawBuf = await httpFetchUrl(manifestUrl);
-    const manifest = JSON.parse(rawBuf.toString('utf8').replace(/^\uFEFF/, '').trim());
+    const manifest = await fetchManifestBypassCdn();
     const remoteBuildId = manifest.buildId || manifest.version || '';
     const hasUpdate = Boolean(remoteBuildId && isBuildIdNewer(remoteBuildId, ENGINE_BUILD_ID));
 
@@ -897,7 +937,7 @@ async function checkForUpdates() {
 }
 
 function getRawFileUrl(owner, repo, branch, filePath) {
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
+  return `https://raw.githubusercontent.com/${owner}/${repo}/main/${filePath}`;
 }
 
 async function applyHotUpdate() {
@@ -906,12 +946,10 @@ async function applyHotUpdate() {
   }
   updateCheckState.isUpdating = true;
   try {
-    const manifestUrl = getUpdateManifestUrl();
-    const rawBuf = await httpFetchUrl(manifestUrl);
-    const manifest = JSON.parse(rawBuf.toString('utf8').replace(/^\uFEFF/, '').trim());
+    const manifest = await fetchManifestBypassCdn();
     const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
     const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
-    const branch = (config.updates && config.updates.branch) || 'main';
+    const branch = 'main';
 
     let indexJsUrl = (manifest.files && manifest.files['index.js']) || getRawFileUrl(owner, repo, branch, 'index.js');
     const hasManifestLauncher = Boolean(manifest.files && manifest.files['Launcher.cs']);
@@ -921,7 +959,6 @@ async function applyHotUpdate() {
 
     indexJsUrl = indexJsUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
     launcherCsUrl = launcherCsUrl.replace('{OWNER}', owner).replace('{REPO}', repo).replace('{BRANCH}', branch);
-    // GitHub raw CDN önbelleğini atla
     const cacheBust = `${indexJsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
     indexJsUrl += cacheBust;
     launcherCsUrl += `${launcherCsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
@@ -932,40 +969,48 @@ async function applyHotUpdate() {
     let newLauncherBuf = null;
     let newJsStr = '';
     let newLauncherStr = '';
+    const expectedBuildId = manifest.buildId || '';
 
+    // 1. Önce doğrudan GitHub REST API (sıfır CDN önbelleği) üzerinden en taze dosyaları çek!
     try {
+      const ghApiJs = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/index.js?ref=${encodeURIComponent(branch)}&t=${Date.now()}`;
+      const ghApiLauncher = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/Launcher.cs?ref=${encodeURIComponent(branch)}&t=${Date.now()}`;
+      const apiHeaders = { 'Accept': 'application/vnd.github.v3.raw' };
+
       [newJsBuf, newLauncherBuf] = await Promise.all([
-        httpFetchUrl(indexJsUrl),
-        httpFetchUrl(launcherCsUrl).catch(() => null)
+        httpFetchUrl(ghApiJs, 5, apiHeaders),
+        httpFetchUrl(ghApiLauncher, 5, apiHeaders).catch(() => null)
       ]);
       newJsStr = newJsBuf ? newJsBuf.toString('utf8') : '';
       newLauncherStr = newLauncherBuf ? newLauncherBuf.toString('utf8') : '';
-    } catch (cdnErr) {
-      addLog(null, 'GÜNCELLEME', `CDN indirme uyarısı: ${cdnErr.message}`, chalk.yellow);
+    } catch (ghErr) {
+      addLog(null, 'GÜNCELLEME', `GitHub API uyarısı, Raw CDN deneniyor: ${ghErr.message}`, chalk.yellow);
     }
 
     let dlBuildMatch = newJsStr.match(/const ENGINE_BUILD_ID = '([^']+)';?/);
     let dlBuildId = dlBuildMatch ? dlBuildMatch[1] : '';
-    const expectedBuildId = manifest.buildId || '';
+    let dlLauncherMatch = newLauncherStr.match(/public const string CURRENT_ENGINE_BUILD_ID = "([^"]+)";?/);
+    let dlLauncherBuildId = dlLauncherMatch ? dlLauncherMatch[1] : '';
 
-    // Eğer CDN önbelleği eski sürüm döndürdüyse veya geçersizse, doğrudan GitHub API üzerinden taze dosyaları çek!
-    if (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId)) {
-      addLog(null, 'GÜNCELLEME', '⚠️ CDN önbelleği eski sürüm döndürdü. GitHub API üzerinden en güncel dosyalar doğrudan alınıyor...', chalk.yellow);
+    // 2. Eğer API hız sınırına takıldıysa veya eksikse Raw CDN üzerinden tamamla
+    if (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId) || !dlLauncherBuildId || (expectedBuildId && dlLauncherBuildId !== expectedBuildId)) {
       try {
-        const ghApiJs = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/index.js?ref=${encodeURIComponent(branch)}`;
-        const ghApiLauncher = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/Launcher.cs?ref=${encodeURIComponent(branch)}`;
-        const apiHeaders = { 'Accept': 'application/vnd.github.v3.raw' };
-
-        [newJsBuf, newLauncherBuf] = await Promise.all([
-          httpFetchUrl(ghApiJs, 5, apiHeaders),
-          httpFetchUrl(ghApiLauncher, 5, apiHeaders).catch(() => newLauncherBuf)
+        const [cdnJsBuf, cdnLauncherBuf] = await Promise.all([
+          (!dlBuildId || (expectedBuildId && dlBuildId !== expectedBuildId)) ? httpFetchUrl(indexJsUrl) : Promise.resolve(newJsBuf),
+          (!dlLauncherBuildId || (expectedBuildId && dlLauncherBuildId !== expectedBuildId)) ? httpFetchUrl(launcherCsUrl).catch(() => newLauncherBuf) : Promise.resolve(newLauncherBuf)
         ]);
-        newJsStr = newJsBuf ? newJsBuf.toString('utf8') : '';
-        newLauncherStr = newLauncherBuf ? newLauncherBuf.toString('utf8') : '';
-        dlBuildMatch = newJsStr.match(/const ENGINE_BUILD_ID = '([^']+)';?/);
-        dlBuildId = dlBuildMatch ? dlBuildMatch[1] : '';
-      } catch (ghErr) {
-        addLog(null, 'GÜNCELLEME', `GitHub API doğrudan indirme hatası: ${ghErr.message}`, chalk.red);
+        if (cdnJsBuf) {
+          newJsBuf = cdnJsBuf;
+          newJsStr = newJsBuf.toString('utf8');
+          dlBuildMatch = newJsStr.match(/const ENGINE_BUILD_ID = '([^']+)';?/);
+          dlBuildId = dlBuildMatch ? dlBuildMatch[1] : '';
+        }
+        if (cdnLauncherBuf) {
+          newLauncherBuf = cdnLauncherBuf;
+          newLauncherStr = newLauncherBuf.toString('utf8');
+        }
+      } catch (cdnErr) {
+        addLog(null, 'GÜNCELLEME', `CDN indirme uyarısı: ${cdnErr.message}`, chalk.yellow);
       }
     }
 
@@ -1074,18 +1119,6 @@ function rebuildPortableExe(sync = false) {
   const launcherCs = path.join(__dirname, 'Launcher.cs');
   const icoPath = path.join(__dirname, 'app.ico');
   if (!fs.existsSync(cscPath) || !fs.existsSync(launcherCs)) return [];
-
-  // Ensure Launcher.cs has the matching CURRENT_ENGINE_BUILD_ID before compiling
-  try {
-    const lcsRaw = fs.readFileSync(launcherCs, 'utf8');
-    const updatedLcs = lcsRaw.replace(
-      /public const string CURRENT_ENGINE_BUILD_ID = "[^"]*";/,
-      `public const string CURRENT_ENGINE_BUILD_ID = "${ENGINE_BUILD_ID}";`
-    );
-    if (updatedLcs !== lcsRaw) {
-      fs.writeFileSync(launcherCs, updatedLcs, 'utf8');
-    }
-  } catch (e) {}
 
   const targetPaths = new Set();
   targetPaths.add(path.join(__dirname, 'SCT AFK Service.exe'));
@@ -1221,6 +1254,21 @@ async function ensureGuiExeUpToDateAndRestartIfNeeded() {
         if (icoBuf && icoBuf.length > 256) fs.writeFileSync(icoPath, icoBuf);
       } catch (e) {}
     }
+
+    // If local Launcher.cs is older than ENGINE_BUILD_ID, fetch the fresh Launcher.cs from GitHub API before compiling!
+    const launcherCsPath = path.join(__dirname, 'Launcher.cs');
+    try {
+      const curLcs = fs.existsSync(launcherCsPath) ? fs.readFileSync(launcherCsPath, 'utf8') : '';
+      if (!curLcs.includes(ENGINE_BUILD_ID)) {
+        const owner = (config.updates && config.updates.repoOwner) || 'mrzaknafein';
+        const repo = (config.updates && config.updates.repoName) || 'SCT-AFK-Service';
+        const ghApiLauncher = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/Launcher.cs?ref=main&t=${Date.now()}`;
+        const freshLcsBuf = await httpFetchUrl(ghApiLauncher, 5, { 'Accept': 'application/vnd.github.v3.raw' }).catch(() => null);
+        if (freshLcsBuf && freshLcsBuf.length > 50000) {
+          fs.writeFileSync(launcherCsPath, freshLcsBuf);
+        }
+      }
+    } catch (e) {}
 
     // Terminate the outdated GUI process so Windows releases its file lock
     try {
@@ -20212,7 +20260,7 @@ function startUpdateChecker() {
         })
         .catch(() => {});
     }
-  }, 7000);
+  }, 3000);
 
   setInterval(() => {
     if (config.updates && config.updates.enabled !== false) {
@@ -20227,7 +20275,7 @@ function startUpdateChecker() {
         })
         .catch(() => {});
     }
-  }, 30 * 60 * 1000);
+  }, 3 * 60 * 1000);
 }
 
 ipcServer.listen(IPC_PIPE_PATH, () => {
@@ -20259,23 +20307,6 @@ ipcServer.listen(IPC_PIPE_PATH, () => {
       startedCount++;
     });
   }
-
-  setTimeout(() => {
-    try {
-      const lcsPath = path.join(__dirname, 'Launcher.cs');
-      if (fs.existsSync(lcsPath)) {
-        const lcsRaw = fs.readFileSync(lcsPath, 'utf8');
-        const updatedLcs = lcsRaw.replace(
-          /public const string CURRENT_ENGINE_BUILD_ID = "[^"]*";/,
-          `public const string CURRENT_ENGINE_BUILD_ID = "${ENGINE_BUILD_ID}";`
-        );
-        if (updatedLcs !== lcsRaw) {
-          fs.writeFileSync(lcsPath, updatedLcs, 'utf8');
-          rebuildPortableExe(true);
-        }
-      }
-    } catch (e) {}
-  }, 3500);
 });
 
 

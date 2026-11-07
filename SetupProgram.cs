@@ -16,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("SCT AFK Service")]
 [assembly: AssemblyProduct("SCT AFK Service Setup")]
 [assembly: AssemblyCopyright("Copyright © 2026 SCT AFK Service")]
-[assembly: AssemblyVersion("2.5.0.0")]
-[assembly: AssemblyFileVersion("2.5.0.0")]
+[assembly: AssemblyVersion("2.5.1.0")]
+[assembly: AssemblyFileVersion("2.5.1.0")]
 
 namespace SctAfkService.Setup
 {
@@ -413,7 +413,7 @@ namespace SctAfkService.Setup
 
             Label lblSub = new Label
             {
-                Text = "Kurulum Sihirbazı • v2.5.0 (Native Masaüstü GUI & Çoklu Hesap)",
+                Text = "Kurulum Sihirbazı • v2.5.1 (Native Masaüstü GUI & Çoklu Hesap)",
                 Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
                 ForeColor = Color.FromArgb(183, 173, 155),
                 Location = new Point(63, 34),
@@ -1068,7 +1068,7 @@ namespace SctAfkService.Setup
                         if (key != null)
                         {
                             key.SetValue("DisplayName", "SCT AFK Service");
-                            key.SetValue("DisplayVersion", "2.5.0");
+                            key.SetValue("DisplayVersion", "2.5.1");
                             key.SetValue("Publisher", "SCT AFK Service");
                             key.SetValue("DisplayIcon", exeTarget + ",0");
                             key.SetValue("InstallLocation", targetInstallPath);
